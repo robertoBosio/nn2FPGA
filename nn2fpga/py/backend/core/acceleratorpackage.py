@@ -14,9 +14,6 @@ class AcceleratorPackage:
     # HLS code of the accelerator, encoded in base64.
     hls_code_b64: str = ""
 
-    # HLS driver code, encoded in base64, which is used in functional simulation.
-    hls_driver_b64: str = ""
-
     # Bitstream of the accelerator, encoded in base64.
     bitstream_b64: str = ""
 
@@ -55,7 +52,6 @@ class AcceleratorPackage:
 
     REQUIRED_FIELDS: ClassVar[set] = {
         "hls_code_b64",
-        "hls_driver_b64",
         "bitstream_b64",
         "hwh_b64",
         "input_map",
@@ -90,14 +86,6 @@ class AcceleratorPackage:
     def set_hls_code(self, code: str) -> None:
         """Set HLS code from text (will encode to base64)."""
         self.hls_code_b64 = base64.b64encode(code.encode()).decode()
-
-    def get_hls_driver(self) -> str:
-        """Get decoded HLS driver code as text."""
-        return base64.b64decode(self.hls_driver_b64).decode()
-
-    def set_hls_driver(self, driver: str) -> None:
-        """Set HLS driver code from text (will encode to base64)."""
-        self.hls_driver_b64 = base64.b64encode(driver.encode()).decode()
 
     def get_bitstream(self) -> bytes:
         """Get decoded bitstream as binary data."""

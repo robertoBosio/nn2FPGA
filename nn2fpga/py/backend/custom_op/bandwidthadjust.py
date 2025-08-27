@@ -1,8 +1,9 @@
 from onnx import helper
-from qonnx.core.datatype import DataType
 from qonnx.custom_op.base import CustomOp
+from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
-from backend.core.fifo_depth import get_custom_tensor_fifo_depth
+from backend.core.tensor_fifo import TensorFifo
+from backend.custom_op.hlskernel import HLSKernel
 from backend.util.codegen_utils import (
     cpp_function,
     cpp_variable,
@@ -49,84 +50,16 @@ class BandwidthAdjust(CustomOp):
         """
         return f"{name}_stream"
 
-    def get_output_stream_cpp(self, model) -> list[cpp_variable]:
-        """Get the output stream cpp variables for the BandwidthAdjust node.
-        Args:
-            model (ModelWrapper): The model with quantization information.
-        Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the output stream variables.
-        """
-
-        # Retrieve the quantization information for the output tensor.
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-
-        # Retrieve the parallelization attributes for the output tensor.
-        par_attribute = get_par_attributes(self.onnx_node)
-
-        # Retrieve the FIFO depth for the output tensor.
-        fifo_depth = get_custom_tensor_fifo_depth(model, self.onnx_node.output[0])
-        pragma_list = []
-        if fifo_depth is not None:
-            for i, depth in enumerate(fifo_depth.depths):
-                pragma_list.append(
-                    f"#pragma HLS STREAM variable={self.__get_stream_name(self.onnx_node.output[0])}[{i}] depth={depth}"
-                )
-
-        # Create the cpp_variable for the output stream.
-        var = cpp_variable(
-            name=f"{self.__get_stream_name(self.onnx_node.output[0])}",
-            primitive=f"{get_stream_type(output_quant, par_attribute['out_ch_par'])}",
-            array=[par_attribute["out_w_par"]],
-            pragma=pragma_list,
-        )
-        return [var]
-
-    def get_input_stream_cpp(self, model) -> list[cpp_variable]:
-        """Get the input stream cpp variables for the BandwidthAdjust node.
-        Args:
-            model (ModelWrapper): The model with quantization information.
-        Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the input stream variables.
-        """
-
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
-        par_attribute = get_par_attributes(self.onnx_node)
-
-        fifo_depth = get_custom_tensor_fifo_depth(model, self.onnx_node.output[0])
-        pragma_list = []
-        if fifo_depth is not None:
-            for i, depth in enumerate(fifo_depth.depths):
-                pragma_list.append(
-                    f"#pragma HLS STREAM variable={self.__get_stream_name(self.onnx_node.output[0])}[{i}] depth={depth}"
-                )
-
-        var = cpp_variable(
-            name=f"{self.__get_stream_name(self.onnx_node.input[0])}",
-            primitive=f"{get_stream_type(input_quant, par_attribute['in_ch_par'])}",
-            array=[par_attribute["in_w_par"]],
-            pragma=pragma_list,
-        )
-        return [var]
-
-    def get_variable_cpp(self, model) -> list[cpp_variable]:
+    def __get_variable_declaration(self, model) -> str:
         """ Get the internal cpp variables of the ProduceStream node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the internal variables.
+            str: A string representing the declaration of internal variables.
         """
-        return []
+        return ""
 
-    def get_object_cpp(self, model, name) -> cpp_object:
+    def __get_object_declaration(self, model, name) -> str:
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
             raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
@@ -168,9 +101,9 @@ class BandwidthAdjust(CustomOp):
                 (par_attribute["out_ch_par"], "OUT_CH_PAR"),
             ],
         )
-        return BandwidthAdjust
+        return BandwidthAdjust.generate_declaration()
 
-    def generate_run_call(self) -> str:
+    def __get_run_call(self) -> str:
         """ Generates the C++ code necessary to run the BandwidthAdjust node. """
 
         # Generate the call to the BandwidthAdjust run method.
@@ -195,7 +128,7 @@ class BandwidthAdjust(CustomOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def generate_step_call(self) -> str:
+    def __get_step_call(self) -> str:
         """ Generates the C++ code necessary to run the BandwidthAdjust node in step mode. """
 
         step = cpp_function(
@@ -219,6 +152,52 @@ class BandwidthAdjust(CustomOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
+    def lower_to_hls(self, model: ModelWrapper, name: str) -> tuple[list, list, dict]:
+        """
+        Returns:
+          nodes: List[onnx.NodeProto]
+          initializers: List[onnx.TensorProto]
+          fifo: Dict[str, TensorFifo]
+        """
+
+        par = get_par_attributes(self.onnx_node)
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
+
+        input_names = [
+            f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
+            for i in range(par["in_w_par"])
+        ]
+
+        output_names = [
+            f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
+            for i in range(par["out_w_par"])
+        ]
+
+        tensors_fifo_metadata = {}
+        for output in output_names:
+            tensors_fifo_metadata[output] = TensorFifo(
+                depth=0,
+                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
+                n_array=par["out_w_par"],
+            )
+
+        hls_kernel = HLSKernel.make_node(
+            inputs=input_names,
+            outputs=output_names,
+            name=f"{self.onnx_node.name}_hls",
+            domain="backend.custom_op",
+            hls_variable_declarations=self.__get_variable_declaration(model),
+            hls_run_call=self.__get_run_call(),
+            hls_step_call=self.__get_step_call(),
+            hls_object_declaration=self.__get_object_declaration(model, name),
+        )
+
+        return [hls_kernel], [], tensors_fifo_metadata
+
 
 class BandwidthAdjustIncreaseStreams(BandwidthAdjust):
     """ Node increasing the number of streams in a tensor to match the bandwidth requirements."""
@@ -226,8 +205,8 @@ class BandwidthAdjustIncreaseStreams(BandwidthAdjust):
     def verify_node(self):
         return super().verify_node()
     
-    def get_object_cpp(self, model):
-        return super().get_object_cpp(model, "BandwidthAdjustIncreaseStreams")
+    def lower_to_hls(self, model):
+        return super().lower_to_hls(model, "BandwidthAdjustIncreaseStreams")
 
 class BandwidthAdjustDecreaseStreams(BandwidthAdjust):
     """ Node decreasing the number of streams in a tensor to match the bandwidth requirements."""
@@ -235,8 +214,8 @@ class BandwidthAdjustDecreaseStreams(BandwidthAdjust):
     def verify_node(self):
         return super().verify_node()
     
-    def get_object_cpp(self, model):
-        return super().get_object_cpp(model, "BandwidthAdjustDecreaseStreams")
+    def lower_to_hls(self, model):
+        return super().lower_to_hls(model, "BandwidthAdjustDecreaseStreams")
 
 class BandwidthAdjustIncreaseChannels(BandwidthAdjust):
     """ Node increasing the number of channels in a tensor to match the bandwidth requirements."""
@@ -244,8 +223,8 @@ class BandwidthAdjustIncreaseChannels(BandwidthAdjust):
     def verify_node(self):
         return super().verify_node()
 
-    def get_object_cpp(self, model):
-        return super().get_object_cpp(model, "BandwidthAdjustIncreaseChannels")
+    def lower_to_hls(self, model):
+        return super().lower_to_hls(model, "BandwidthAdjustIncreaseChannels")
 
 class BandwidthAdjustDecreaseChannels(BandwidthAdjust):
     """ Node decreasing the number of channels in a tensor to match the bandwidth requirements."""
@@ -253,5 +232,5 @@ class BandwidthAdjustDecreaseChannels(BandwidthAdjust):
     def verify_node(self):
         return super().verify_node()
 
-    def get_object_cpp(self, model):
-        return super().get_object_cpp(model, "BandwidthAdjustDecreaseChannels")
+    def lower_to_hls(self, model):
+        return super().lower_to_hls(model, "BandwidthAdjustDecreaseChannels")

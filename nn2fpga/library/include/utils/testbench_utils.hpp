@@ -9,8 +9,9 @@
 template <typename TAxi, typename TData, typename TDataNumpy>
 void hls_stream_to_npy(const std::string &output_path,
                        hls::stream<TAxi> &stream, int data_per_word,
-                       int bits_per_data, const std::vector<size_t> &shape) {
+                       const std::vector<size_t> &shape) {
   std::vector<TDataNumpy> output_data;
+  size_t bits_per_data = TData::width;
   while (!stream.empty()) {
     TAxi word = stream.read();
     for (int j = 0; j < data_per_word; j++) {
@@ -27,10 +28,11 @@ void hls_stream_to_npy(const std::string &output_path,
 
 template <typename TAxi, typename TData, typename TDataNumpy>
 void npy_to_hls_stream(const std::string &input_path, hls::stream<TAxi> &stream,
-                       int data_per_word, int bits_per_data) {
+                       int data_per_word) {
   cnpy::NpyArray input_array = cnpy::npy_load(input_path);
   TDataNumpy *input_data = input_array.data<TDataNumpy>();
   std::vector<size_t> shape = input_array.shape;
+  size_t bits_per_data = TData::width;
 
   if (shape.size() != 4) {
     std::cerr << "Input array must be 4D.\n";

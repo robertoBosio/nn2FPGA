@@ -167,4 +167,4 @@ class cpp_object:
             next_line += ";"
 
         cwr.add_line(next_line)
-        return cwr.lines
+        return cwr.code

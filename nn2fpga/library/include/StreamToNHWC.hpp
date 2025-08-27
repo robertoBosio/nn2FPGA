@@ -77,11 +77,12 @@ public:
   void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
            hls::stream<TOutputWord> &output_data_stream) {
     TInput circular_buffer[DATA_PER_WORD * 2];
-    size_t head = 0;
-    size_t tail = 0;
-    size_t size = 0;
+    char head = 0;
+    char tail = 0;
+    char size = 0;
 
     // Loop through the input height and width.
+STREAM_TO_NHWC_MAINLOOP:
     for (size_t i_input_word = 0; i_input_word < ITER;
          i_input_word += IN_CH_PAR * IN_W_PAR) {
 #pragma HLS pipeline II = 1
@@ -143,9 +144,9 @@ private:
   // State variables for step execution
   size_t STEP_i_input_word;           // Current word index
   size_t STEP_pipeline_depth;   // Pipeline depth for the step
-  size_t STEP_head;            // Head index for circular buffer
-  size_t STEP_tail;            // Tail index for circular buffer
-  size_t STEP_size;            // Current size of data in circular buffer
+  char STEP_head;            // Head index for circular buffer
+  char STEP_tail;            // Tail index for circular buffer
+  char STEP_size;            // Current size of data in circular buffer
   TInput circular_buffer[DATA_PER_WORD * 2]; // Circular buffer for input data
 
   // CSDFG state variables
@@ -155,7 +156,7 @@ private:
   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
                             hls::stream<TOutputWord> &output_data_stream,
                             TInput circular_buffer[DATA_PER_WORD * 2],
-                            size_t &head, size_t &size, size_t &tail,
+                            char &head, char &size, char &tail,
                             size_t i_input_word) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.

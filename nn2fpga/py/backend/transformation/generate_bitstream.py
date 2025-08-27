@@ -180,9 +180,9 @@ def vivado_tcl_script(
 
     # Connect HLS IP streams to the DMAs
     for input, _ in inputs:
-        lines.append(f'connect_bd_intf_net -intf_net {input}_axis [get_bd_intf_pins {top_name}_0/{input}_stream] [get_bd_intf_pins {input}_dma/M_AXIS_MM2S]')
+        lines.append(f'connect_bd_intf_net -intf_net {input}_axis [get_bd_intf_pins {top_name}_0/{input}] [get_bd_intf_pins {input}_dma/M_AXIS_MM2S]')
     for output, _ in outputs:
-        lines.append(f'connect_bd_intf_net -intf_net {output}_axis [get_bd_intf_pins {top_name}_0/{output}_stream] [get_bd_intf_pins {output}_dma/S_AXIS_S2MM]')
+        lines.append(f'connect_bd_intf_net -intf_net {output}_axis [get_bd_intf_pins {top_name}_0/{output}] [get_bd_intf_pins {output}_dma/S_AXIS_S2MM]')
 
     # Connect DMAs to PS
     for i, (input, _) in enumerate(inputs):

@@ -92,7 +92,7 @@ bool test_step() {
                test_config::DATA_PER_WORD, test_config::HEIGHT,
                test_config::WIDTH, test_config::CH, test_config::OUT_W_PAR,
                test_config::OUT_CH_PAR>
-      producer(test_config::PIPELINE_DEPTH, expectedII);
+      producer(test_config::PIPELINE_DEPTH);
 
   // Prepare input and output streams
   hls::stream<test_config::TInputWord> in_stream;

@@ -5,7 +5,8 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
-from backend.core.fifo_depth import get_custom_tensor_fifo_depth
+from backend.core.tensor_fifo import TensorFifo
+from backend.custom_op.hlskernel import HLSKernel
 from backend.util.codegen_utils import (
     cpp_function,
     cpp_variable,
@@ -150,7 +151,7 @@ class StreamingGlobalAveragePool(CustomOp):
                 "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
             )
 
-    def get_object_cpp(self, model) -> cpp_object:
+    def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingGlobalAveragePool operation. """
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
@@ -190,84 +191,18 @@ class StreamingGlobalAveragePool(CustomOp):
                 (par_attribute["out_ch_par"], "OUT_CH_PAR"),
             ])
 
-        return StreamingGlobalAveragePool
+        return StreamingGlobalAveragePool.generate_declaration()
 
-    def get_output_stream_cpp(self, model) -> list[cpp_variable]:
-        """Get the output stream cpp variables for the StreamingGlobalAveragePool node.
-        Args:
-            model (ModelWrapper): The model with quantization information.
-        Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the output stream variables.
-        """
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
-
-        par_attribute = get_par_attributes(self.onnx_node)
-
-        # Retrieve FIFO depth for the output tensor.
-        fifo_depth = get_custom_tensor_fifo_depth(model, self.onnx_node.output[0])
-        pragma_list = []
-        if fifo_depth is not None:
-            for i, depth in enumerate(fifo_depth.depths):
-                pragma_list.append(
-                    f"#pragma HLS STREAM variable={self.__get_stream_name(self.onnx_node.output[0])}[{i}] depth={depth}"
-                )
-
-        # Declare the output stream.
-        var = cpp_variable(
-            f"{self.onnx_node.output[0]}_stream",
-            f"{get_stream_type(output_quant, par_attribute['out_ch_par'])}",
-            array=[par_attribute["out_w_par"]],
-            pragma=pragma_list,
-        )
-
-        return [var]
-
-    def get_input_stream_cpp(self, model) -> list[cpp_variable]:
-        """Get the input stream cpp variables for the StreamingGlobalAveragePool node.
-        Args:
-            model (ModelWrapper): The model with quantization information.
-        Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the input stream variables.
-        """
-
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
-
-        par_attribute = get_par_attributes(self.onnx_node)
-
-        # Retrieve FIFO depth for the input tensor.
-        fifo_depth = get_custom_tensor_fifo_depth(model, self.onnx_node.input[0])
-        pragma_list = []
-        if fifo_depth is not None:
-            for i, depth in enumerate(fifo_depth.depths):
-                pragma_list.append(
-                    f"#pragma HLS STREAM variable={self.__get_stream_name(self.onnx_node.input[0])}[{i}] depth={depth}"
-                )
-
-        # Declare the input stream.
-        var = cpp_variable(
-            f"{self.onnx_node.input[0]}_stream",
-            f"{get_stream_type(input_quant, par_attribute['in_ch_par'])}",
-            array=[par_attribute["in_w_par"]],
-            pragma=pragma_list,
-        )
-
-        return [var]
-
-    def get_variable_cpp(self, model) -> list[cpp_variable]:
+    def __get_variable_declaration(self, model) -> str:
         """ Get the internal cpp variables of the StreamingGlobalAveragePool node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
-            list[cpp_variable]: A list of cpp_variable objects representing the internal variables.
+            str: A string representing the declaration of internal variables.
         """
-        return []
+        return ""
 
-    def generate_run_call(self) -> str:
+    def __get_run_call(self) -> str:
         """ Generates the C++ code necessary to run the StreamingGlobalAveragePool node. """
 
         # Generate the call to the StreamingGlobalAveragePool run method.
@@ -292,7 +227,7 @@ class StreamingGlobalAveragePool(CustomOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def generate_step_call(self) -> str:
+    def __get_step_call(self) -> str:
         """ Generates the C++ code necessary to step the StreamingGlobalAveragePool node. """
 
         # Generate the call to the StreamingGlobalAveragePool step method.
@@ -316,3 +251,47 @@ class StreamingGlobalAveragePool(CustomOp):
             self.__get_stream_name(self.onnx_node.input[0]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+
+    def lower_to_hls(self, model: ModelWrapper):
+        """
+        Returns:
+          nodes: List[onnx.NodeProto]
+          initializers: List[onnx.TensorProto]
+          fifo: Dict[str, TensorFifo]
+        """
+
+        par = get_par_attributes(self.onnx_node)
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+
+        input_names = [
+            f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
+            for i in range(par["in_w_par"])
+        ]
+
+        output_names = [
+            f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
+            for i in range(par["out_w_par"])
+        ]
+
+        tensors_fifo_metadata = {}
+        for output in output_names:
+            tensors_fifo_metadata[output] = TensorFifo(
+                depth=0,
+                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
+                n_array=par["out_w_par"],
+            )
+
+        hls_kernel = HLSKernel.make_node(
+            inputs=input_names,
+            outputs=output_names,
+            name=f"{self.onnx_node.name}_hls",
+            domain="backend.custom_op",
+            hls_variable_declarations=self.__get_variable_declaration(model),
+            hls_run_call=self.__get_run_call(),
+            hls_step_call=self.__get_step_call(),
+            hls_object_declaration=self.__get_object_declaration(model),
+        )
+
+        return [hls_kernel], [], tensors_fifo_metadata

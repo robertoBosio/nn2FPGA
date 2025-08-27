@@ -4,6 +4,8 @@ import os
 import subprocess
 from backend.core.acceleratorpackage import AcceleratorPackage
 from backend.util.board_util import read_board_info
+from backend.util.codegen_utils import NewCodeWriter, cpp_function, cpp_variable, get_hls_quant_type, get_cpp_quant_type
+from backend.core.tensor_quant import TensorQuant
 
 def dump_tcl_script(top_name, part_name, frequency, hls_version, input_files):
     """Dump a TCL script to set up the HLS project and run the simulation."""
@@ -47,6 +49,155 @@ def dump_tcl_script(top_name, part_name, frequency, hls_version, input_files):
     return "\n".join(lines).format(
         top_name=top_name, tb_files=tb_files, part_name=part_name, t_clk=t_clk, argv=argv
     )
+
+def generate_hls_driver(top_name, input_map, init_map, output_map, axi_bitwidth) -> str:
+    """Generate HLS driver code for the given model.
+    Args:
+        model (ModelWrapper): The model to generate HLS driver code for.
+    Returns:
+        str: The generated HLS driver code as a string.
+    """
+    cwr = NewCodeWriter()
+    cwr.add_autogen_comment()
+
+    # Include sections for HLS
+    cwr.include("ap_int.h")
+    cwr.include("hls_stream.h")
+    cwr.include("hls_vector.h")
+    cwr.include("ap_axi_sdata.h")
+    cwr.include("utils/testbench_utils.hpp")
+
+    # Accelerator kernel function definition
+    kernel_function = cpp_function(
+        name=top_name,
+        return_type="void",
+        qualifiers=["extern"],
+    )
+    kernel_arguments = []
+
+    for value in input_map.values():
+        var = cpp_variable(
+            value["new_name"],
+            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&",
+        )
+        kernel_function.add_argument(var)
+        kernel_arguments.append(value["new_name"])
+
+    for const_input_name in {
+        init.name for init in init_map if "const_" in init.name
+    }:
+        var = cpp_variable(f"{const_input_name}", "hls::stream<ap_uint<8>>&")
+        kernel_function.add_argument(var)
+        kernel_arguments.append(f"{const_input_name}")
+
+    for output in output_map.values():
+        var = cpp_variable(
+            output["new_name"],
+            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&",
+        )
+        kernel_function.add_argument(var)
+        kernel_arguments.append(output["new_name"])
+
+    # Add the function prototype, which will be called from the main function.
+    cwr.add_function_prototype(kernel_function)
+
+    # Main testbench function definition
+    main_function = cpp_function(
+        name="main",
+        return_type="int",
+        arguments=[cpp_variable("argc", "int"), cpp_variable("argv", "char**")],
+    )
+
+    # Add file and streams declarations
+    file_arg_idx = 1
+    file_map = {}
+    for value in input_map.values():
+        file_name = "file_" + value["new_name"]
+        main_function.add_code(f"std::string {file_name} = argv[{file_arg_idx}];")
+        var = cpp_variable(
+            value["new_name"],
+            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
+        )
+        main_function.add_code(f"{var.generate_declaration()};")
+        file_arg_idx += 1
+
+    for value in output_map.values():
+        file_name = "file_" + value["new_name"]
+        main_function.add_code(f"std::string {file_name} = argv[{file_arg_idx}];")
+        var = cpp_variable(
+            value["new_name"],
+            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
+        )
+        main_function.add_code(f"{var.generate_declaration()};")
+        file_arg_idx += 1
+
+    # Add read from file calls for input streams
+    for value in input_map.values():
+        npy_read = cpp_function(
+            name=f"npy_to_hls_stream",
+            return_type="void",
+            templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
+            arguments=[
+                cpp_variable("input_path", "std::string"),
+                cpp_variable(f"stream", f"hls::stream<TAxi>&"),
+                cpp_variable("data_per_word", "int"),
+            ],
+        )
+
+        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+
+        main_function.add_code(
+            npy_read.generate_call(
+                [
+                    f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
+                    get_hls_quant_type(tensor_quant),
+                    get_cpp_quant_type(tensor_quant),
+                ],
+                f"file_{value['new_name']}",
+                value["new_name"],
+                data_per_word,
+            ) + ";"
+        )
+
+    # Add the kernel function call
+    main_function.add_code(f"{kernel_function.generate_call([], *kernel_arguments)};")
+
+    # Add write to file calls for output streams
+    for value in output_map.values():
+        npy_write = cpp_function(
+            name=f"hls_stream_to_npy",
+            return_type="void",
+            templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
+            arguments=[
+                cpp_variable("input_path", "std::string"),
+                cpp_variable(f"stream", f"hls::stream<TAxi>&"),
+                cpp_variable("data_per_word", "int"),
+                cpp_variable("shape", "const std::vector<size_t>&"),
+            ],
+        )
+
+        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+        shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
+
+        main_function.add_code(
+            npy_write.generate_call(
+                [
+                    f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
+                    get_hls_quant_type(tensor_quant),
+                    get_cpp_quant_type(tensor_quant),
+                ],
+                f"file_{value['new_name']}",
+                value["new_name"],
+                data_per_word,
+                shape_str,
+            ) + ";"
+        )
+
+    main_function.add_code("return 0;")
+    cwr.add_function_definition(main_function)
+    return cwr.code
 
 def make_build_dir(work_dir: str) -> None:
     """Create the working directory for the simulation."""
@@ -112,7 +263,13 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
 
     # Generate the HLS driver code
     with open(f"{work_dir}/testbench.cpp", "w") as f:
-        f.write(base64.b64decode(ap.hls_driver_b64).decode())
+        f.write(generate_hls_driver(
+            top_name=ap.top_name,
+            input_map=ap.input_map,
+            init_map=ap.constant_inputs,
+            output_map=ap.output_map,
+            axi_bitwidth=int(board_info["axi_bitwidth"]),
+        ))
 
     # run the simulation
     subprocess.run(

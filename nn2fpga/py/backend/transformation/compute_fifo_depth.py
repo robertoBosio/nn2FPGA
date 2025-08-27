@@ -1,11 +1,12 @@
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.custom_op.registry import getCustomOp
-from backend.core.fifo_depth import (
-    set_custom_tensor_fifo_depth,
-    TensorFifoDepth
+from backend.core.tensor_fifo import (
+    TensorFifo,
+    get_custom_tensor_fifo_metadata,
+    set_custom_tensor_fifo_metadata,
 )
-from backend.util.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
+from backend.util.codegen_utils import cpp_function, cpp_object, cpp_variable, NewCodeWriter
 from backend.util.board_util import read_board_info
 import os
 import json
@@ -34,8 +35,9 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
                 cwr.include(fname)
 
     cwr.include("utils/CSDFG_utils.hpp")
+    cwr.include("utils/DMA_utils.hpp")
     cwr.include("<fstream>")
-    cwr.include("<unordered_set>")
+    cwr.include("<unordered_map>")
 
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
@@ -45,30 +47,72 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
         function.add_code(f"{var.generate_declaration()};")
 
     stream_vars = []
-    stream_count = 0
-    for node in model.graph.node:
+    stream_count = len(model.graph.value_info)
+    for fifo in model.graph.value_info:
 
-        # Declare the output streams.
-        for stream in getCustomOp(node).get_output_stream_cpp(model):
-            function.add_code(f"{stream.generate_declaration()};")
-            
-            # Do not consider ConsumeStream nodes for streams size calculation.
-            if node.op_type != "ConsumeStream":
-                stream_vars.append(stream)
-                stream_count += stream.array[0] 
-
-        # Declare the variables used in the node
-        for var in getCustomOp(node).get_variable_cpp(model):
-            function.add_code(f"{var.generate_declaration()};")
-
-        # Generate the object declaration for the custom operation
-        if node.op_type != "ProduceStream":
-            function.add_code(getCustomOp(node).get_object_cpp(model).generate_declaration())
-        else:
-            # For ProduceStream, we need to pass the model II for the FixedThroughputProducer
-            function.add_code(
-                getCustomOp(node).get_object_cpp(model, model_II).generate_declaration()
+        # Declare the array of streams only for the first stream of the array.
+        if fifo.name.endswith("_0_"):
+            trimmed_name = fifo.name[:-3]  # Remove the _0_ suffix 
+            tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
+            var = cpp_variable(
+                trimmed_name,
+                f"hls::stream<{tensor_fifo.hls_type}>",
+                array=tensor_fifo.n_array,
             )
+            stream_vars.append((var, True))
+
+    for node in model.graph.node:
+        custom_op = getCustomOp(node)
+
+        # Declare the variables used in the custom operation.
+        function.add_code(custom_op.get_nodeattr("hls_variable_declarations"))
+
+        # Declare the object.
+        function.add_code(custom_op.get_nodeattr("hls_object_declaration"))
+
+    # Declare the output streams.
+    consumers_step_calls = []
+    for output in model.graph.output:
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, output.name)
+        func = cpp_object(
+            class_name="InfiniteThroughputDMA",
+            obj_name=f"InfiniteThroughputDMA_{output.name}",
+            template_args=[tensor_fifo.hls_type],
+            constructor_args=[tensor_fifo.n_array],
+        )
+        function.add_code(func.generate_declaration())
+        consumers_step_calls.append(
+            f"InfiniteThroughputDMA_{output.name}.step({output.name});"
+        )
+        var = cpp_variable(
+            output.name,
+            f"hls::stream<{tensor_fifo.hls_type}>",
+        )
+        stream_vars.append((var, False))
+
+    producers_step_calls = []
+    for input in model.graph.input:
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, input.name)
+        func = cpp_object(
+            class_name="FixedThroughputDMA",
+            obj_name=f"FixedThroughputDMA_{input.name}",
+            template_args=[tensor_fifo.hls_type],
+            constructor_args=[tensor_fifo.n_array, model_II]
+        )
+        function.add_code(func.generate_declaration())
+        producers_step_calls.append(
+            f"FixedThroughputDMA_{input.name}.step({input.name});"
+        )
+
+        var = cpp_variable(
+            input.name,
+            f"hls::stream<{tensor_fifo.hls_type}>",
+        )
+        stream_vars.append((var, False))
+
+    # Declare all the internal streams.
+    for stream, _ in stream_vars:
+        function.add_code(f"{stream.generate_declaration()};")
 
     # Declare the array of streams sizes.
     stream_sizes = cpp_variable("stream_max_size", primitive="size_t", value=[2] * stream_count) 
@@ -77,11 +121,13 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # Declare the clock cycle counter.
     clock_cycle = cpp_variable("clock_cycle", primitive="size_t", value=0)
     function.add_code(clock_cycle.generate_initialization())
+    actual_II = cpp_variable("actual_II", primitive="size_t", value=0)
+    function.add_code(actual_II.generate_initialization())
 
     # Declare the CSDFGState and CSDFGStateHasher for the visited states.
-    function.add_code("std::unordered_set<CSDFGState, CSDFGStateHasher> visited_states;")
+    function.add_code("std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;")
     function.add_code("CSDFGState current_state;")
-    
+
     # Write the while loop to process the data until all the processors are waiting.
     function.add_code("while (true) {")
     function.codewriter.indent()
@@ -89,28 +135,41 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("std::vector<size_t> channel_quantities;")
     function.add_code("ActorStatus actor_status;")
 
+    for step_call in consumers_step_calls:
+        function.add_code(f"actor_status = {step_call}")
+        function.add_code("actor_statuses.push_back(actor_status);")
+
     # Execute a step for each node in the model in reverse order.
     # It must be done in reverse order to ensure that nodes cannot immediately consume the data produced by the previous node.
     for node in reversed(model.graph.node):
-        function.add_code(f"actor_status = {getCustomOp(node).generate_step_call()};")
+        function.add_code(f"actor_status = {getCustomOp(node).get_nodeattr('hls_step_call')};")
+        function.add_code("actor_statuses.push_back(actor_status);")
+
+    # Execute a step for each input producer.
+    for step_call in producers_step_calls:
+        function.add_code(f"actor_status = {step_call}")
         function.add_code("actor_statuses.push_back(actor_status);")
 
     # Update the fifo max size for each stream.
     iter = 0
-    for stream in stream_vars:
-        for _ in range(stream.array[0]):
-            function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[0].size(), stream_max_size[{iter}]);")
-            function.add_code(f"channel_quantities.push_back({stream.name}[0].size());")
-            iter += 1
+    for stream, is_internal in stream_vars:
+        if is_internal:
+            for s in range(stream.array):
+                function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[{s}].size(), stream_max_size[{iter}]);")
+                function.add_code(f"channel_quantities.push_back({stream.name}[{s}].size());")
+                iter += 1
+        else:
+            function.add_code(f"channel_quantities.push_back({stream.name}.size());")
 
     function.add_code("current_state = CSDFGState(actor_statuses, channel_quantities);")
-    function.add_code("clock_cycle++;")
     function.add_code("if (visited_states.find(current_state) != visited_states.end()) {")
     function.codewriter.indent()
+    function.add_code("actual_II = clock_cycle - visited_states[current_state];")
     function.add_code("break;")
     function.codewriter.dedent()
     function.add_code("}")
-    function.add_code("visited_states.insert(current_state);")
+    function.add_code("visited_states.emplace(current_state, clock_cycle);")
+    function.add_code("clock_cycle++;")
     function.codewriter.dedent()
     function.add_code("};")
 
@@ -121,21 +180,17 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
 
     # Write the fifo depth for each stream.
     iter = 0
-    for stream in stream_vars:
-        function.add_code(f'report_file << "\t\t\\\"{stream.name}\\\": [" << std::endl;')
-        for s in range(stream.array[0]):
-            if s != stream.array[0] - 1:
-                function.add_code(f'report_file << "\t\t\t" << stream_max_size[{iter}] << ",\\n";')
+    for stream in [s for s, is_internal in stream_vars if is_internal]:
+        for s in range(stream.array):
+            if iter < stream_count - 1:
+                function.add_code(f'report_file << "\t\t\\\"{stream.name}_{s}_\\\": " << stream_max_size[{iter}] << ",\\n";')
             else:
-                function.add_code(f'report_file << "\t\t\t" << stream_max_size[{iter}] << "\\n";')
+                function.add_code(f'report_file << "\t\t\\\"{stream.name}_{s}_\\\": " << stream_max_size[{iter}] << "\\n";')
             iter += 1
-        if iter != stream_count:
-            function.add_code("report_file << \"\t\t],\\n\";")
-        else:
-            function.add_code("report_file << \"\t\t]\\n\";")
 
     function.add_code("report_file << \"\t},\\n\";")
-    function.add_code("report_file << \"\t\\\"latency\\\": \" << clock_cycle << \"\\n\";")
+    function.add_code("report_file << \"\t\\\"Simulation cycles\\\": \" << clock_cycle << \",\\n\";")
+    function.add_code("report_file << \"\t\\\"II\\\": \" << actual_II << \"\\n\";")
     function.add_code("report_file << \"}\\n\";")
     function.add_code("report_file.close();")
     cwr.add_function_definition(function)
@@ -283,14 +338,10 @@ class ComputeFifoDepth(Transformation):
             raise ValueError("No FIFO depth data found in the generated file.")
         
         # Store the FIFO depth in the model metadata.
-        for stream_name, depths_array in fifo_depths.items():
-            depths = TensorFifoDepth(depths_array)
-
-            # Remove the "stream" suffix from the stream name.
-            stream_name = stream_name.replace("_stream", "")
-
-            # Set the custom tensor FIFO depth in the model.
-            set_custom_tensor_fifo_depth(model, stream_name, depths)
+        for stream_name, depth in fifo_depths.items():
+            current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
+            current_meta.depth = depth
+            set_custom_tensor_fifo_metadata(model, stream_name, current_meta)
         
         # Optionally erase the working directory.
         if self.erase:

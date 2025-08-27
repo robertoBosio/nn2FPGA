@@ -60,7 +60,7 @@ template <typename TInputWord, typename TInput, typename TOutputWord,
           size_t HEIGHT, size_t WIDTH, size_t CH, size_t OUT_W_PAR,
           size_t OUT_CH_PAR>
 class NHWCToStream {
-  static constexpr size_t ITER = HEIGHT * WIDTH * CH;
+  static constexpr size_t ITER = HEIGHT * WIDTH * CH / (OUT_W_PAR * OUT_CH_PAR);
 
 public:
   static_assert(OUT_W_PAR == 1 || CH == OUT_CH_PAR,
@@ -70,13 +70,12 @@ public:
                 "WIDTH must be a multiple of OUT_W_PAR");
 
   NHWCToStream()
-      : NHWCToStream(1, HEIGHT * WIDTH * CH / (OUT_CH_PAR * OUT_W_PAR)) {}
+      : NHWCToStream(1) {}
 
-  NHWCToStream(size_t pipeline_depth, size_t nnII)
+  NHWCToStream(size_t pipeline_depth)
       : STEP_pipeline_depth(pipeline_depth), STEP_i_output_word(0),
         STEP_head(0), STEP_tail(0), STEP_size(0),
-        STEP_actor_status(pipeline_depth,
-                          (HEIGHT * WIDTH * CH) / (OUT_CH_PAR * OUT_W_PAR)) {
+        STEP_actor_status(pipeline_depth, ITER) {
     for (size_t i = 0; i < OUT_W_PAR; ++i) {
       STEP_delayed_output[i] = PipelineDelayBuffer<TOutputWord>(pipeline_depth);
     }
@@ -85,79 +84,78 @@ public:
   void run(hls::stream<TInputWord> &input_data_stream,
            hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
     TOutput circular_buffer[DATA_PER_WORD * 2];
-    size_t head = 0; // Head index for circular buffer
-    size_t tail = 0; // Tail index for circular buffer
-    size_t size = 0; // Current size of the circular buffer
+    char head = 0; // Head index for circular buffer
+    char tail = 0; // Tail index for circular buffer
+    char size = 0; // Current size of the circular buffer
 
     // Loop through the word packets of the output tensor.
-    for (size_t i_output_word = 0; i_output_word < ITER;
-         i_output_word += OUT_CH_PAR * OUT_W_PAR) {
+NHWC_TO_STREAM_MAINLOOP:
+  for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
 #pragma HLS pipeline II = 1
-      NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
-                                  circular_buffer, head, size, tail);
-    }
+    NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
+                                circular_buffer, head, size, tail);
+  }
+}
+
+ActorStatus step(hls::stream<TInputWord> &input_data_stream,
+                 hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+
+  bool firing_condition = true;
+  if (STEP_size < OUT_CH_PAR * OUT_W_PAR && input_data_stream.empty()) {
+    firing_condition = false;
   }
 
-  ActorStatus step(hls::stream<TInputWord> &input_data_stream,
-                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
-
-    bool firing_condition = true;
-    if (STEP_size < OUT_CH_PAR * OUT_W_PAR && input_data_stream.empty()) {
-      firing_condition = false;
+  if (firing_condition) {
+    hls::stream<TOutputWord> output_stream[OUT_W_PAR];
+    NHWCToStream::pipeline_body(input_data_stream, output_stream,
+                                STEP_circular_buffer, STEP_head, STEP_size,
+                                STEP_tail);
+    STEP_i_output_word++;
+    if (STEP_i_output_word >= ITER) {
+      STEP_i_output_word = 0;
     }
 
-    if (firing_condition) {
-      hls::stream<TOutputWord> output_stream[OUT_W_PAR];
-      NHWCToStream::pipeline_body(input_data_stream, output_stream,
-                                  STEP_circular_buffer, STEP_head, STEP_size,
-                                  STEP_tail);
-      STEP_i_output_word += OUT_CH_PAR * OUT_W_PAR;
-      if (STEP_i_output_word >= ITER) {
-        STEP_i_output_word = 0;
-      }
+    // Insert the firing status for the current step.
+    STEP_actor_status.fire();
 
-      // Insert the firing status for the current step.
-      STEP_actor_status.fire();
-
-      // Add the output to the delayed output stream.
-      for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-        if (!output_stream[i_w_par].empty()) {
-          STEP_delayed_output[i_w_par].push(output_stream[i_w_par].read(),
-                                            true);
-        } else {
-          STEP_delayed_output[i_w_par].push(TOutputWord(),
-                                            false); // Placeholder, ignored
-        }
-      }
-    } else {
-
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        STEP_delayed_output[i].push(TOutputWord(), false);
-      }
-    }
-
-    // Advance the state of the actor firings.
-    STEP_actor_status.advance();
-
-    // Write the output data to the output stream.
-    TOutputWord out;
+    // Add the output to the delayed output stream.
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
-        output_data_stream[i_w_par].write(out);
+      if (!output_stream[i_w_par].empty()) {
+        STEP_delayed_output[i_w_par].push(output_stream[i_w_par].read(), true);
+      } else {
+        STEP_delayed_output[i_w_par].push(TOutputWord(),
+                                          false); // Placeholder, ignored
       }
     }
+  } else {
 
-    // Return the current firing iteration index.
-    return STEP_actor_status;
+    for (size_t i = 0; i < OUT_W_PAR; ++i) {
+      STEP_delayed_output[i].push(TOutputWord(), false);
+    }
   }
+
+  // Advance the state of the actor firings.
+  STEP_actor_status.advance();
+
+  // Write the output data to the output stream.
+  TOutputWord out;
+  for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
+    if (STEP_delayed_output[i_w_par].pop(out)) {
+      output_data_stream[i_w_par].write(out);
+    }
+  }
+
+  // Return the current firing iteration index.
+  return STEP_actor_status;
+}
 
 private:
   // State variables for step execution
   TOutput
       STEP_circular_buffer[DATA_PER_WORD * 2]; // Circular buffer for input data
-  size_t STEP_head = 0;                        // Head index for circular buffer
-  size_t STEP_tail = 0;                        // Tail index for circular buffer
-  size_t STEP_size = 0;           // Current size of the circular buffer
+  char STEP_head = 0;                        // Head index for circular buffer
+  char STEP_tail = 0;                        // Tail index for circular buffer
+  char STEP_size = 0;           // Current size of the circular buffer
   size_t STEP_i_output_word = 0;  // Current output word index
   size_t STEP_pipeline_depth = 1; // Pipeline depth
 
@@ -170,8 +168,8 @@ private:
   static void
   pipeline_body(hls::stream<TInputWord> &input_data_stream,
                 hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                TOutput circular_buffer[DATA_PER_WORD * 2], size_t &head,
-                size_t &size, size_t &tail) {
+                TOutput circular_buffer[DATA_PER_WORD * 2], char &head,
+                char &size, char &tail) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.
 
