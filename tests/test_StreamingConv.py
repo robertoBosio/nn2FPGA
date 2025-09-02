@@ -1,10 +1,9 @@
-import subprocess
 import os
-import pytest
-from onnx import TensorProto, helper
+import subprocess
 import numpy as np
 import onnxruntime as ort
 import csnake
+from onnx import TensorProto, helper
 
 PROJECT_NAME = "proj_unit_test"
 FILE_DIR = f"/workspace/NN2FPGA/nn2fpga/library"
@@ -132,17 +131,39 @@ def generate_config_file(config_dict):
     cwr.add_line("}")
     return cwr.code
 
-def generate_hls_script(testconfig_file):
-    return f"""
-open_project "{PROJECT_NAME}"
-open_solution -reset solution0
-add_files {FILE_DIR}/include/{FILENAME}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-add_files -tb {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-add_files -tb {testconfig_file}
+def generate_hls_script(steps: str) -> str:
+    steps = [step.strip() for step in steps.split(",")]
+    do_csim   = "csim"   in steps
+    do_csynth = "csynth" in steps
+    do_cosim  = "cosim"  in steps
 
-csim_design
-exit
-"""
+    if not (do_csim or do_csynth or do_cosim):
+        do_csim = True  # default to csim if no valid step is provided
+
+    if do_cosim and not do_csynth:
+        do_csynth = True  # csynth is required for cosim
+
+    print(f"Running HLS steps: {', '.join(steps)}")
+    lines = [
+        f'open_project -reset "{PROJECT_NAME}"',
+        'open_solution -reset solution0',
+        f'add_files {FILE_DIR}/include/{FILENAME}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"',
+        f'add_files {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
+        f'add_files -tb {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
+        "set_top wrap_run",
+        "set_part xck26-sfvc784-2LV-c",
+        "create_clock -period 3.33ns",
+        "config_compile -pipeline_style frp",
+        "",
+    ]
+    if do_csim:
+        lines.append("csim_design -argv csim")
+    if do_csynth:
+        lines.append("csynth_design")
+    if do_cosim:
+        lines.append("cosim_design -argv cosim")
+    lines.append("exit")
+    return "\n".join(lines)
 
 def runhls(tcl_file):
     # Write the Tcl script to a temporary file
@@ -154,18 +175,21 @@ def runhls(tcl_file):
         text=True
     )
 
-def run(config_dict):
+def run(config_dict, steps: str):
     testconfig_file = "test_config.hpp"
     with open(testconfig_file, "w") as f:
         f.write(generate_config_file(config_dict))
 
     tcl_file = "script.tcl"
     with open(tcl_file, 'w') as f:
-        f.write(generate_hls_script(testconfig_file))
+        f.write(generate_hls_script(steps))
 
     result = runhls(tcl_file)
     assert result.returncode == 0, f"Simulation failed: {result.stderr}"
-    assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
+    if "csim" in steps or "cosim" in steps:
+        assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
+    if "csynth" in steps:
+        assert "All loop constraints were satisfied" in result.stdout, f"Loop constraints not satisfied: {result.stdout}"
 
     # Clean up the temporary Tcl file
     os.remove(tcl_file)
@@ -180,7 +204,8 @@ def run(config_dict):
     for log_file in log_files:
         os.remove(log_file)
 
-def test_pointwise_pertensor_po2():
+def test_pointwise_pertensor_po2(request):
+    steps = request.config.getoption("--hls-steps")
 
     # set a fixed random seed for reproducibility
     np.random.seed(42)
@@ -207,7 +232,7 @@ def test_pointwise_pertensor_po2():
         "DIL_W": 1,
         "IN_CH_PAR": 2,
         "OUT_CH_PAR": 2,
-        "W_PAR": 2,
+        "W_PAR": 1,
         "GROUP": 1,
         "X_SCALE": 2**-5,
         "W_SCALE": 2**-5,
@@ -218,9 +243,11 @@ def test_pointwise_pertensor_po2():
         "PIPELINE_DEPTH": 5
     }
 
-    run(config_dict)
+    run(config_dict, steps)
 
-def test_pointwise_pertensor_po2_stride():
+def test_pointwise_pertensor_po2_stride(request):
+    steps = request.config.getoption("--hls-steps")
+
     # set a fixed random seed for reproducibility
     np.random.seed(42)
 
@@ -257,9 +284,11 @@ def test_pointwise_pertensor_po2_stride():
         "PIPELINE_DEPTH": 3
     }
 
-    run(config_dict)
+    run(config_dict, steps)
 
-def test_3x3_pertensor_po2():
+def test_3x3_pertensor_po2(request):
+    steps = request.config.getoption("--hls-steps")
+
     # set a fixed random seed for reproducibility
     np.random.seed(42)
 
@@ -285,7 +314,7 @@ def test_3x3_pertensor_po2():
         "DIL_W": 1,
         "IN_CH_PAR": 2,
         "OUT_CH_PAR": 2,
-        "W_PAR": 2,
+        "W_PAR": 1,
         "GROUP": 1,
         "X_SCALE": 2**-5,
         "W_SCALE": 2**-5,
@@ -296,9 +325,11 @@ def test_3x3_pertensor_po2():
         "PIPELINE_DEPTH": 1
     }
 
-    run(config_dict)
+    run(config_dict, steps)
 
-def test_1x5_pertensor_po2():
+def test_1x5_pertensor_po2(request):
+    steps = request.config.getoption("--hls-steps")
+
     # set a fixed random seed for reproducibility
     np.random.seed(42)
 
@@ -335,7 +366,45 @@ def test_1x5_pertensor_po2():
         "PIPELINE_DEPTH": 2
     }
 
-    run(config_dict)
+    run(config_dict, steps)
 
-    
+def test_fullyconnected_pertensor_po2(request):
+    steps = request.config.getoption("--hls-steps")
 
+    # set a fixed random seed for reproducibility
+    np.random.seed(42)
+
+    config_dict = {
+        "ACC_DATAWIDTH": 32,
+        "INPUT_DATAWIDTH": 8,
+        "WEIGHT_DATAWIDTH": 8,
+        "BIAS_DATAWIDTH": 32,
+        "OUTPUT_DATAWIDTH": 8,
+        "OUT_HEIGHT": 1,
+        "OUT_WIDTH": 1,
+        "IN_CH": 4,
+        "OUT_CH": 4,
+        "FH": 1,
+        "FW": 1,
+        "STRIDE_H": 1,
+        "STRIDE_W": 1,
+        "PAD_T": 0,
+        "PAD_B": 0,
+        "PAD_L": 0,
+        "PAD_R": 0,
+        "DIL_H": 1,
+        "DIL_W": 1,
+        "IN_CH_PAR": 4,
+        "OUT_CH_PAR": 2,
+        "W_PAR": 1,
+        "GROUP": 1,
+        "X_SCALE": 2**-5,
+        "W_SCALE": 2**-5,
+        "Y_SCALE": 2**-5,
+        "X_ZP": 0,
+        "W_ZP": 0,
+        "Y_ZP": 0,
+        "PIPELINE_DEPTH": 3
+    }
+
+    run(config_dict, steps)

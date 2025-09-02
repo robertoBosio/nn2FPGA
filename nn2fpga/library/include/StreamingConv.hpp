@@ -4,8 +4,60 @@
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
 
-template <typename TInputStruct, typename TInput, typename TWeightStruct,
-          typename TBiasStruct, typename TOutputStruct, typename TOutput,
+/**
+ * @brief StreamingConv implements a quantized convolution with only streaming
+ * in input and output. Works only with NHWC data layout.
+ *
+ * @tparam TInputWord      Data type for input word (packed input channels).
+ * @tparam TInput          Data type for individual input elements.
+ * @tparam TWeightWord     Data type for weight word (packed weights).
+ * @tparam TBiasWord       Data type for bias word (packed biases).
+ * @tparam TOutputWord     Data type for output word (packed output channels).
+ * @tparam TOutput         Data type for individual output elements.
+ * @tparam TAcc            Data type for accumulator (intermediate sum).
+ * @tparam Quantizer       Quantizer functor type for output quantization.
+ * @tparam OUT_CH          Number of output channels.
+ * @tparam IN_CH           Number of input channels.
+ * @tparam OUT_HEIGHT      Output feature map height.
+ * @tparam OUT_WIDTH       Output feature map width.
+ * @tparam GROUP           Number of groups for grouped convolution.
+ * @tparam FH              Filter height.
+ * @tparam FW              Filter width.
+ * @tparam STRIDE_H        Stride along height.
+ * @tparam STRIDE_W        Stride along width.
+ * @tparam IN_CH_PAR       Parallelism factor for input channels.
+ * @tparam OUT_CH_PAR      Parallelism factor for output channels.
+ * @tparam W_PAR           Parallelism factor for output width (pixels).
+ *
+ * @note
+ * - The class provides two main interfaces:
+ *   - run(): Processes the entire convolution in a blocking fashion.
+ *   - step(): Processes one pipeline step, suitable for CSDFG (Cyclo-Static
+ * Data Flow Graph) scheduling.
+ *
+ * @section Implementation Details
+ * - Weights are packed into words of IN_CH_PAR channels of OUT_CH_PAR filters.
+ * Since we need to read FH*FW weights at each cycle, the weight input stream
+ * is an array of FH*FW streams. Each stream provides IN_CH_PAR*OUT_CH_PAR
+ * weights. Weights are read at each step. The only filter reuse is due to the
+ * W_PAR factor, which allows to reuse the same weights for W_PAR adjacent output
+ * pixels.
+ * - Input data are packed into words of IN_CH_PAR channels. The window is
+ * expanded to account for the stride and the width parallelism factor W_PAR,
+ * such that no data is duplicated. The input stream is an array of
+ * FH*(FW+(W_PAR-1)*STRIDE_W) streams, each providing IN_CH_PAR input channels.
+ * The input window is completely reused.
+ * - Biases are packed into words of OUT_CH_PAR channels. The bias stream
+ * provides OUT_CH_PAR biases. 
+ * - Accumulators and input buffers are partitioned for parallel access.
+ * 
+ * @todo
+ * - Add support for grouped convolutions.
+ *
+ */
+
+template <typename TInputWord, typename TInput, typename TWeightWord,
+          typename TBiasWord, typename TOutputWord, typename TOutput,
           typename TAcc, typename Quantizer, size_t OUT_CH, size_t IN_CH,
           size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t GROUP, size_t FH,
           size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t IN_CH_PAR,
@@ -22,7 +74,7 @@ public:
   static_assert(FH > 0 && FW > 0, "FH and FW must be greater than 0");
   static_assert(STRIDE_H > 0 && STRIDE_W > 0, "STRIDE must be greater than 0");
   static_assert(GROUP > 0 && GROUP <= IN_CH,
-                "GROUP must be between 0 and IN_CH");
+                "GROUP must be between 1 and IN_CH");
   static_assert(IN_CH % GROUP == 0, "IN_CH must be a multiple of GROUP");
   static_assert(IN_CH_PAR > 0, "IN_CH_PAR must be greater than 0");
   static_assert(OUT_CH_PAR > 0, "OUT_CH_PAR must be greater than 0");
@@ -33,6 +85,7 @@ public:
                 "IN_CH must be a multiple of IN_CH_PAR");
   static_assert(OUT_WIDTH % W_PAR == 0,
                 "OUT_WIDTH must be a multiple of W_PAR");
+  static_assert(GROUP == 1, "Grouped convolution not supported yet");
 
   StreamingConv() : StreamingConv(1) {}
 
@@ -44,15 +97,15 @@ public:
                               (IN_CH / IN_CH_PAR)) {
     for (size_t i = 0; i < W_PAR; ++i) {
       STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputStruct>(pipeline_depth);
+          PipelineDelayBuffer<TOutputWord>(pipeline_depth);
     }
   }
 
   void
-  run(hls::stream<TInputStruct> i_data[FH * FW_EXPAND],
-      hls::stream<TWeightStruct> i_weights[FH * FW],
-      hls::stream<TBiasStruct> i_biases[1],
-      hls::stream<TOutputStruct> o_data[W_PAR]) {
+  run(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
+      hls::stream<TWeightWord> i_weights[FH * FW],
+      hls::stream<TBiasWord> i_biases[1],
+      hls::stream<TOutputWord> o_data[W_PAR]) {
 
     // Accumulator buffer.
     // The order of the loops impose that for each input window, we process
@@ -63,9 +116,11 @@ public:
     // clock cycle, the convolution will process OUT_CH_PAR output channels and
     // W_PAR input windows.
     TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+#pragma HLS ARRAY_PARTITION variable = acc_buff dim = 2
 
     // Input structure to hold the input data.
-    TInputStruct input_data[FH][FW_EXPAND];
+    TInputWord input_data[FH][FW_EXPAND];
+#pragma HLS ARRAY_PARTITION variable = input_data dim = 0
 
     for (size_t i_hw = 0; i_hw < OUT_HEIGHT * OUT_WIDTH / W_PAR; i_hw++) {
       for (size_t i_ich = 0; i_ich < IN_CH; i_ich += IN_CH_PAR) {
@@ -79,10 +134,10 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputStruct> i_data[FH * FW_EXPAND],
-                   hls::stream<TWeightStruct> i_weights[FH * FW],
-                   hls::stream<TBiasStruct> i_biases[1],
-                   hls::stream<TOutputStruct> o_data[W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
+                   hls::stream<TWeightWord> i_weights[FH * FW],
+                   hls::stream<TBiasWord> i_biases[1],
+                   hls::stream<TOutputWord> o_data[W_PAR]) {
     bool firing_condition = true;
 
     // Check non empty input streams. Input data are read only at the
@@ -114,7 +169,7 @@ public:
 
     if (firing_condition) {
 
-      hls::stream<TOutputStruct> instant_output_stream[W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[W_PAR];
       StreamingConv::pipeline_body(
           i_data, i_weights, i_biases, instant_output_stream, STEP_input_data,
           STEP_acc_buff[STEP_i_och / OUT_CH_PAR], STEP_i_ich, STEP_i_och);
@@ -146,13 +201,13 @@ public:
               instant_output_stream[i_w_par].read(), true);
         } else {
           // If the output stream is empty, push a placeholder.
-          STEP_delayed_output[i_w_par].push(TOutputStruct(), false);
+          STEP_delayed_output[i_w_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i_w_par = 0; i_w_par < W_PAR; ++i_w_par) {
-        STEP_delayed_output[i_w_par].push(TOutputStruct(), false);
+        STEP_delayed_output[i_w_par].push(TOutputWord(), false);
       }
     }
 
@@ -160,7 +215,7 @@ public:
     STEP_actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       if (STEP_delayed_output[i_w_par].pop(out)) {
         o_data[i_w_par].write(out);
@@ -177,29 +232,29 @@ private:
   size_t STEP_i_ich;
   size_t STEP_i_och;
   size_t STEP_pipeline_depth;
-  TInputStruct STEP_input_data[FH][FW_EXPAND];
+  TInputWord STEP_input_data[FH][FW_EXPAND];
   TAcc STEP_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 
   // CSDFG state variables
   ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputStruct> STEP_delayed_output[W_PAR];
+  PipelineDelayBuffer<TOutputWord> STEP_delayed_output[W_PAR];
 
-  static void pipeline_body(hls::stream<TInputStruct> i_data[FH * FW_EXPAND],
-                            hls::stream<TWeightStruct> i_weights[FH * FW],
-                            hls::stream<TBiasStruct> i_biases[1],
-                            hls::stream<TOutputStruct> o_data[W_PAR],
-                            TInputStruct input_data[FH][FW_EXPAND],
+  static void pipeline_body(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
+                            hls::stream<TWeightWord> i_weights[FH * FW],
+                            hls::stream<TBiasWord> i_biases[1],
+                            hls::stream<TOutputWord> o_data[W_PAR],
+                            TInputWord input_data[FH][FW_EXPAND],
                             TAcc acc_buff_par[OUT_CH_PAR * W_PAR],
                             size_t i_ich, size_t i_och) {
 #pragma HLS inline
 
     Quantizer quantizer;
     // Output structure to hold the results.
-    TOutputStruct output_data;
+    TOutputWord output_data;
     // Weight structure to hold the weights.
-    TWeightStruct weight_data[FH][FW];
+    TWeightWord weight_data[FH][FW];
     // Bias structure to hold the biases.
-    TBiasStruct bias_data;
+    TBiasWord bias_data;
 
     // Read the input data for the current expanded window.
     if (i_och == 0) {
