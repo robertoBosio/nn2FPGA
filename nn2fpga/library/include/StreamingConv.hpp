@@ -64,12 +64,15 @@ public:
     // W_PAR input windows.
     TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 
+    // Input structure to hold the input data.
+    TInputStruct input_data[FH][FW_EXPAND];
+
     for (size_t i_hw = 0; i_hw < OUT_HEIGHT * OUT_WIDTH / W_PAR; i_hw++) {
       for (size_t i_ich = 0; i_ich < IN_CH; i_ich += IN_CH_PAR) {
         for (size_t i_och = 0; i_och < OUT_CH; i_och += OUT_CH_PAR) {
 #pragma HLS pipeline II = 1
           StreamingConv::pipeline_body(i_data, i_weights, i_biases, o_data,
-                                       acc_buff[i_och / OUT_CH_PAR],
+                                       input_data, acc_buff[i_och / OUT_CH_PAR],
                                        i_ich, i_och);
         }
       }
@@ -113,7 +116,7 @@ public:
 
       hls::stream<TOutputStruct> instant_output_stream[W_PAR];
       StreamingConv::pipeline_body(
-          i_data, i_weights, i_biases, instant_output_stream,
+          i_data, i_weights, i_biases, instant_output_stream, STEP_input_data,
           STEP_acc_buff[STEP_i_och / OUT_CH_PAR], STEP_i_ich, STEP_i_och);
 
       STEP_i_och += OUT_CH_PAR;
@@ -174,6 +177,7 @@ private:
   size_t STEP_i_ich;
   size_t STEP_i_och;
   size_t STEP_pipeline_depth;
+  TInputStruct STEP_input_data[FH][FW_EXPAND];
   TAcc STEP_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 
   // CSDFG state variables
@@ -184,6 +188,7 @@ private:
                             hls::stream<TWeightStruct> i_weights[FH * FW],
                             hls::stream<TBiasStruct> i_biases[1],
                             hls::stream<TOutputStruct> o_data[W_PAR],
+                            TInputStruct input_data[FH][FW_EXPAND],
                             TAcc acc_buff_par[OUT_CH_PAR * W_PAR],
                             size_t i_ich, size_t i_och) {
 #pragma HLS inline
@@ -191,8 +196,6 @@ private:
     Quantizer quantizer;
     // Output structure to hold the results.
     TOutputStruct output_data;
-    // Input structure to hold the input data.
-    TInputStruct input_data[FH][FW_EXPAND];
     // Weight structure to hold the weights.
     TWeightStruct weight_data[FH][FW];
     // Bias structure to hold the biases.
@@ -231,7 +234,7 @@ private:
       for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
 
         // Compute the index of the accumulator.
-        size_t acc_index = i_och_par * W_PAR + i_w_par;
+        size_t acc_index = i_w_par * OUT_CH_PAR + i_och_par;
 
         for (size_t i_fh = 0; i_fh < FH; i_fh++) {
           for (size_t i_fw = 0; i_fw < FW; i_fw++) {
@@ -242,7 +245,7 @@ private:
             for (size_t i_ich_par = 0; i_ich_par < IN_CH_PAR; i_ich_par++) {
               acc_buff_par[acc_index] +=
                   input_data[i_fh][i_fw_expanded][i_ich_par] *
-                  weight_data[i_fh][i_fw][i_och_par][i_ich_par];
+                  weight_data[i_fh][i_fw][i_och_par * IN_CH_PAR + i_ich_par];
             }
           }
         }
