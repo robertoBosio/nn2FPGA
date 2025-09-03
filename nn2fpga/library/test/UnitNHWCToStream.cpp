@@ -9,20 +9,23 @@
 #include <unordered_map>
 #include "utils/CSDFG_utils.hpp"
 
+using TOutputWord = std::array<test_config::TOutput, test_config::OUT_CH_PAR>;
+
+void wrap_run(
+    hls::stream<test_config::TInputWord>& in_stream,
+    hls::stream<TOutputWord> out_stream[test_config::OUT_W_PAR]) {
+#pragma HLS INTERFACE axis port = in_stream
+
+NHWCToStream<test_config::TInputWord, test_config::TInput, TOutputWord,
+               test_config::TOutput, test_config::Quantizer,
+               test_config::DATA_PER_WORD, test_config::HEIGHT,
+               test_config::WIDTH, test_config::CH, test_config::OUT_W_PAR,
+               test_config::OUT_CH_PAR>
+    producer;
+  producer.run(in_stream, out_stream);
+}
+
 bool test_run() {
-  // This function tests the run() method of NHWCToStream function.
-
-  using TOutputWord =
-      std::array<test_config::TOutput, test_config::OUT_CH_PAR>;
-
-  // Instantiate the operator
-  NHWCToStream<test_config::TInputWord, test_config::TInput,
-                TOutputWord, test_config::TOutput,
-                test_config::Quantizer, test_config::DATA_PER_WORD,
-                test_config::HEIGHT, test_config::WIDTH,
-                test_config::CH, test_config::OUT_W_PAR,
-                test_config::OUT_CH_PAR>
-      producer;
 
   // Prepare input and output streams
   hls::stream<test_config::TInputWord> in_stream;
@@ -58,7 +61,7 @@ bool test_run() {
   }
 
   // Run producer
-  producer.run(in_stream, out_stream);
+  wrap_run(in_stream, out_stream);
 
   // Read and check output
   bool flag = true;
@@ -82,7 +85,6 @@ bool test_run() {
 bool test_step() {
   // This function tests the step() method of NHWCToStream.
 
-  using TOutputWord = std::array<test_config::TOutput, test_config::OUT_CH_PAR>;
   static constexpr size_t expectedII = test_config::HEIGHT *test_config::WIDTH *test_config::CH /
                      (test_config::OUT_CH_PAR * test_config::OUT_W_PAR);
 
@@ -135,11 +137,17 @@ bool test_step() {
   return flag;
 }
 
-int main() {
+int main(int argc, char **argv) {
 
   bool all_passed = true;
+
   all_passed &= test_run();
-  all_passed &= test_step();
+
+  // Testing the pipeline with csim only, as it is only relevant for fifo depth
+  // estimations
+  if (argc > 1 && std::string(argv[1]) == "csim") {
+    all_passed &= test_step();
+  }
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;

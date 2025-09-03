@@ -25,8 +25,11 @@ class BaseHLSTest(ABC):
         filename = self.operator_filename
         steps_list = [s.strip() for s in steps.split(",")]
         do_csim   = "csim"   in steps_list
-        do_csynth = "csynth" in steps_list or "cosim" in steps_list  # cosim implies csynth
+        do_csynth = (
+            "csynth" in steps_list or "cosim" in steps_list or "export" in steps_list
+        )
         do_cosim  = "cosim"  in steps_list
+        do_export = "export" in steps_list
 
         lines = [
             f'open_project -reset "{PROJECT_NAME}"',
@@ -46,6 +49,8 @@ class BaseHLSTest(ABC):
             lines.append("csynth_design")
         if do_cosim:
             lines.append("cosim_design -argv cosim")
+        if do_export:
+            lines.append(f'export_design -flow impl')
         lines.append("exit")
         return "\n".join(lines)
 

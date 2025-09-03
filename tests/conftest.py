@@ -1,12 +1,14 @@
 import pytest
 
+
 def pytest_addoption(parser):
     parser.addoption(
         "--hls-steps",
         action="store",
-        default="csim,csynth,cosim",
-        help="Comma-separated HLS steps to run (choose from: csim, csynth, cosim)",
+        default="csim",
+        help="Comma-separated HLS steps to run (choose from: csim, csynth, cosim and export)",
     )
+
 
 @pytest.fixture
 def hls_steps(request):

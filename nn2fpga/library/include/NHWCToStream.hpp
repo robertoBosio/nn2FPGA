@@ -5,7 +5,6 @@
 #include <cstddef>
 
 /**
- * @class NHWCToStream
  * @brief NHWCToStream is a templated class for streaming data into neural
  * network data, converting AXI streams to the nn2FPGA data format based on the
  * parallelism selected.
