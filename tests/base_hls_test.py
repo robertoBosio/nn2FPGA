@@ -12,7 +12,7 @@ class BaseHLSTest(ABC):
     """
 
     @abstractmethod
-    def generate_config_file(self, config_dict) -> str:
+    def generate_config_file(self, config_dict, **kwargs) -> str:
         ...
 
     @property
@@ -58,11 +58,11 @@ class BaseHLSTest(ABC):
             text=True,
         )
 
-    def run(self, config_dict: dict, steps: str, workdir: str = "."):
+    def run(self, config_dict: dict, steps: str, workdir: str = ".", **kwargs):
         # write config header
         testconfig_path = os.path.join(workdir, "test_config.hpp")
         with open(testconfig_path, "w") as f:
-            f.write(self.generate_config_file(config_dict))
+            f.write(self.generate_config_file(config_dict, **kwargs))
 
         # write script
         tcl_path = os.path.join(workdir, "script.tcl")
