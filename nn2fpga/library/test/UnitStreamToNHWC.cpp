@@ -9,17 +9,23 @@
 #include "utils/CSDFG_utils.hpp"
 #include "test_config.hpp"
 
-bool test_run() {
-  // This function tests the run() method of StreamToNHWC.
-  using TInputWord = std::array<test_config::TInput, test_config::IN_CH_PAR>;
+using TInputWord = std::array<test_config::TInput, test_config::IN_CH_PAR>;
 
-  // Instantiate the operator
+void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::IN_W_PAR],
+              hls::stream<test_config::TOutputWord> &output_data_stream) {
+#pragma HLS INTERFACE axis port = output_data_stream
+  // Wrapper function to call the run() method of StreamToNHWC, for synthesis.
   StreamToNHWC<TInputWord, test_config::TInput, test_config::TOutputWord,
                test_config::TOutput, test_config::Quantizer,
                test_config::DATA_PER_WORD, test_config::HEIGHT,
                test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
                test_config::IN_CH_PAR>
       consumer;
+  consumer.run(input_data_stream, output_data_stream);
+}
+
+bool test_run() {
+  // This function tests the run() method of StreamToNHWC.
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::IN_W_PAR];
@@ -39,7 +45,7 @@ bool test_run() {
   }
 
   // Run consumer
-  consumer.run(in_stream, out_stream);
+  wrap_run(in_stream, out_stream);
 
   // Read and check output
   bool flag = true;
@@ -52,11 +58,19 @@ bool test_run() {
         output_struct = out_stream.read();
       }
 
-      // Fill the input structure with the value 1 for each channel
-      flag &= (output_struct.data.range(
-                   test_config::TInput::width * (data_in_word + 1) - 1,
-                   test_config::TInput::width * data_in_word) ==
-               i * test_config::CH + c);
+      ap_uint<test_config::TInput::width> bits_read = output_struct.data.range(
+          test_config::TInput::width * (data_in_word + 1) - 1,
+          test_config::TInput::width * data_in_word);
+      ap_uint<test_config::TInput::width> expected_bits =
+          test_config::TInput(i * test_config::CH + c)
+              .range(test_config::TInput::width - 1, 0);
+      flag &= (bits_read == expected_bits);
+
+      if (!flag) {
+        std::cout << "Mismatch at (i,c)=(" << i << "," << c << ")"
+                  << " Expected: " << expected_bits << ", Got: " << bits_read
+                  << std::endl;
+      }
       data_in_word++;
 
       if (data_in_word >= test_config::DATA_PER_WORD) {
@@ -71,7 +85,6 @@ bool test_run() {
 bool test_step() {
   // This function tests the step() method of StreamToNHWC
 
-  using TInputWord = std::array<test_config::TInput, test_config::IN_CH_PAR>;
   static constexpr size_t expectedII =
       test_config::HEIGHT * test_config::WIDTH * test_config::CH /
       (test_config::IN_CH_PAR * test_config::IN_W_PAR);
@@ -125,11 +138,17 @@ bool test_step() {
   return flag;
 }
 
-int main() {
+int main(int argc, char **argv) {
 
   bool all_passed = true;
+
   all_passed &= test_run();
-  all_passed &= test_step();
+
+  // Testing the pipeline with csim only, as it is only relevant for fifo depth
+  // estimations
+  if (argc > 1 && std::string(argv[1]) == "csim") {
+    all_passed &= test_step();
+  }
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;

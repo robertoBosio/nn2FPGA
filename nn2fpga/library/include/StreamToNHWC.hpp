@@ -171,7 +171,9 @@ private:
     }
     size += IN_W_PAR * IN_CH_PAR;
 
-    if (size >= DATA_PER_WORD) {
+    // Check if we have enough data to form an output word or if we are at the
+    // end of the tensor.
+    if (size >= DATA_PER_WORD || i_input_word == ITER - (IN_W_PAR * IN_CH_PAR)) {
 
       // If we have enough data to form an output word, proceed with packing.
       TOutputWord output_data;
