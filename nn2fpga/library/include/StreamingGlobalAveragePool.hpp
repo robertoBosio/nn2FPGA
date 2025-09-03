@@ -75,6 +75,7 @@ public:
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw++) {
       // Loop through the output channels, with a step size equal to the number
       // of channels processed in parallel.
+    STREAMINGGLOBALAVERAGEPOOL_RUN_LOOP:
       for (size_t i_och = 0; i_och < OUT_CH; i_och += OUT_CH_PAR) {
 #pragma HLS pipeline II = 1
         StreamingGlobalAveragePool::pipeline_body(i_data, o_data, s_acc_buff,

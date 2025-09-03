@@ -1,45 +1,122 @@
-import subprocess
-import os
-import pytest
+import csnake
+from .base_hls_test import BaseHLSTest
 
-PROJECT_NAME = "proj_unit_test"
-FILE_DIR = f"/workspace/NN2FPGA/nn2fpga/library"
-FILENAME = "BandwidthAdjust"
+class TestStreamingConv(BaseHLSTest):
 
-def test_dequant_quant_simulation():
-    
-    # Write the Tcl script to a temporary file
-    tcl_script = f"""
-open_project "{PROJECT_NAME}"
-open_solution -reset solution0
-add_files {FILE_DIR}/include/{FILENAME}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-add_files -tb {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-csim_design
-exit
-"""
+    @property
+    def operator_filename(self) -> str:
+        return "BandwidthAdjust"
 
-    tcl_file = "script.tcl"
-    with open(tcl_file, 'w') as f:
-        f.write(tcl_script)
+    def generate_config_file(
+        self, config_dict, class_name: str = "BandwidthAdjustIncreaseStreams"
+    ):
 
-    result = subprocess.run(
-        ["vitis_hls", "-f", tcl_file],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+        cwr = csnake.CodeWriter()
+        cwr.include("<cstdint>")
+        cwr.include("<array>")
+        cwr.include("<ap_int.h>")
+        cwr.include("DequantQuant.hpp")
+        cwr.add_line("namespace test_config {")
+        cwr.indent()
+        for key, value in config_dict.items():
+            if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
+                cwr.add_line(f"const float {key} = {value}f;")
+            else:
+                cwr.add_line(f"const int {key} = {value};")
+        cwr.add_line(
+            f"typedef DequantQuantPo2<0, {config_dict['OUT_DATAWIDTH']}, {config_dict['OUT_DATAWIDTH']}> Quantizer;"
+        )
+        cwr.add_line(f"typedef ap_int<{config_dict['IN_DATAWIDTH']}> TInput;")
+        cwr.add_line(f"typedef ap_int<{config_dict['OUT_DATAWIDTH']}> TOutput;")
+        cwr.add_line(f"using TInputWord = std::array<TInput, {config_dict['IN_CH_PAR']}>;")
+        cwr.add_line(f"using TOutputWord = std::array<TOutput, {config_dict['OUT_CH_PAR']}>;")
+        cwr.add_line(
+            f"using BandwidthAdjust = {class_name}<TInputWord, TInput, TOutputWord, TOutput, Quantizer, IN_HEIGHT, IN_WIDTH, IN_CH, IN_W_PAR, OUT_W_PAR, IN_CH_PAR, OUT_CH_PAR>;"
+        )
+        cwr.dedent()
+        cwr.add_line("}")
+        return cwr.code
 
-    assert result.returncode == 0, f"Simulation failed: {result.stderr}"
-    assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
+    def test_increase_WPAR(self, hls_steps):
+        config_dict = {
+            "IN_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "IN_CH_PAR": 2,
+            "OUT_CH_PAR": 2,
+            "IN_W_PAR": 2,
+            "OUT_W_PAR": 4,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+            workdir=".",
+            class_name="BandwidthAdjustIncreaseStreams",
+        )
 
-    # Clean up the temporary Tcl file
-    os.remove(tcl_file)
+    def test_decrease_WPAR(self, hls_steps):
+        config_dict = {
+            "IN_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "IN_CH_PAR": 2,
+            "OUT_CH_PAR": 2,
+            "IN_W_PAR": 4,
+            "OUT_W_PAR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+            workdir=".",
+            class_name="BandwidthAdjustDecreaseStreams",
+        )
 
-    # Clean up the project directory
-    if os.path.exists(PROJECT_NAME):
-        os.system(f"rm -rf {PROJECT_NAME}")
+    def test_increase_CHPAR(self, hls_steps):
+        config_dict = {
+            "IN_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "IN_CH_PAR": 2,
+            "OUT_CH_PAR": 4,
+            "IN_W_PAR": 2,
+            "OUT_W_PAR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+            workdir=".",
+            class_name="BandwidthAdjustIncreaseChannels",
+        )
 
-    # Clean up vitis_hls log files
-    log_files = [f for f in os.listdir('.') if f.startswith('vitis_hls') and f.endswith('.log')]
-    for log_file in log_files:
-        os.remove(log_file) 
+    def test_decrease_CHPAR(self, hls_steps):
+        config_dict = {
+            "IN_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "IN_CH_PAR": 4,
+            "OUT_CH_PAR": 2,
+            "IN_W_PAR": 2,
+            "OUT_W_PAR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+            workdir=".",
+            class_name="BandwidthAdjustDecreaseChannels",
+        )

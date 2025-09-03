@@ -13,7 +13,7 @@
  * Multiple StreamingMemory instances can be concatenated to load all the
  * memory with a single chain.
  *
- * @tparam TInput         Type of input data word (encoded stream).
+ * @tparam TInputWord     Type of input data word (encoded stream).
  * @tparam TOutput        Type of output data element.
  * @tparam TOutputWord    Type of output data word (vector of TOutput).
  * @tparam DATA_PER_WORD  Number of data elements per input word.
@@ -31,7 +31,7 @@
  * - It supports packed data that does not fit perfectly into input words.
  */
 
-template <typename TInput, typename TOutput, typename TOutputWord,
+template <typename TInputWord, typename TOutput, typename TOutputWord,
           size_t DATA_PER_WORD, size_t DATA_TO_SHIFT, size_t TIMES,
           size_t OUT_CH, size_t IN_CH, size_t FH, size_t FW, size_t OUT_CH_PAR,
           size_t IN_CH_PAR>
@@ -62,24 +62,26 @@ private:
   }
 
   void
-  initialize_memory(hls::stream<TInput> i_shift_data[1],
+  initialize_memory(hls::stream<TInputWord> i_shift_data[1],
                     TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW]) {
 #pragma HLS inline
     auto i_fhw = 0;
     auto i_ch_groups = 0;
     auto i_par = 0;
+MEMORY_INIT_LOOP:
     for (size_t i_word = 0; i_word < FH * FW * IN_CH * OUT_CH;
          i_word += DATA_PER_WORD) {
 #pragma HLS pipeline off
-      TInput in_word = i_shift_data[0].read();
+      TInputWord in_word = i_shift_data[0].read();
 
       // Loop until all data inside the word are processed (excluding padding).
+    MEMORY_INIT_DATA_LOOP:
       for (size_t i_data = 0;
            i_data < DATA_PER_WORD && i_word + i_data < FH * FW * IN_CH * OUT_CH;
            i_data++) {
 #pragma HLS pipeline off
-        TOutput in_data = in_word.range(TOutput::width - 1, 0);
-        in_word >>= TOutput::width;
+        TOutput in_data = in_word[0].range(TOutput::width - 1, 0);
+        in_word[0] >>= TOutput::width;
         mem[i_ch_groups][i_par][i_fhw] = in_data;
         i_fhw++;
         if (i_fhw == FH * FW) {
@@ -104,9 +106,9 @@ public:
     }
   }
 
-  void run(hls::stream<TInput> i_shift_data[1],
+  void run(hls::stream<TInputWord> i_shift_data[1],
            hls::stream<TOutputWord> o_data[FH * FW],
-           hls::stream<TInput> o_shift_data[1]) {
+           hls::stream<TInputWord> o_shift_data[1]) {
 
     // Initialize memory from input stream on first run
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
@@ -116,13 +118,16 @@ public:
       initialize_memory(i_shift_data, mem);
 
       // Shift data for following nodes.
+    SHIFT_LOOP:
       for (size_t i = 0; i < DATA_TO_SHIFT; i++) {
-        TInput in_word = i_shift_data[0].read();
+#pragma HLS pipeline off
+        TInputWord in_word = i_shift_data[0].read();
         o_shift_data[0].write(in_word);
       }
     }
 
     for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
       for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
 #pragma HLS pipeline II = 1
         StreamingMemory::pipeline_body(o_data, mem[i_ch_groups]);
@@ -130,14 +135,14 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInput> i_shift_data[1],
+  ActorStatus step(hls::stream<TInputWord> i_shift_data[1],
                    hls::stream<TOutputWord> o_data[FH * FW],
-                   hls::stream<TInput> o_shift_data[1]) {
+                   hls::stream<TInputWord> o_shift_data[1]) {
     (void)o_shift_data;
     return step(i_shift_data, o_data);
   }
 
-  void run(hls::stream<TInput> i_shift_data[1],
+  void run(hls::stream<TInputWord> i_shift_data[1],
            hls::stream<TOutputWord> o_data[FH * FW]) {
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
     static bool initialized_flag = false;
@@ -149,6 +154,7 @@ public:
     }
 
     for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
       for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
 #pragma HLS pipeline II = 1
         StreamingMemory::pipeline_body(o_data, mem[i_ch_groups]);
@@ -156,7 +162,7 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInput> i_shift_data[1],
+  ActorStatus step(hls::stream<TInputWord> i_shift_data[1],
                    hls::stream<TOutputWord> o_data[FH * FW]) {
     (void)i_shift_data;
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];

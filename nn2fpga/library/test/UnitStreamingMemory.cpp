@@ -10,6 +10,7 @@
 using TOutputWord =
     std::array<test_config::TOutput,
                test_config::IN_CH_PAR * test_config::OUT_CH_PAR>;
+using TInputWord = std::array<test_config::TInput, 1>;
 static constexpr size_t TIMES =
     test_config::OUT_HEIGHT * test_config::OUT_WIDTH / test_config::W_PAR;
 static constexpr size_t CH_GROUPS =
@@ -18,10 +19,10 @@ static constexpr size_t CH_GROUPS =
 static constexpr size_t FHW = test_config::FH * test_config::FW;
 static constexpr size_t PAR = test_config::IN_CH_PAR * test_config::OUT_CH_PAR;
 
-void wrap_run(hls::stream<test_config::TInput> i_shift_data[1],
+void wrap_run(hls::stream<TInputWord> i_shift_data[1],
               hls::stream<TOutputWord> o_data[FHW],
-              hls::stream<test_config::TInput> o_shift_data[1]) {
-  StreamingMemory<test_config::TInput, test_config::TOutput, TOutputWord,
+              hls::stream<TInputWord> o_shift_data[1]) {
+  StreamingMemory<TInputWord, test_config::TOutput, TOutputWord,
                   test_config::DATA_PER_WORD, test_config::DATA_TO_SHIFT, TIMES,
                   test_config::OUT_CH, test_config::IN_CH, test_config::FW,
                   test_config::FH, test_config::OUT_CH_PAR,
@@ -37,12 +38,14 @@ void wrap_run(hls::stream<test_config::TInput> i_shift_data[1],
 bool test_run() {
 
   // Create input and output streams
-  hls::stream<test_config::TInput> i_shift_data[1];
-  hls::stream<test_config::TInput> o_shift_data[1];
+  hls::stream<TInputWord> i_shift_data[1];
+  hls::stream<TInputWord> o_shift_data[1];
   hls::stream<TOutputWord> o_data[FHW];
 
   for (const auto &word : test_config::packed_weights) {
-    i_shift_data[0].write(word);
+    TInputWord word_array;
+    word_array[0] = word;
+    i_shift_data[0].write(word_array);
   }
 
   // Run the operator
@@ -100,12 +103,12 @@ bool test_step(){
   constexpr size_t expectedII = TIMES * CH_GROUPS;
 
   // Create input and output streams
-  hls::stream<test_config::TInput> i_shift_data[1];
-  hls::stream<test_config::TInput> o_shift_data[1];
+  hls::stream<TInputWord> i_shift_data[1];
+  hls::stream<TInputWord> o_shift_data[1];
   hls::stream<TOutputWord> o_data[FHW];
 
   // Instantiate the operator
-  StreamingMemory<test_config::TInput, test_config::TOutput, TOutputWord,
+  StreamingMemory<TInputWord, test_config::TOutput, TOutputWord,
                   test_config::DATA_PER_WORD, test_config::DATA_TO_SHIFT, TIMES,
                   test_config::OUT_CH, test_config::IN_CH, test_config::FW,
                   test_config::FH, test_config::OUT_CH_PAR,

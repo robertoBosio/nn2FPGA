@@ -124,6 +124,7 @@ public:
 
     for (size_t i_hw = 0; i_hw < OUT_HEIGHT * OUT_WIDTH / W_PAR; i_hw++) {
       for (size_t i_ich = 0; i_ich < IN_CH; i_ich += IN_CH_PAR) {
+      STREAMINGCONV_RUN_LOOP:
         for (size_t i_och = 0; i_och < OUT_CH; i_och += OUT_CH_PAR) {
 #pragma HLS pipeline II = 1
           StreamingConv::pipeline_body(i_data, i_weights, i_biases, o_data,
