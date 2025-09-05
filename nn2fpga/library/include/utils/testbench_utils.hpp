@@ -34,12 +34,11 @@ void npy_to_hls_stream(const std::string &input_path, hls::stream<TAxi> &stream,
   std::vector<size_t> shape = input_array.shape;
   size_t bits_per_data = TData::width;
 
-  if (shape.size() != 4) {
-    std::cerr << "Input array must be 4D.\n";
-    return;
+  // Compute the product of the shape dimensions
+  size_t num_elements = 1;
+  for (size_t dim : shape) {
+    num_elements *= dim;
   }
-
-  size_t num_elements = shape[0] * shape[1] * shape[2] * shape[3];
   for (int i = 0; i < num_elements; i += data_per_word) {
     TAxi word;
     word.data = 0; // Initialize the data field to zero

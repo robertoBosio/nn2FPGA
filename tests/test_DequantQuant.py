@@ -1,45 +1,204 @@
-import subprocess
-import os
-import pytest
+import csnake
+from .base_hls_test import BaseHLSTest
 
-PROJECT_NAME = "proj_unit_test"
-FILE_DIR = f"/workspace/NN2FPGA/nn2fpga/library"
-FILENAME = "DequantQuant"
+class TestDequantQuant(BaseHLSTest):
 
-def test_dequant_quant_simulation():
+    @property
+    def operator_filename(self) -> str:
+        return "DequantQuant"
+
+    def generate_config_file(self, config_dict):
+
+        cwr = csnake.CodeWriter()
+        cwr.include("<cstdint>")
+        cwr.include("<array>")
+        cwr.include("<ap_int.h>")
+        cwr.add_line("namespace test_config {")
+        cwr.indent()
+        for key, value in config_dict.items():
+            if key not in ["ACC_SIGNED", "OUT_SIGNED"]:
+                cwr.add_line(f"const int {key} = {value};")
+        cwr.add_line(
+            "using TAcc = "
+            + (
+                "ap_int<ACC_DATAWIDTH>;"
+                if config_dict.get("ACC_SIGNED", True)
+                else "ap_uint<ACC_DATAWIDTH>;"
+            )
+        )
+        cwr.add_line(
+            "using TOut = "
+            + (
+                "ap_int<OUT_DATAWIDTH>;"
+                if config_dict.get("OUT_SIGNED", True)
+                else "ap_uint<OUT_DATAWIDTH>;"
+            )
+        )
+        cwr.dedent()
+        cwr.add_line("}")
+        return cwr.code
+
+    def test_basic_shift(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 2,
+            "INPUT": -63,
+            "EXPECTED": -16,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_zero_shift(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": 64,
+            "EXPECTED": 64,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_negative_shift(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": -2,
+            "INPUT": 16,
+            "EXPECTED": 64,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_rounddown_to_even(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 1,
+            "INPUT": 5,
+            "EXPECTED": 2,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_roundup_to_even(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 1,
+            "INPUT": 7,
+            "EXPECTED": 4,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_rounddown_to_even_negative(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 1,
+            "INPUT": -5,
+            "EXPECTED": -2,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_roundup_to_even_negative(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 1,
+            "INPUT": -7,
+            "EXPECTED": -4,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_clamp_positive(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": 300,
+            "EXPECTED": 127,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_clamp_negative(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": -300,
+            "EXPECTED": -128,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_clamp_unsigned_positive_input(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": 300,
+            "EXPECTED": 255,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 0,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
     
-    # Write the Tcl script to a temporary file
-    tcl_script = f"""
-open_project "{PROJECT_NAME}"
-open_solution -reset solution0
-add_files {FILE_DIR}/include/{FILENAME}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-add_files -tb {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-csim_design
-exit
-"""
-
-    tcl_file = "script.tcl"
-    with open(tcl_file, 'w') as f:
-        f.write(tcl_script)
-
-    result = subprocess.run(
-        ["vitis_hls", "-f", tcl_file],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    assert result.returncode == 0, f"Simulation failed: {result.stderr}"
-    assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
-
-    # Clean up the temporary Tcl file
-    os.remove(tcl_file)
-
-    # Clean up the project directory
-    if os.path.exists(PROJECT_NAME):
-        os.system(f"rm -rf {PROJECT_NAME}")
-
-    # Clean up vitis_hls log files
-    log_files = [f for f in os.listdir('.') if f.startswith('vitis_hls') and f.endswith('.log')]
-    for log_file in log_files:
-        os.remove(log_file) 
+    def test_clamp_unsigned_negative_input(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": -300,
+            "EXPECTED": 0,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 0,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )

@@ -1,95 +1,65 @@
 #pragma once
 #include "ap_int.h"
+#include "hls_math.h"
 
-template <
-    int Shift,
-    int ACC_WIDTH,
-    int OUT_WIDTH>
-struct DequantQuantPo2
-{
-    ap_int<OUT_WIDTH> operator()(ap_int<ACC_WIDTH> acc) const
-    {
-#pragma HLS inline
+template <typename TOut, bool Signed = std::is_signed<TOut>::value>
+struct LimitsImpl;
 
-        const ap_int<OUT_WIDTH> max_val = (ap_int<OUT_WIDTH>(1) << (OUT_WIDTH - 1)) - 1;
-        const ap_int<OUT_WIDTH> min_val = (-ap_int<OUT_WIDTH>(1)) << (OUT_WIDTH - 1);
-
-        ap_int<ACC_WIDTH> shifted = acc >> Shift;
-
-        // Round to nearest even
-        if (Shift > 0)
-        {
-            const ap_int<ACC_WIDTH> half = ap_int<ACC_WIDTH>(1) << (Shift - 1);
-            // If the remainder equals half, it's a tie; 
-            // break ties by rounding to the nearest even value (LSB of shifted)
-            if (acc.range(Shift - 1, 0) == half)
-            {
-                if (shifted[0] != 0)
-                {
-                    shifted += (acc >= 0) ? 1 : -1;
-                }
-            }
-            else if (acc.range(Shift - 1, 0) > half)
-            {
-                shifted += 1;
-            }
-        }
-        
-        // Clamp to output range
-        if (shifted > max_val)
-            shifted = max_val;
-        if (shifted < min_val)
-            shifted = min_val;
-
-        return ap_int<OUT_WIDTH>(shifted);
-    }
+template <typename TOut> struct LimitsImpl<TOut, true> {
+  static inline TOut max() { return TOut(~(TOut(1) << (TOut::width - 1))); }
+  static inline TOut min() { return (TOut(1) << (TOut::width - 1)); }
 };
 
-template <
-    int Shift,
-    typename TAcc,
-    typename TOut>
-struct DequantQuantPo2Types
-{
-    TOut operator()(TAcc acc) const
-    {
-#pragma HLS inline
-
-        // Compute max and min values based on the output type
-        const TOut max_val = TOut((TOut(1) << (TOut::width - 1)) - 1);
-        const TOut min_val = TOut(0) - (TOut(1) << (TOut::width - 1));
-
-        TAcc shifted = acc >> Shift;
-
-        // Round to nearest even
-        if (Shift > 0)
-        {
-            const TAcc half = TAcc(1) << (Shift - 1);
-            TAcc remainder = acc.range(Shift - 1, 0);
-
-            if (remainder == half)
-            {
-                if (shifted[0] != 0)
-                {
-                    shifted += (acc >= 0) ? 1 : -1;
-                }
-            }
-            else if (remainder > half)
-            {
-                shifted += 1;
-            }
-        }
-
-        // Clamp to output range
-        if (shifted > max_val)
-            shifted = max_val;
-        if (shifted < min_val)
-            shifted = min_val;
-
-        return TOut(shifted);
-    }
+template <typename TOut> struct LimitsImpl<TOut, false> {
+  static inline TOut max() { return TOut(-1); }
+  static inline TOut min() { return TOut(0); }
 };
 
+template <int Shift, typename TAcc, typename TOut> struct DequantQuantPo2 {
+
+  TOut operator()(TAcc acc) const {
+#pragma HLS inline
+    return run(acc, std::integral_constant<bool, (Shift > 0)>{});
+  }
+
+private:
+  static TOut run(TAcc acc, std::true_type) {
+
+    // Absolute value in unsigned to get a true remainder magnitude.
+    const bool neg = acc.sign();
+    ap_uint<TAcc::width> uacc = hls::abs(acc);
+
+    const ap_uint<Shift> half = ap_uint<Shift>(1) << (Shift - 1);
+    const ap_uint<Shift> rem = uacc.range(Shift - 1, 0);
+    const ap_uint<TAcc::width> trunc = uacc >> Shift;
+
+    // Round-to-nearest, ties-to-even on the magnitude
+    ap_uint<TAcc::width> rounded_mag = trunc;
+    if (rem > half || (rem == half && (trunc & 1))) {
+      rounded_mag = trunc + 1;
+    }
+
+    // Restore sign
+    TAcc rounded = neg ? TAcc(-rounded_mag) : TAcc(rounded_mag);
+
+    // Saturate to OUT_WIDTH
+    if (rounded > LimitsImpl<TOut>::max())
+      rounded = LimitsImpl<TOut>::max();
+    if (rounded < LimitsImpl<TOut>::min())
+      rounded = LimitsImpl<TOut>::min();
+    return TOut(rounded);
+  }
+
+  static TOut run(TAcc acc, std::false_type) {
+    // Saturate to OUT_WIDTH
+    TAcc shifted = acc << (-Shift);
+    if (shifted > LimitsImpl<TOut>::max())
+      shifted = LimitsImpl<TOut>::max();
+    if (shifted < LimitsImpl<TOut>::min())
+      shifted = LimitsImpl<TOut>::min();
+    return TOut(shifted);
+  }
+};
 
 template <typename T>
 struct DequantQuantEqual

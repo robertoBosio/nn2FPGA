@@ -180,3 +180,23 @@ class TestStreamingMemory(BaseHLSTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps, workdir=".", dtype=np.int8)
+
+    def test_8bit_shift(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUT_DATAWIDTH": 32,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUT_HEIGHT": 4,
+            "OUT_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "FH": 1,
+            "FW": 1,
+            "IN_CH_PAR": 2,
+            "OUT_CH_PAR": 2,
+            "W_PAR": 2,
+            "DATA_PER_WORD": 4,
+            "DATA_TO_SHIFT": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps, workdir=".", dtype=np.int8)

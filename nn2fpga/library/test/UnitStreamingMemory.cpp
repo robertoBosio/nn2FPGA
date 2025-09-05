@@ -47,6 +47,10 @@ bool test_run() {
     word_array[0] = word;
     i_shift_data[0].write(word_array);
   }
+  for (size_t i = 0; i < test_config::DATA_TO_SHIFT; i++) {
+    TInputWord dummy;
+    i_shift_data[0].write(dummy);
+  }
 
   // Run the operator
   wrap_run(i_shift_data, o_data, o_shift_data);
