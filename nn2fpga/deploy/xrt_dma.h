@@ -265,12 +265,23 @@ public:
     }
 
     // Single BD sync to confirm completion (read only last BD).
+    static constexpr uint32_t Cmplt = (1u << 31);
     AxiDmaBd *bd_ = bd_bo_.map<AxiDmaBd *>();
     volatile AxiDmaBd *last = &bd_[batch - 1];
-    bd_bo_.sync(XCL_BO_SYNC_BO_FROM_DEVICE, sizeof(AxiDmaBd),
-                (batch - 1) * sizeof(AxiDmaBd));
-    static constexpr uint32_t Cmplt = (1u << 31); // bit31 'completed'
-    return (last->status & Cmplt) != 0;
+    // Wait for the completion bit in the last BD to update.
+    for (;;) {
+      bd_bo_.sync(XCL_BO_SYNC_BO_FROM_DEVICE, sizeof(AxiDmaBd),
+                  (batch - 1) * sizeof(AxiDmaBd));
+      uint32_t st = last->status;
+      if (st & Cmplt)
+        return true; // done
+      
+      if (steady_clock::now() >= deadline)
+        return false;
+
+      // tiny sleep to avoid busy-looping too hard
+      sleep_us(1);
+    }
   }
 
 private:

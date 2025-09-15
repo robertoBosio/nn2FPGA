@@ -89,9 +89,51 @@ def postprocess(out_buffer, results, accuracy, batch_size):
     accuracy += accuracy_batch
     return accuracy
 
+def report_error_stats(output_name: str, expected_output: np.ndarray, produced_output: np.ndarray, top_k: int = 10):
+    """
+    Report statistics about the error between expected and produced outputs.
+
+    Args:
+        output_name (str): The name of the output tensor.
+        expected_output (np.ndarray): The expected output from the original model.
+        produced_output (np.ndarray): The output from the transformed model.
+        top_k (int): Number of largest errors to report.
+    """
+    error = np.abs(expected_output - produced_output)
+
+    max_error = np.max(error)
+    mean_error = np.mean(error)
+    min_error = np.min(error)
+    std_error = np.std(error)
+
+    # flatten for sorting
+    flat_error = error.flatten()
+    flat_idx = np.argsort(-flat_error)  # descending
+    topk_idx = flat_idx[:top_k]
+    unraveled_idx = [np.unravel_index(i, error.shape) for i in topk_idx]
+
+    print("=" * 50)
+    print(f"Output: {output_name}")
+    print(f"Expected Output (first 10 elements): {expected_output.flatten()[:10]}")
+    print(f"Produced Output (first 10 elements): {produced_output.flatten()[:10]}")
+    print(f"Max Error: {max_error}")
+    print(f"Min Error: {min_error}")
+    print(f"Mean Error: {mean_error}")
+    print(f"Std Dev of Error: {std_error}")
+    if max_error == 0:
+        print("No errors detected.")
+        return
+    print(f"Top {top_k} errors:")
+    for rank, (idx, val) in enumerate(zip(unraveled_idx, flat_error[topk_idx]), 1):
+        exp_val = expected_output[idx]
+        prod_val = produced_output[idx]
+        print(f" {rank:2d}. idx={idx}, error={val}, expected={exp_val}, produced={prod_val}")
+    print("=" * 50)
+
 # Paths
-MODEL_PATH = "qcdq_wrapper_model.onnx"              # your ONNX model with nn2fpgaPartition node
-CUSTOM_OP_SO = os.path.abspath("libnn2fpga_customop.so")  # <--- absolute path
+MODEL_PATH = "nn2FPGA_mobilenet_v2.onnx"
+ORIGINAL_MODEL_PATH = "original_model_qcdq.onnx"         
+CUSTOM_OP_SO = os.path.abspath("libnn2fpga_customop.so")
 
 # Session options
 so = ort.SessionOptions()
@@ -107,6 +149,7 @@ so.enable_profiling = True
 # Create session
 print("Starting the session")
 sess = ort.InferenceSession(MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
+sess_orig = ort.InferenceSession(ORIGINAL_MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
 
 # Dummy input data (adapt dtype/shape to your model)
 input_name = sess.get_inputs()[0].name
@@ -114,9 +157,12 @@ input_shape = [d if isinstance(d, int) else 1 for d in sess.get_inputs()[0].shap
 x = np.random.rand(10, 3, 224, 224).astype(np.float32)
 
 # Warmup
-print("Warmup run...")
-sess.run(None, {input_name: x})
-del sess
+print("Warming up and checking correctness")
+actual_result = sess.run(None, {input_name: x})
+expected_result = sess_orig.run(None, {input_name: x})
+# Check correctness
+report_error_stats("output", np.asarray(expected_result).flatten(), np.asarray(actual_result).flatten())
+del sess, sess_orig
 
 
 sess = ort.InferenceSession(MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
