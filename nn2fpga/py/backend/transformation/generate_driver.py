@@ -10,6 +10,7 @@ from backend.util.codegen_utils import NewCodeWriter
 from backend.util.board_util import read_board_info
 from backend.core.tensor_quant import TensorQuant
 from onnx import NodeProto
+import numpy as np
 
 def get_onnxruntime_dtype(tensor_quant: TensorQuant) -> str:
     """ Get the ONNX Runtime data type for a given tensor quantization. """
@@ -58,6 +59,7 @@ def generate_spec(
     frequency: int,
     axilite_base_addr: int,
     axilite_size: int,
+    design_id: str,
 ) -> None:
 
     ap = AcceleratorPackage.from_json(
@@ -80,18 +82,23 @@ def generate_spec(
     cwr.add_line(f"static constexpr int PllIndex = {Pll_index};")
     cwr.add_line(f"static constexpr int Freq_MHz = {frequency};")
     cwr.add_line(f"static constexpr int PLLFreq_MHz = {Pll_frequency};")
+    cwr.add_line(f'static constexpr uint32_t DesignID = {int(design_id)};')
     cwr.add_line(f"static constexpr uint64_t AXIL_BASE = 0x{axilite_base_addr:X};")
     cwr.add_line(f"static constexpr size_t AXIL_SIZE = 0x{axilite_size:X};")
 
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.input_map)}> Inputs{{{{")
     cwr.indent()
     for name, value in ap.input_map.items():
-        tensor_shape = model.get_tensor_shape(name)
+        tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
         quant = TensorQuant.from_canonical_name(value["quant"])
+        mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
+        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        if value['value'] is None:
+            buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}}}, // {name}"
+            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -99,12 +106,16 @@ def generate_spec(
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.output_map)}> Outputs{{{{")
     cwr.indent()
     for name, value in ap.output_map.items():
-        tensor_shape = model.get_tensor_shape(name)
+        tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
         quant = TensorQuant.from_canonical_name(value["quant"])
+        mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
+        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        if value['value'] is None:
+            buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}}}, // {name}"
+            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -152,6 +163,7 @@ class GenerateDriver(Transformation):
         axilite_size = int(model.get_metadata_prop("axilite_size"))
         board = model.get_metadata_prop("board_name")
         frequency = model.get_metadata_prop("frequency")
+        design_id = model.get_metadata_prop("design_id")
         Pll_frequency = read_board_info(board)["PLL_frequency"]
         nn2FPGA_node = model.get_nodes_by_op_type("nn2fpgaPartition")[0]
 
@@ -175,6 +187,7 @@ class GenerateDriver(Transformation):
                     frequency=frequency,
                     axilite_base_addr=axilite_address,
                     axilite_size=axilite_size,
+                    design_id=design_id,
                 )
             )
 

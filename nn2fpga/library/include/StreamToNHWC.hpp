@@ -173,7 +173,8 @@ private:
 
     // Check if we have enough data to form an output word or if we are at the
     // end of the tensor.
-    if (size >= DATA_PER_WORD || i_input_word == ITER - (IN_W_PAR * IN_CH_PAR)) {
+    const bool end_of_tensor = (i_input_word == ITER - (IN_W_PAR * IN_CH_PAR));
+    if (size >= DATA_PER_WORD || end_of_tensor) {
 
       // If we have enough data to form an output word, proceed with packing.
       TOutputWord output_data;
@@ -182,19 +183,21 @@ private:
                                i * TInput::width) =
             quantizer(circular_buffer[tail + i]);
       }
-      tail = (tail + DATA_PER_WORD) % (DATA_PER_WORD * 2);
-      size -= DATA_PER_WORD;
 
-      if (i_input_word == ITER - (IN_W_PAR * IN_CH_PAR)) {
-        // If we are at the end of the tensor, assert the last.
+      if (end_of_tensor) {
+        size_t valid_bytes = size * TInput::width / 8;
+        output_data.keep = (1 << valid_bytes) - 1;
+        tail = 0; // Reset the tail at the end of the tensor.
+        size = 0; // Reset the size at the end of the tensor.
+        head = 0; // Reset the head at the end of the tensor.
         output_data.last = true;
       } else {
-        // Otherwise, set the last signal to false.
+        tail = (tail + DATA_PER_WORD) % (DATA_PER_WORD * 2);
+        size -= DATA_PER_WORD;
         output_data.last = false;
+        output_data.keep = ~0; // Set all bytes as valid.
       }
 
-      // Write the output data structure to the output stream.
-      output_data.keep = ~0; // Set all bytes as valid.
       output_data.strb = output_data.keep;
       output_data_stream.write(output_data);
     }
