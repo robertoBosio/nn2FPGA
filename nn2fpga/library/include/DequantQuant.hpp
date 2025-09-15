@@ -1,8 +1,12 @@
 #pragma once
 #include "ap_int.h"
 #include "hls_math.h"
+#include <type_traits>
 
-template <typename TOut, bool Signed = std::is_signed<TOut>::value>
+template <typename TOut,
+          bool Signed =
+              std::is_same<typename TOut::Base::Base,
+                           _AP_ROOT_TYPE<TOut::Base::width, true>>::value>
 struct LimitsImpl;
 
 template <typename TOut> struct LimitsImpl<TOut, true> {

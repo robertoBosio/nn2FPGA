@@ -4,12 +4,10 @@
 #include <cassert>
 #include <iostream>
 
-void wrap_run() {
-  DequantQuantPo2<test_config::SHIFT, test_config::TAcc,
-                  test_config::TOut>
+void wrap_run(test_config::TAcc input, test_config::TOut &output) {
+  DequantQuantPo2<test_config::SHIFT, test_config::TAcc, test_config::TOut>
       quantizer;
-  test_config::TAcc input = test_config::INPUT;
-  test_config::TOut output = quantizer(input);
+  output = quantizer(input);
 }
 
 bool test_run() {
@@ -19,7 +17,8 @@ bool test_run() {
 
   test_config::TAcc input = test_config::INPUT;
   test_config::TOut expected = test_config::EXPECTED;
-  test_config::TOut output = quantizer(input);
+  test_config::TOut output;
+  wrap_run(input, output);
 
   if (output != expected) {
     std::cout << "Test failed: input=" << input
@@ -41,5 +40,7 @@ int main(int argc, char **argv) {
     std::cout << "Passed." << std::endl;
   }
 
+  (void)argc;
+  (void)argv;
   return all_passed ? 0 : 1;
 }

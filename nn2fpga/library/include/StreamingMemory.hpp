@@ -114,7 +114,6 @@ public:
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
     static bool initialized_flag = false;
     if (!initialized_flag) {
-      initialized_flag = true;
       initialize_memory(i_shift_data, mem);
 
       // Shift data for following nodes.
@@ -125,6 +124,7 @@ public:
         o_shift_data[0].write(in_word);
       }
     }
+    initialized_flag = true;
 
     for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
     STREAMINGMEMORY_RUN_LOOP:
@@ -149,9 +149,9 @@ public:
     
     // Initialize memory from input stream on first run
     if (!initialized_flag) {
-      initialized_flag = true;
       initialize_memory(i_shift_data, mem);
     }
+    initialized_flag = true;
 
     for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
     STREAMINGMEMORY_RUN_LOOP:
