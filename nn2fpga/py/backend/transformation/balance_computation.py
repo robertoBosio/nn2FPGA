@@ -151,13 +151,20 @@ def generate_valid_combinations(och, ich, w, och_clip=2**10, ich_clip=2**10, w_c
     for div_och in divisors(och, och_clip):
         for div_ich in divisors(ich, ich_clip):
             for div_w in divisors(w, w_clip):
-                if (div_och * div_ich * div_w <= op_clip):
 
-                    # If the layer is depthwise-like, output and input channels parallelization are the same thing.
-                    if depth:
-                        combinations.append((div_ich, div_ich, div_w))
-                    else:
-                        combinations.append((div_och, div_ich, div_w))
+                # Condition on DSPs.
+                if (div_och * div_ich * div_w > op_clip):
+                    continue
+
+                # Condition on maximum stream width.
+                if (div_och * div_ich > 512):
+                    continue
+
+                # If the layer is depthwise-like, output and input channels parallelization are the same thing.
+                if depth:
+                    combinations.append((div_ich, div_ich, div_w))
+                else:
+                    combinations.append((div_och, div_ich, div_w))
     return combinations 
 
 def find_common_mult(a, b):
@@ -853,7 +860,7 @@ class BalanceComputation(Transformation):
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
         NUM_PORTS = int(NUM_PORTS * 0.85)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.85  # 85% of the DSPs are used for parallelization
+        NUM_DSP = board_res["dsp"] * 0.05  # 5% of the DSPs are used for parallelization
 
         # Extract layers information
         layers_info = layers_extractions(model)
