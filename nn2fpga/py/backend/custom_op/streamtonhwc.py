@@ -23,6 +23,10 @@ class StreamToNHWC(CustomOp):
     def get_nodeattr_types(self):
         return {
             "axi_bitwidth": ("i", False, 128),  # Bitwidth of the AXI interface
+            "in_ch_par": ("i", False, 1),  # Input channel parallelization
+            "out_ch_par": ("i", False, 1),  # Output channel parallelization
+            "in_w_par": ("i", False, 1),  # Input width parallelization
+            "out_w_par": ("i", False, 1),  # Output width parallelization
         }
 
     def make_shape_compatible_op(self, model):
@@ -63,12 +67,10 @@ class StreamToNHWC(CustomOp):
         """
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        par_attribute = get_par_attributes(self.onnx_node)
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
 
-        fitting_data = int(math.floor(axi_bitwidth / (output_quant.bitwidth * par_attribute["out_ch_par"] * par_attribute["out_w_par"])))
-        return fitting_data * par_attribute["out_ch_par"] * par_attribute["out_w_par"]
+        return int(math.floor(axi_bitwidth / output_quant.bitwidth))
 
     def __get_variable_declaration(self, model) -> str:
         """ Get the internal cpp variables of the ProduceStream node.
@@ -100,6 +102,7 @@ class StreamToNHWC(CustomOp):
 
         # Retrieve tensor shape.
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
 
         # Create the StreamToNHWC object.
         StreamToNHWC = cpp_object(
@@ -198,6 +201,7 @@ class StreamToNHWC(CustomOp):
             outputs=[self.onnx_node.output[0]],
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
+            original_op_type=self.onnx_node.op_type,
             hls_variable_declarations=self.__get_variable_declaration(model),
             hls_run_call=self.__get_run_call(),
             hls_step_call=self.__get_step_call(),

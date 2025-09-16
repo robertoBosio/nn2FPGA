@@ -3,6 +3,19 @@ import onnxruntime as rt
 from onnx import TensorProto, helper
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
+from backend.core.tensor_quant import get_custom_tensor_datatype
+from backend.core.tensor_fifo import TensorFifo
+from backend.custom_op.hlskernel import HLSKernel
+from backend.util.codegen_utils import (
+    cpp_function,
+    cpp_variable,
+    cpp_object,
+    get_struct_type,
+    get_stream_type,
+    get_hls_quant_type,
+)
+from backend.core.tensor_quant import TensorQuant
+from backend.util.par_utils import get_par_attributes
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.custom_op.register_rewrite_rule import register_rules
 from onnxscript.rewriter import pattern
@@ -147,9 +160,10 @@ class StreamingConv(CustomOp):
             "b_rounding_mode": ("s", False, "ROUND"),
 
             # Custom attributes for parallelization of StreamingConv
-            "ich_par" : ("i", False, 1),
-            "och_par" : ("i", False, 1),
-            "w_par" : ("i", False, 1),
+            "in_ch_par" : ("i", False, 1),
+            "out_ch_par" : ("i", False, 1),
+            "in_w_par" : ("i", False, 1),
+            "out_w_par" : ("i", False, 1),
 
             # Custom attributes for zero point folding into bias
             "asym_folding": ("i", False, 0),  # 0: no folding, 1: fold zeropt into bias
@@ -164,7 +178,7 @@ class StreamingConv(CustomOp):
             input_list = [node.input[0], node.input[1]] + node.input[2:5]
         elif len(node.input) == 9:
             # Conv with bias
-            input_list = [node.input[0], node.input[1], node.input[6]] + node.input[2:6] + node.input[7:9]
+            input_list = [node.input[0], node.input[1], node.input[5]] + node.input[2:5] + node.input[6:9]
         else:
             raise ValueError(
                 f"Unexpected number of inputs for StreamingConv node {node.name}: {len(node.input)}"
@@ -195,7 +209,7 @@ class StreamingConv(CustomOp):
             inputs=(
                 [node.input[0], node.input[1]]
                 if len(node.input) == 5
-                else [node.input[0], node.input[1], node.input[6]]
+                else [node.input[0], node.input[1], node.input[5]]
             ),
             outputs=node.output,
             name=f"{node.name}_shape_compatible",
@@ -210,7 +224,7 @@ class StreamingConv(CustomOp):
         inp_values = context[node.input[0]]
         weight_values = context[node.input[1]]
         if len(node.input) > 5:
-            bias_values = context[node.input[6]]
+            bias_values = context[node.input[5]]
         oshape = context[node.output[0]].shape
         ishape = inp_values.shape
         inp = helper.make_tensor_value_info(node.input[0], TensorProto.FLOAT, ishape)
@@ -249,3 +263,281 @@ class StreamingConv(CustomOp):
 
     def verify_node(self):
         pass
+    
+    def __get_stream_name(self, name: str) -> str:
+        """
+        Returns the name of the stream for the tensor.
+        """
+        return f"{name}_stream"
+
+    def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """ Returns the accumulator type for the StreamingGlobalAveragePool operation. """
+
+        add_ops = np.prod(weights_shape[1:])
+        acc_bitwidth = input_quant.bitwidth + weights_quant.bitwidth + int(
+            np.ceil(np.log2(add_ops))
+        )
+        acc_bitwidth = max(acc_bitwidth, bias_quant.bitwidth) + 1
+        acc_quant = TensorQuant(
+            bitwidth=acc_bitwidth,
+            signed=input_quant.signed,
+            scale=input_quant.scale,
+            zeropt=input_quant.zeropt,
+        )
+
+        return f"{get_hls_quant_type(acc_quant)}"
+
+    def __is_power_of_two(self, value) -> bool:
+        """Check if a value is a power of two."""
+        return value > 0 and float(np.log2(value)).is_integer()
+
+    def __get_quantizer(self, input_quant, weights_quant, bias_quant, output_quant, weights_shape) -> str:
+        """ Returns the quantizer type for the StreamingGlobalAveragePool operation. """
+
+        # Check if the scale is a power of two
+        if isinstance(weights_quant.scale, (list, np.ndarray)):
+            if len(weights_quant.scale) != 1:
+                raise ValueError(
+                    "Per-channel quantization is currently not supported for StreamingConv.  "
+                )
+            weights_scale = weights_quant.scale[0]
+        else:
+            weights_scale = weights_quant.scale
+
+        if (
+            self.__is_power_of_two(input_quant.scale)
+            and self.__is_power_of_two(output_quant.scale)
+            and self.__is_power_of_two(weights_scale)
+        ):
+            shift = -1 * (
+                int(np.log2(input_quant.scale))
+                + int(np.log2(weights_scale))
+                - int(np.log2(output_quant.scale))
+            )
+            print(f"Activation: {input_quant.scale}, Weights: {weights_scale}, Output: {output_quant.scale}, Shift: {shift}")
+            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {get_hls_quant_type(output_quant)}>"
+        else:
+            raise ValueError(
+                "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
+            )
+
+    def __get_object_declaration(self, model) -> cpp_object:
+        """ Generate the cpp_object for the StreamingConv operation. """
+
+        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
+        if input_quant is None:
+            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
+
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+
+        weights_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[2]),
+            zeropt=model.get_initializer(self.onnx_node.input[3]),
+            bitwidth=model.get_initializer(self.onnx_node.input[4]),
+            signed=bool(self.get_nodeattr("w_signed")),
+            narrow=bool(self.get_nodeattr("w_narrow")),
+            rounding_mode=self.get_nodeattr("w_rounding_mode"),
+        )
+
+        bias_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[6]),
+            zeropt=model.get_initializer(self.onnx_node.input[7]),
+            bitwidth=model.get_initializer(self.onnx_node.input[8]),
+            signed=bool(self.get_nodeattr("b_signed")),
+            narrow=bool(self.get_nodeattr("b_narrow")),
+            rounding_mode=self.get_nodeattr("b_rounding_mode"),
+        )
+
+        # Retrieve parallelization attributes.
+        par_attribute = get_par_attributes(self.onnx_node)
+
+        # Retrieve tensor shape.
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
+        if weights_shape is None:
+            raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
+
+        # Create the StreamingConv object.
+        StreamingConv = cpp_object(
+            "StreamingConv",
+            f"{self.onnx_node.name}",
+            template_args=[
+                (
+                    f"{get_struct_type(input_quant, par_attribute['in_ch_par'])}",
+                    "TInputStruct",
+                ),
+                (f"{get_hls_quant_type(input_quant)}", "TInput"),
+                (
+                    f"{get_struct_type(weights_quant, par_attribute['in_ch_par'] * par_attribute['out_ch_par'])}",
+                    "TWeightStruct",
+                ),
+                (
+                    f"{get_struct_type(bias_quant, par_attribute['out_ch_par'])}",
+                    "TBiasStruct",
+                ),
+                (
+                    f"{get_struct_type(output_quant, par_attribute['out_ch_par'])}",
+                    "TOutputStruct",
+                ),
+                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
+                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TAcc"),
+                (
+                    self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
+                    "Quantizer",
+                ),
+                (output_shape[1], "OUT_CH"),
+                (input_shape[1], "IN_CH"),
+                (output_shape[2], "IN_HEIGHT"),
+                (output_shape[3], "IN_WIDTH"),
+                (self.get_nodeattr("group"), "GROUP"),
+                (self.get_nodeattr("kernel_shape")[0], "FH"),
+                (self.get_nodeattr("kernel_shape")[1], "FW"),
+                (self.get_nodeattr("strides")[0], "STRIDE_H"),
+                (self.get_nodeattr("strides")[1], "STRIDE_W"),
+                (par_attribute["in_ch_par"], "IN_CH_PAR"),
+                (par_attribute["out_ch_par"], "OUT_CH_PAR"),
+                (par_attribute["out_w_par"], "W_PAR"),
+            ],
+        )
+
+        return StreamingConv.generate_declaration()
+
+    def __get_variable_declaration(self, model) -> str:
+        """ Get the internal cpp variables of the StreamingConv node.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            str: A string representing the declaration of internal variables.
+        """
+        return ""
+
+    def __get_run_call(self) -> str:
+        """ Generates the C++ code necessary to run the StreamingConv node. """
+
+        # Generate the call to the StreamingConv run method.
+        run = cpp_function(
+            name=f"{self.onnx_node.name}.run",
+            return_type="void",
+            arguments=(
+                (
+                    f"i_data",
+                    f"hls::stream<TInputStruct>",
+                ),
+                (
+                    f"i_weights",
+                    f"hls::stream<TWeightStruct>",
+                ),
+                (
+                    f"i_biases",
+                    f"hls::stream<TBiasStruct>",
+                ),
+                (
+                    f"o_data",
+                    f"hls::stream<TOutputStruct>",
+                ),
+            ),
+        )
+
+        return run.generate_call(
+            [],
+            self.__get_stream_name(self.onnx_node.input[0]),
+            self.__get_stream_name(self.onnx_node.input[1]),
+            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.output[0]),
+        )
+
+    def __get_step_call(self) -> str:
+        """ Generates the C++ code necessary to step the StreamingConv node. """
+
+        # Generate the call to the StreamingConv step method.
+        step = cpp_function(
+            name=f"{self.onnx_node.name}.step",
+            return_type="void",
+            arguments=(
+                (
+                    f"i_data",
+                    f"hls::stream<TInputStruct>",
+                ),
+                (
+                    f"i_weights",
+                    f"hls::stream<TWeightStruct>",
+                ),
+                (
+                    f"i_biases",
+                    f"hls::stream<TBiasStruct>",
+                ),
+                (
+                    f"o_data",
+                    f"hls::stream<TOutputStruct>",
+                ),
+            ),
+        )
+
+        return step.generate_call(
+            [],
+            self.__get_stream_name(self.onnx_node.input[0]),
+            self.__get_stream_name(self.onnx_node.input[1]),
+            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.output[0]),
+        )
+
+    def lower_to_hls(self, model: ModelWrapper):
+        """
+        Returns:
+          nodes: List[onnx.NodeProto]
+          initializers: List[onnx.TensorProto]
+          fifo: Dict[str, TensorFifo]
+        """
+
+        par = get_par_attributes(self.onnx_node)
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+
+        input_names = [
+            f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
+            for i in range(par["in_w_par"])
+        ]
+        input_names.extend([
+            f"{self.__get_stream_name(self.onnx_node.input[1])}_{i}_"
+            for i in range(np.prod(self.get_nodeattr("kernel_shape")))
+        ])
+        if len(self.onnx_node.input) > 5:
+            input_names.extend([
+                f"{self.__get_stream_name(self.onnx_node.input[5])}_0_"
+            ])
+
+        output_names = [
+            f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
+            for i in range(par["out_w_par"])
+        ]
+
+        tensors_fifo_metadata = {}
+        for output in output_names:
+            tensors_fifo_metadata[output] = TensorFifo(
+                depth=0,
+                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
+                n_array=par["out_w_par"],
+            )
+
+        hls_kernel = HLSKernel.make_node(
+            inputs=input_names,
+            outputs=output_names,
+            name=f"{self.onnx_node.name}_hls",
+            domain="backend.custom_op",
+            original_op_type="StreamingConv",
+            hls_variable_declarations=self.__get_variable_declaration(model),
+            hls_run_call=self.__get_run_call(),
+            hls_step_call=self.__get_step_call(),
+            hls_object_declaration=self.__get_object_declaration(model),
+        )
+
+        return [hls_kernel], [], tensors_fifo_metadata

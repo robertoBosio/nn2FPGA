@@ -1,12 +1,18 @@
+import base64
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import SortGraph
+from qonnx.transformation.general import SortGraph, GiveUniqueNodeNames, GiveReadableTensorNames
 from qonnx.core.modelwrapper import ModelWrapper
 import qonnx.custom_op.general.quant as qonnx_quant
 from onnx import NodeProto, TensorProto, helper
 from backend.util.par_utils import get_par_attributes
-from backend.core.tensor_quant import TensorQuant
+from backend.core.tensor_quant import (
+    TensorQuant,
+    set_custom_tensor_datatype,
+    get_custom_tensor_datatype,
+)
 import numpy as np
 from qonnx.custom_op.registry import getCustomOp
+from backend.core.acceleratorpackage import AcceleratorPackage
 
 NODE_WITH_PARAMS = [
     "StreamingConv",
@@ -62,81 +68,166 @@ def quant_array(inp_tensor, scale, zeropt, bitwidth, signed, narrow, rounding_mo
     inp_tensor = inp_tensor + zeropt
     return inp_tensor.astype(np.int32)  # Convert to uint32 for packing
 
-
-def pack_values_to_int32words(arr: np.ndarray, bitwidth: int) -> np.ndarray:
+def _make_streaming_memory_node_unpacked(
+    model: ModelWrapper,
+    quant_arr: np.ndarray,
+    tensor_quant: TensorQuant,
+    par: dict,
+    out_tensor_shape: list,
+    base_name: str,
+) -> tuple[str, str]:
     """
-    Packs values from the input array into 32-bit words, ensuring that each value
-    fits entirely within a word (no value is split between two words). Uses padding
-    as needed.
+    Create:
+      - a new initializer with the quantized (unpacked) tensor, same shape
+      - a StreamingMemory node that consumes that initializer
+      - a fresh output value name whose type/shape mirror the initializer
 
-    Args:
-        arr (np.ndarray): Input array of unsigned integers.
-        bitwidth (int): Number of bits per value. Must be <= 32.
-
-    Returns:
-        np.ndarray: Packed 32-bit words as a 1D array of dtype=np.uint32.
+    Returns (init_name, out_name).
     """
-    bitwidth = int(bitwidth)
-    if bitwidth > 32 or bitwidth <= 0:
-        raise ValueError("bitwidth must be between 1 and 32")
+    init_name = model.make_new_valueinfo_name()
+    out_name  = model.make_new_valueinfo_name()
 
-    arr = arr.flatten()  # Ensure the input is a 1D array
-    values_per_word = 32 // bitwidth  # Max number of values per word
-    padded_len = int(
-        ((len(arr) + values_per_word - 1) // values_per_word) * values_per_word
+    model.set_initializer(init_name, quant_arr)
+    model.set_tensor_shape(init_name, list(quant_arr.shape))
+    model.set_tensor_shape(out_name, list(quant_arr.shape))
+    set_custom_tensor_datatype(model, out_name, tensor_quant)
+
+    data_per_word = 32 // tensor_quant.bitwidth
+
+    # Expand shapes to 4D if needed
+    if len(out_tensor_shape) < 4:
+        out_tensor_shape = out_tensor_shape + [1] * (4 - len(out_tensor_shape))
+    mem_shape = list(quant_arr.shape)
+    if len(mem_shape) < 4:
+        mem_shape = mem_shape + [1] * (4 - len(mem_shape))
+    in_ch_par = min(par.get("in_ch_par", 1), mem_shape[1])
+    out_ch_par = min(par.get("out_ch_par", 1), mem_shape[0])
+    in_w_par = 1
+    out_w_par = np.prod(out_tensor_shape[2:])
+    times = out_tensor_shape[2] * out_tensor_shape[3] // par.get("out_w_par", 1)
+
+    sm_node = helper.make_node(
+        "StreamingMemory",
+        inputs=[init_name],
+        outputs=[out_name],
+        name=f"StreamingMemory_{base_name}",
+        in_ch_par=in_ch_par,
+        out_ch_par=out_ch_par,
+        in_w_par=in_w_par,
+        out_w_par=out_w_par,
+        data_per_word=data_per_word,
+        mem_shape=quant_arr.shape,
+        times=times,
+        domain="backend.custom_op",
     )
-    padded_arr = np.zeros(padded_len, dtype=np.uint32)
-    padded_arr[: len(arr)] = arr
-
-    packed = []
-    for i in range(0, padded_len, values_per_word):
-        word = 0
-        for j in range(values_per_word):
-            word |= (padded_arr[i + j] & ((1 << bitwidth) - 1)) << (bitwidth * j)
-        packed.append(word)
-
-    return np.array(packed, dtype=np.uint32)
+    model.graph.node.extend([sm_node])
+    return init_name, out_name
 
 
-def get_param_mem_from_node(model: ModelWrapper, node: NodeProto) -> np.ndarray:
+def hoist_params_to_streaming_memory_unpacked(model: ModelWrapper, node: NodeProto) -> None:
     """
-    Get the memory representation of the parameters of a node that requires streaming.
-    The memory representation is a 1D array of 32-bit unsigned integers."""
+    For a StreamingConv node:
+      - Quantize weights (and biases, if present) WITHOUT packing
+      - Insert a StreamingMemory node per parameter (weights and optionally biases)
+      - Replace the corresponding StreamingConv inputs with the new SM outputs
+      - Remove only the original weight/bias initializers (keep scale/zeropt/bitwidth)
 
-    mem = np.array([], dtype=np.uint32)
+    Mutates `model` in-place.
+    """
+    assert node.op_type == "StreamingConv", "This helper is intended for StreamingConv nodes only."
     custom_node = getCustomOp(node)
-    if node.op_type == "StreamingConv":
+    par = get_par_attributes(node)
+    out_tensor_shape = model.get_tensor_shape(node.output[0])
 
-        if len(node.input) > 5:
-            quant_bias_array = quant_array(
-                model.get_initializer(node.input[5]),
-                scale=model.get_initializer(node.input[6]),
-                zeropt=model.get_initializer(node.input[7]),
-                bitwidth=model.get_initializer(node.input[8]),
-                signed=custom_node.get_nodeattr("b_signed"),
-                narrow=custom_node.get_nodeattr("b_narrow"),
-                rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
-            )
-            mem = np.concatenate(
-                (mem, pack_values_to_int32words(quant_bias_array, model.get_initializer(node.input[8]).item()))
-            )
+    def _get_init(name: str) -> np.ndarray:
+        arr = model.get_initializer(name)
+        if arr is None:
+            raise ValueError(f"Expected initializer '{name}' not found.")
+        return arr
 
-        weight_array = model.get_initializer(node.input[1])
-        quant_weight_array = quant_array(
-            weight_array,
-            scale=model.get_initializer(node.input[2]),
-            zeropt=model.get_initializer(node.input[3]),
-            bitwidth=model.get_initializer(node.input[4]),
-            signed=custom_node.get_nodeattr("w_signed"),
-            narrow=custom_node.get_nodeattr("w_narrow"),
-            rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
+    # -------- Weights: inputs [1]=W, [2]=scale, [3]=zeropt, [4]=bitwidth --------
+    w_name   = node.input[1]
+    w_scale  = _get_init(node.input[2])
+    w_zeropt = _get_init(node.input[3])
+    w_bw     = _get_init(node.input[4])
+
+    # Quantize to integer array (same shape as original weights)
+    quant_w = quant_array(
+        _get_init(w_name),
+        scale=w_scale,
+        zeropt=w_zeropt,
+        bitwidth=w_bw,
+        signed=custom_node.get_nodeattr("w_signed"),
+        narrow=custom_node.get_nodeattr("w_narrow"),
+        rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
+    )
+    tensor_quant = TensorQuant(
+        scale=1.0,
+        zeropt=0,
+        bitwidth=w_bw,
+        signed=custom_node.get_nodeattr("w_signed"),
+        narrow=custom_node.get_nodeattr("w_narrow"),
+        rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
+    )
+
+    # Ensure a container dtype consistent with bitwidth/sign
+    # (keep shape intact; we don't pack)
+    quant_w = quant_w.astype(tensor_quant.get_numpy_dtype(),  copy=False)
+
+    # Insert StreamingMemory that produces the same shape/type
+    _, w_out = _make_streaming_memory_node_unpacked(
+        model,
+        quant_w,
+        tensor_quant,
+        par,
+        out_tensor_shape,
+        base_name=f"{node.name}_weights",
+    )
+    # Wire into the conv
+    node.input[1] = w_out
+    # Drop the original weight initializer (keep metadata in [2],[3],[4])
+    if model.get_initializer(w_name) is not None:
+        model.del_initializer(w_name)
+
+    # -------- Biases (optional): inputs [5]=B, [6]=scale, [7]=zeropt, [8]=bitwidth --------
+    if len(node.input) > 5 and node.input[5] != "":
+        b_name   = node.input[5]
+        b_scale  = _get_init(node.input[6])
+        b_zeropt = _get_init(node.input[7])
+        b_bw     = _get_init(node.input[8])
+
+        quant_b = quant_array(
+            _get_init(b_name),
+            scale=b_scale,
+            zeropt=b_zeropt,
+            bitwidth=b_bw,
+            signed=custom_node.get_nodeattr("b_signed"),
+            narrow=custom_node.get_nodeattr("b_narrow"),
+            rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
+        )
+        tensor_quant = TensorQuant(
+            scale=1.0,
+            zeropt=0,
+            bitwidth=b_bw,
+            signed=custom_node.get_nodeattr("b_signed"),
+            narrow=custom_node.get_nodeattr("b_narrow"),
+            rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
         )
 
-        mem = np.concatenate(
-            (mem, pack_values_to_int32words(quant_weight_array, model.get_initializer(node.input[4]).item()))
-        )
+        # Container dtype for biases as above; keep original bias shape
+        quant_b = quant_b.astype(tensor_quant.get_numpy_dtype(),  copy=False)
 
-    return mem
+        _, b_out = _make_streaming_memory_node_unpacked(
+            model,
+            quant_b,
+            tensor_quant,
+            par,
+            out_tensor_shape,
+            base_name=f"{node.name}_biases"
+        )
+        node.input[5] = b_out
+        if model.get_initializer(b_name) is not None:
+            model.del_initializer(b_name)
 
 class AddStreamingParams(Transformation):
     """A transformation pass that adds the logic to handle streaming parameters at startup.
@@ -156,93 +247,121 @@ class AddStreamingParams(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
         sequential_streaming = list()
-        uint32_mem = np.array([], dtype=np.uint32)
+        grouped_initializer = np.array([], dtype=np.uint32)
+        params_quant = TensorQuant(
+            scale=1.0,
+            zeropt=0,
+            bitwidth=32,
+            signed=False,
+            narrow=False,
+            rounding_mode="ROUND",
+        )
+
+        for node in model.graph.node:
+            if node.op_type == "StreamingConv":
+                hoist_params_to_streaming_memory_unpacked(model, node)
 
         # Find all nodes with parameters that need streaming
         # and collect them in a list.
-        for node in model.graph.node:
-            if node.op_type in NODE_WITH_PARAMS:
-                node_mem = get_param_mem_from_node(model, node)
-                uint32_mem = np.concatenate((uint32_mem, node_mem))
-                sequential_streaming.append((node, node_mem.size))
+        for node in model.get_nodes_by_op_type("StreamingMemory"):
+            tensor_quant = get_custom_tensor_datatype(model, node.output[0])
+            packed_array = getCustomOp(node).reshape_and_pack_init_to_int32words(
+                model.get_initializer(node.input[0]),
+                data_bitwidth=tensor_quant.bitwidth,
+                word_bitwidth=32,
+            )
+            grouped_initializer = np.concatenate(
+                (grouped_initializer, packed_array), axis=0
+            )
+            sequential_streaming.append(
+                (node, packed_array.size)
+            )
+        grouped_initializer = grouped_initializer.reshape((1, grouped_initializer.size))
 
         if len(sequential_streaming) == 0:
             return (model, False)
 
+        ap = AcceleratorPackage.from_json(
+            model.get_metadata_prop("accelerator_package")
+        )
         # Add an input to the model for the streaming parameters.
         # Add also an initializer since it's constant.
         # The 'const_' string in the name is mandatory to recognize the initializer
         # as a special in the simulation flow.
+        ap.input_map["const_param_stream"] = {
+            "new_name": "const_param_stream",
+            "shape": grouped_initializer.shape,
+            "quant": params_quant.get_canonical_name(),
+            "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
+        }
         param_stream_input = helper.make_tensor_value_info(
-            "const_param_stream", TensorProto.INT32, [len(uint32_mem)]
+            "const_param_stream", TensorProto.INT32, grouped_initializer.shape
         )
-        model.set_initializer("const_param_stream", uint32_mem)
+        model.graph.input.extend([param_stream_input])
 
         # Create a ParamStream node for each node with parameters.
         input_stream = [param_stream_input.name]
-        params_to_shift = uint32_mem.size
+        params_to_shift = grouped_initializer.shape[1]
         for node, params_size in sequential_streaming[:-1]:
-            node_par = get_par_attributes(node)
-            param_stream_node_name = node.name + "_param"
-            output_stream = [f"{node.name}_stream"]
-            output_stream.append(f"{node.name}_shift_out")
-
-            # Create the ParamStream node.
-            param_stream_node = helper.make_node(
-                "ParamStream",
-                inputs=input_stream,
-                outputs=output_stream,
-                name=param_stream_node_name,
-                ich_par=node_par.get("ich_par", None),
-                och_par=node_par.get("och_par", None),
-            )
-
-            # Add the new input to the node with parameters.
-            node.input.append(output_stream[0])
-
-            # Add the ParamStream node to the graph.
-            model.graph.node.append(param_stream_node)
-            input_stream = [
-                output_stream[1]
-            ]  # The next input is the first output of the current ParamStream node
+            custom_op = getCustomOp(node)
+            node.output.extend([f"{node.name}_shift_out"])
 
             params_to_shift -= params_size
-            model.set_tensor_shape(output_stream[0], [params_size])
-            model.set_tensor_shape(output_stream[1], [params_to_shift])
+            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
+            custom_op.set_nodeattr("data_to_shift", params_to_shift)
+            model.del_initializer(node.input[0])
+            node.input[0] = input_stream[0]
+            set_custom_tensor_datatype(
+                model,
+                node.input[0],
+                params_quant
+            )
+
+            # The next input is the first output of the current ParamStream node
+            input_stream = [f"{node.name}_shift_out"]
         else:
             # For the last node we do not need the shift_out output,
             # we just need the stream output.
-
             node, params_size = sequential_streaming[-1]
-            node_par = get_par_attributes(node)
-            param_stream_node_name = node.name + "_param"
-            output_stream = [f"{node.name}_stream"]
 
-            # Create the ParamStream node.
-            param_stream_node = helper.make_node(
-                "ParamStream",
-                inputs=input_stream,
-                outputs=output_stream,
-                name=param_stream_node_name,
-                ich_par=node_par.get("ich_par", None),
-                och_par=node_par.get("och_par", None),
+            custom_op = getCustomOp(node)
+            # node.output.extend([f"{node.name}_shift_out"])
+            model.set_tensor_shape(
+                input_stream[0], [params_to_shift]
             )
 
-            # Add the new input to the node with parameters.
-            node.input.append(output_stream[0])
-
-            # Add the ParamStream node to the graph.
-            model.graph.node.append(param_stream_node)
-
-            model.set_tensor_shape(output_stream[0], [params_size])
+            params_to_shift -= params_size
+            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
+            custom_op.set_nodeattr("data_to_shift", params_to_shift)
+            model.del_initializer(node.input[0])
+            node.input[0] = input_stream[0]
+            set_custom_tensor_datatype(model, node.input[0], params_quant)
 
         # Sort the graph.
         model = model.transform(SortGraph())
+        input_original_names = [i.name for i in model.graph.input]
+        output_original_names = [o.name for o in model.graph.output]
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        input_new_names = [i.name for i in model.graph.input]
+        output_new_names = [o.name for o in model.graph.output]
+        for original, new in zip(input_original_names, input_new_names):
+            for value in ap.input_map.values():
+                if value['new_name'] == original:
+                    value['new_name'] = new
+                    break
+        for original, new in zip(output_original_names, output_new_names):
+            for value in ap.output_map.values():
+                if value['new_name'] == original:
+                    value['new_name'] = new
+                    break
+        model.set_metadata_prop("accelerator_package", ap.to_json())
+
 
         # os.system(f"mkdir -p {self.nn2fpga_root}/params/")
-        # np.save(f"{self.nn2fpga_root}/params/streaming_params.npy", uint32_mem)
+        # np.save(f"{self.nn2fpga_root}/params/streaming_params.npy", grouped_initializer)
 
         # # For c++ testbench, we need to save the parameters in a binary file.
         # with open(f"{self.nn2fpga_root}/params/streaming_params.bin", "wb") as file:
-        #     file.write(uint32_mem.tobytes())
+        #     file.write(grouped_initializer.tobytes())
         return (model, False)

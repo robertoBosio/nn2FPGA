@@ -4,6 +4,7 @@ from qonnx.custom_op.registry import getCustomOp
 from backend.util.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
 from backend.core.acceleratorpackage import AcceleratorPackage
 from backend.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata
+from backend.transformation.convert_to_QCDQ import ConvertToQCDQ
 from onnx import NodeProto
 import base64
 import os
@@ -12,7 +13,7 @@ import numpy as np
 import logging
 logger = logging.getLogger(__name__)
 
-def generate_hls_code(model: ModelWrapper) -> str:
+def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
     """Generate HLS code for the given model.
     Args:
@@ -42,28 +43,23 @@ def generate_hls_code(model: ModelWrapper) -> str:
     function.add_code("#pragma HLS DATAFLOW disable_start_propagation")
     function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    for input in model.graph.input:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, input.name)
+    for input_name in [input['new_name'] for input in ap.input_map.values()]:
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, input_name)
         var = cpp_variable(
-            input.name,
+            input_name,
             f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={input.name}"],
+            pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
 
-    for const_input_name in {init.name for init in model.graph.initializer if "const_" in init.name}:
-        var = cpp_variable(f"{const_input_name}_stream", "hls::stream<ap_uint<8>>&")
-        function.add_argument(var)
-        function.add_code(f"#pragma HLS INTERFACE axis port={const_input_name}_stream")
-
-    for output in model.graph.output:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, output.name)
+    for output_name in [output['new_name'] for output in ap.output_map.values()]:
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, output_name)
         var = cpp_variable(
-            output.name,
+            output_name,
             f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={output.name}"],
+            pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
         )
         function.add_argument(var)
         for pragma in var.pragma:
@@ -119,34 +115,6 @@ def generate_hls_code(model: ModelWrapper) -> str:
     cwr.add_function_definition(function)
     return cwr.code
 
-def encode_array(arr: np.ndarray):
-    return {
-        "shape": list(arr.shape),
-        "dtype": str(arr.dtype),
-        "data_b64": base64.b64encode(arr.tobytes()).decode("ascii")
-    }
-
-def generate_constant_input_values(model: ModelWrapper, partition_node: NodeProto) -> dict:
-    """
-    Generate a dictionary of input values for the costant inputs of the model.
-    Args:
-        model (ModelWrapper): The model to generate input values for.
-    Returns:
-        dict: A dictionary mapping input names to their constant values.
-    """
-    constant_inputs = {}
-    init_dict = {init.name: init for init in model.graph.initializer}
-
-    for tensor_name in init_dict:
-        if "const_" in tensor_name:
-            tensor = model.get_initializer(tensor_name)
-            if tensor is not None:
-                constant_inputs[tensor_name] = encode_array(tensor)
-            else:
-                raise ValueError(f"Initializer '{tensor_name}' not found in model.")
-
-    return constant_inputs   
-
 class EmbedHLSCode(Transformation):
     """
     Class to handle the conversion of ONNX models to HLS (High-Level Synthesis) format.
@@ -170,32 +138,29 @@ class EmbedHLSCode(Transformation):
         partition_nodes = model.get_nodes_by_op_type("nn2fpgaPartition")
         if not partition_nodes:
             raise ValueError(f"Partition nodes not found in model.")
-        
+
         # We are sure that there is only one nn2FPGA partition node in the model.
         # as this is checked in the supported partition transformation.
         partition_node = partition_nodes[0]
 
         ap = AcceleratorPackage.from_json(
-            getCustomOp(partition_node).get_nodeattr("accelerator_package")
+            self.nn2fpga_model.get_metadata_prop("accelerator_package")
         )
-
-        with open("hls_code.cpp", "w") as f:
-            f.write(generate_hls_code(self.nn2fpga_model))
 
         # Update the accelerator package with the HLS code and driver
         ap.work_dir = self.work_root
-        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.nn2fpga_model).encode()).decode("ascii")
-        ap.constant_inputs = generate_constant_input_values(self.nn2fpga_model, partition_node)
+        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.nn2fpga_model, ap).encode()).decode("ascii")
 
         getCustomOp(partition_node).set_nodeattr(
             "accelerator_package", ap.to_json()
         )
+        model = model.transform(ConvertToQCDQ())
 
         if self.erase:
             # Erase the original model file if it exists
             if os.path.exists("partition_FPGA.onnx"):
                 os.remove("partition_FPGA.onnx")
-            
+
             if os.path.exists("wrapper_model.onnx"):
                 os.remove("wrapper_model.onnx")
 

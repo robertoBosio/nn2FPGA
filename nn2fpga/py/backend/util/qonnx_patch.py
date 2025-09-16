@@ -128,7 +128,6 @@ def patch_qonnx_ops():
                 if o in p_model.graph.value_info:
                     p_model.graph.value_info.remove(o)
 
-
             # Build the accelerator package input/output maps
             # It is fundamental to maintain consistency between the maps and the inputs/outputs names
             # in the partition model. We use the same name convention as qonnx's GiveReadableTensorNames
@@ -141,7 +140,12 @@ def patch_qonnx_ops():
                         f"Partition input {input.name} does not have a consumer."
                     )
                 new_name = f"global_in" if i == 0 else f"global_in_{i}"
-                ap_input_map[input.name] = {"new_name": new_name, "shape": p_model.get_tensor_shape(input.name), "quant": None}
+                ap_input_map[input.name] = {
+                    "new_name": new_name,
+                    "shape": p_model.get_tensor_shape(input.name),
+                    "quant": None,
+                    "value": None,
+                }
                 if first_node.op_type == "Quant":
                     tensor_quant = TensorQuant.from_quant_node(first_node, p_model)
                     ap_input_map[input.name]["quant"] = tensor_quant.get_canonical_name()
@@ -160,7 +164,12 @@ def patch_qonnx_ops():
                         f"Partition output {output.name} does not have a producer."
                     )
                 new_name = f"global_out" if i == 0 else f"global_out_{i}"
-                ap_output_map[output.name] = {"new_name": new_name, "shape": p_model.get_tensor_shape(output.name), "quant": None}
+                ap_output_map[output.name] = {
+                    "new_name": new_name,
+                    "shape": p_model.get_tensor_shape(output.name),
+                    "quant": None,
+                    "value": None,
+                }
                 if last_node.op_type == "Quant":
                     tensor_quant = TensorQuant.from_quant_node(last_node, p_model)
                     ap_output_map[output.name]["quant"] = tensor_quant.get_canonical_name()
@@ -170,11 +179,6 @@ def patch_qonnx_ops():
                     raise ValueError(
                         f"Partition output {output.name} is not quantized."
                     )
-            
-            # save partition model
-            p_model_filename = self.partition_dir + "/partition_" + str(partition_id) + ".onnx"
-            p_model.cleanup()
-            p_model.save(p_model_filename)
 
             # Create the accelerator package
             ap = AcceleratorPackage(
@@ -185,6 +189,12 @@ def patch_qonnx_ops():
                 frequency=p_model.get_metadata_prop("frequency"),
                 hls_version=p_model.get_metadata_prop("hls_version"),
             )
+            p_model.set_metadata_prop("accelerator_package", ap.to_json())
+
+            # save partition model
+            p_model_filename = self.partition_dir + "/partition_" + str(partition_id) + ".onnx"
+            p_model.cleanup()
+            p_model.save(p_model_filename)
 
             # insert nn2fpgaPartition node
             p_node = helper.make_node(
@@ -193,7 +203,6 @@ def patch_qonnx_ops():
                 p_out,
                 name="nn2fpgaPartition_" + str(partition_id),
                 domain="backend.custom_op",
-                accelerator_package=ap.to_json(),
             )
             non_p_model.graph.node.insert(p_start_ind, p_node)
 

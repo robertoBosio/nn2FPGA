@@ -30,11 +30,6 @@ class AcceleratorPackage:
     # as well as their shapes and data types.
     output_map: Dict[str, Any] = field(default_factory=dict)
 
-    # Mapping of constant input tensor names to their values.
-    # Constant inputs are tensors that have fixed values (like weights) and are used to initialize the accelerator.
-    # The dictionary contains the tensor names and their corresponding values.
-    constant_inputs: Dict[str, Any] = field(default_factory=dict)
-
     # Working directory for the accelerator.
     work_dir: str = ""
 
@@ -56,7 +51,6 @@ class AcceleratorPackage:
         "hwh_b64",
         "input_map",
         "output_map",
-        "constant_inputs",
         "work_dir",
         "board_name",
         "top_name",

@@ -40,8 +40,8 @@ def dump_tcl_script(top_name, part_name, frequency, hls_version, input_files):
             'set_part {part_name}',
             'create_clock -period {t_clk}',
             'csim_design -argv "{argv}"',
-            # 'csynth_design',
-            # 'cosim_design -argv "{argv}"',
+            'csynth_design',
+            'cosim_design -argv "{argv}"',
             'exit',
         ]
     )
@@ -50,7 +50,7 @@ def dump_tcl_script(top_name, part_name, frequency, hls_version, input_files):
         top_name=top_name, tb_files=tb_files, part_name=part_name, t_clk=t_clk, argv=argv
     )
 
-def generate_hls_driver(top_name, input_map, init_map, output_map, axi_bitwidth) -> str:
+def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
     """Generate HLS driver code for the given model.
     Args:
         model (ModelWrapper): The model to generate HLS driver code for.
@@ -82,13 +82,6 @@ def generate_hls_driver(top_name, input_map, init_map, output_map, axi_bitwidth)
         )
         kernel_function.add_argument(var)
         kernel_arguments.append(value["new_name"])
-
-    for const_input_name in {
-        init.name for init in init_map if "const_" in init.name
-    }:
-        var = cpp_variable(f"{const_input_name}", "hls::stream<ap_uint<8>>&")
-        kernel_function.add_argument(var)
-        kernel_arguments.append(f"{const_input_name}")
 
     for output in output_map.values():
         var = cpp_variable(
@@ -219,17 +212,11 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         new_name = value["new_name"]
         if old_name in context:
             internal_context.append((new_name, context[old_name]))
+        elif value['value'] is not None:
+            internal_context.append((new_name, np.frombuffer(base64.b64decode(value['value']), dtype=np.uint32).reshape(value['shape'])))
+        else:
+            raise ValueError(f"Input {old_name} not found in context and no default value provided.")
     input_list.extend([value["new_name"] for value in input_map.values()])
-
-    # Save the value of the constant inputs
-    for tensor_name, tensor_data in ap.constant_inputs.items():
-        tensor = np.frombuffer(
-            base64.b64decode(tensor_data["data_b64"]), dtype=tensor_data["dtype"]
-        ).reshape(tensor_data["shape"])
-        internal_context.append((tensor_name, tensor))
-    input_list.extend(
-        sorted(tensor_name for tensor_name in ap.constant_inputs.keys())
-    )
 
     # Update the context with the output map
     output_map = ap.output_map
@@ -266,7 +253,6 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         f.write(generate_hls_driver(
             top_name=ap.top_name,
             input_map=ap.input_map,
-            init_map=ap.constant_inputs,
             output_map=ap.output_map,
             axi_bitwidth=int(board_info["axi_bitwidth"]),
         ))

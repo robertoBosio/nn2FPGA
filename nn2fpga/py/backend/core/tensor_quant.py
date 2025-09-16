@@ -21,7 +21,7 @@ def Quant_to_TensorQuant(node: NodeProto, model: ModelWrapper) -> dict:
             - bitwidth: The bitwidth used for quantization.
             - signed: Indicates if quantization is signed.
             - narrow: Indicates if narrow range quantization is used.
-            - rounding_mode: The rounding mode used during quantization.
+            - rounding_mode: The rounding_mode used during quantization.
     """
     scale = zeropt = bitwidth = None
 
@@ -64,7 +64,7 @@ class TensorQuant:
     Currently, it does not support per channel/per group quantization.
 
     The quantization parameters are stored in a canonical string format:
-    Q[bitwidth,signed,scale,zeropt,narrow,rounding]
+    Q[bitwidth,signed,scale,zeropt,narrow,rounding_mode]
     
     Where:
     - `bitwidth`: Number of bits used for quantization.
@@ -72,10 +72,10 @@ class TensorQuant:
     - `scale`: Scale factor for quantization.
     - `zeropt`: Zero-point offset for quantization.
     - `narrow`: Indicates if narrow range quantization is used (1) or not (0).
-    - `rounding`: Rounding mode used during quantization.
+    - `rounding_mode`: Rounding mode used during quantization.
     
     Methods:
-        __init__(bitwidth, signed, scale, zeropt, narrow=False, rounding="ROUND"):
+        __init__(bitwidth, signed, scale, zeropt, narrow=False, rounding_mode="ROUND"):
             Initializes a TensorQuant instance with the specified quantization parameters.
         from_quant_node(quant_node: NodeProto, model: ModelWrapper) -> TensorQuant:
             Creates a TensorQuant instance from a Quant node.
@@ -90,7 +90,7 @@ class TensorQuant:
     
     """
 
-    def __init__(self, bitwidth, signed, scale, zeropt, narrow=False, rounding="ROUND"):
+    def __init__(self, bitwidth, signed, scale, zeropt, narrow=False, rounding_mode="ROUND"):
         self.bitwidth = int(bitwidth)
         self.signed = int(signed)
         if scale is None:
@@ -110,7 +110,7 @@ class TensorQuant:
         else:
             self.zeropt = int(zeropt)
         self.narrow = int(narrow)
-        self.rounding = str(rounding)
+        self.rounding_mode = str(rounding_mode)
     
     @classmethod
     def from_quant_node(cls, quant_node: NodeProto, model: ModelWrapper):
@@ -121,7 +121,7 @@ class TensorQuant:
             scale=params["scale"],
             zeropt=params["zeropt"],
             narrow=params["narrow"],
-            rounding=params["rounding_mode"],
+            rounding_mode=params["rounding_mode"],
         )
     
     def __eq__(self, other):
@@ -133,11 +133,11 @@ class TensorQuant:
             self.scale == other.scale and
             self.zeropt == other.zeropt and
             self.narrow == other.narrow and
-            self.rounding == other.rounding
+            self.rounding_mode == other.rounding_mode
         )
 
     def get_canonical_name(self):
-        return f"Q[{self.bitwidth},{self.signed},{self.scale},{self.zeropt},{self.narrow},{self.rounding}]"
+        return f"Q[{self.bitwidth},{self.signed},{self.scale},{self.zeropt},{self.narrow},{self.rounding_mode}]"
     
     def get_tensorproto_dtype(self):
         """Returns the ONNX TensorProto data type corresponding to the quantization parameters."""
@@ -196,7 +196,7 @@ class TensorQuant:
             scale=float(m.group(3)),
             zeropt=int(m.group(4)),
             narrow=int(m.group(5)),
-            rounding=str(m.group(6))
+            rounding_mode=str(m.group(6))
         )
 
     def __repr__(self):

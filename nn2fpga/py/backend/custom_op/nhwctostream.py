@@ -24,6 +24,10 @@ class NHWCToStream(CustomOp):
             "normalize": ("i", False, 0),  # 0: no normalization, 1: normalize the input tensor
             "axi_bitwidth": ("i", False, 128),  # Bitwidth of the AXI interface
             "pipeline_depth": ("i", False, 1),  # Depth of the pipeline
+            "in_ch_par": ("i", False, 1),  # Input channel parallelization
+            "out_ch_par": ("i", False, 1),  # Output channel parallelization
+            "in_w_par": ("i", False, 1),  # Input width parallelization
+            "out_w_par": ("i", False, 1),  # Output width parallelization
         }
 
     def make_shape_compatible_op(self, model):
@@ -64,12 +68,10 @@ class NHWCToStream(CustomOp):
         """
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        par_attribute = get_par_attributes(self.onnx_node)
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
 
-        fitting_data = int(math.floor(axi_bitwidth / (output_quant.bitwidth * par_attribute["in_ch_par"] * par_attribute["in_w_par"])))
-        return fitting_data * par_attribute["in_ch_par"] * par_attribute["in_w_par"]
+        return int(math.floor(axi_bitwidth / output_quant.bitwidth))
 
     def __get_variable_cpp(self, model) -> str:
         """ Get the internal cpp variables of the NHWCToStream node.
@@ -103,6 +105,7 @@ class NHWCToStream(CustomOp):
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
         if input_shape is None:
             raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
 
         NHWCToStream = cpp_object(
             "NHWCToStream",
@@ -206,6 +209,7 @@ class NHWCToStream(CustomOp):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
+            original_op_type=self.onnx_node.op_type,
             hls_variable_declarations=self.__get_variable_cpp(model),
             hls_run_call=self.__get_run_call(),
             hls_step_call=self.__get_step_call(),

@@ -232,10 +232,14 @@ class ConvertToQCDQ(Transformation):
             for old_name, (index, new_name) in new_inputs_map.items():
                 partition_node.input[index] = new_name
 
-                # Remove the old item from the input map and add the new one
-                ap.input_map[new_name] = ap.input_map.pop(old_name)
-                old_shape = ap.input_map[new_name]["shape"]
-                ap.input_map[new_name]["shape"] = toNHWC(old_shape)
+            # 2) Update the input map in the accelerator package and preserve the order
+            rename = {old: new for old, (_, new) in new_inputs_map.items()}
+            old_map = ap.input_map
+            ap.input_map = {rename.get(k, k): v for k, v in old_map.items()}
+
+            # 3) Update shapes
+            for old_name, (_, new_name) in new_inputs_map.items():
+                ap.input_map[new_name]["shape"] = toNHWC(ap.input_map[new_name]["shape"])
 
 
             new_outputs_map = {}
@@ -309,10 +313,14 @@ class ConvertToQCDQ(Transformation):
                 # Update the partition node output
                 partition_node.output[index] = new_name
 
-                # Remove the old item from the output map and add the new one
-                ap.output_map[new_name] = ap.output_map.pop(old_name)
-                old_shape = ap.output_map[new_name]["shape"]
-                ap.output_map[new_name]["shape"] = toNHWC(old_shape)
+            # 2) Update the output map in the accelerator package and preserve the order
+            rename = {old: new for old, (_, new) in new_outputs_map.items()}
+            old_map = ap.output_map
+            ap.output_map = {rename.get(k, k): v for k, v in old_map.items()}
+
+            # 3) Update shapes
+            for old_name, (_, new_name) in new_outputs_map.items():
+                ap.output_map[new_name]["shape"] = toNHWC(ap.output_map[new_name]["shape"])
 
             # Set the updated accelerator package back to the partition node
             getCustomOp(partition_node).set_nodeattr(

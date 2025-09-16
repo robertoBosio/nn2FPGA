@@ -1,3 +1,4 @@
+import re
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.custom_op.registry import getCustomOp
@@ -8,15 +9,20 @@ from backend.core.tensor_fifo import (
 )
 from backend.util.codegen_utils import cpp_function, cpp_object, cpp_variable, NewCodeWriter
 from backend.util.board_util import read_board_info
+from backend.core.acceleratorpackage import AcceleratorPackage
 import os
 import json
 import subprocess
+import logging
+logger = logging.getLogger(__name__)
 
 def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     """ Generate the HLS code to execute the model in fifo-depth mode. """
 
     # Retrieve model II
     model_II = int(model.get_metadata_prop("model_II"))
+    ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
+    constant_inputs = [value['new_name'] for value in ap.input_map.values() if value['value'] is not None]
 
     cwr = NewCodeWriter()
     cwr.add_autogen_comment()
@@ -42,10 +48,6 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
 
-    for const_input_name in {init.name for init in model.graph.initializer if "const_" in init.name}:
-        var = cpp_variable(f"{const_input_name}_stream", "hls::stream<ap_uint<8>>&")
-        function.add_code(f"{var.generate_declaration()};")
-
     stream_vars = []
     stream_count = len(model.graph.value_info)
     for fifo in model.graph.value_info:
@@ -60,6 +62,15 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
                 array=tensor_fifo.n_array,
             )
             stream_vars.append((var, True))
+        
+    known_stream_depth = set()
+    for node in model.graph.node:
+        if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
+            for stream in list(node.input) + list(node.output):
+                m = re.match(r"(.*)_([0-9]+)_", stream)
+                if m:
+                    known_stream_depth.add(m.group(1))
+    logger.info(f"Known stream depth for: {known_stream_depth}")
 
     for node in model.graph.node:
         custom_op = getCustomOp(node)
@@ -93,6 +104,14 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     producers_step_calls = []
     for input in model.graph.input:
         tensor_fifo = get_custom_tensor_fifo_metadata(model, input.name)
+        var = cpp_variable(
+            input.name,
+            f"hls::stream<{tensor_fifo.hls_type}>",
+        )
+        stream_vars.append((var, False))
+        if input.name in constant_inputs:
+            continue
+
         func = cpp_object(
             class_name="FixedThroughputDMA",
             obj_name=f"FixedThroughputDMA_{input.name}",
@@ -103,12 +122,6 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
         producers_step_calls.append(
             f"FixedThroughputDMA_{input.name}.step({input.name});"
         )
-
-        var = cpp_variable(
-            input.name,
-            f"hls::stream<{tensor_fifo.hls_type}>",
-        )
-        stream_vars.append((var, False))
 
     # Declare all the internal streams.
     for stream, _ in stream_vars:
@@ -143,7 +156,8 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # It must be done in reverse order to ensure that nodes cannot immediately consume the data produced by the previous node.
     for node in reversed(model.graph.node):
         function.add_code(f"actor_status = {getCustomOp(node).get_nodeattr('hls_step_call')};")
-        function.add_code("actor_statuses.push_back(actor_status);")
+        if getCustomOp(node).get_nodeattr('original_op_type') != "StreamingMemory":
+            function.add_code("actor_statuses.push_back(actor_status);")
 
     # Execute a step for each input producer.
     for step_call in producers_step_calls:
@@ -155,8 +169,9 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     for stream, is_internal in stream_vars:
         if is_internal:
             for s in range(stream.array):
-                function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[{s}].size(), stream_max_size[{iter}]);")
-                function.add_code(f"channel_quantities.push_back({stream.name}[{s}].size());")
+                if stream.name not in known_stream_depth:
+                    function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[{s}].size(), stream_max_size[{iter}]);")
+                    function.add_code(f"channel_quantities.push_back({stream.name}[{s}].size());")
                 iter += 1
         else:
             function.add_code(f"channel_quantities.push_back({stream.name}.size());")
@@ -292,7 +307,6 @@ class ComputeFifoDepth(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Compute the FIFO depth for each node in the model."""
-        graph = model.graph
 
         # Create the working directory for the simulation.
         make_build_dir(self.work_root)

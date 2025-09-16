@@ -44,10 +44,10 @@ class StreamingGlobalAveragePool(CustomOp):
 
     def get_nodeattr_types(self):
         return {
-            # Custom attributes for parallelization of StreamingGlobalAveragePool
-            "ich_par" : ("i", False, 1),
-            "och_par" : ("i", False, 1),
-            "w_par" : ("i", False, 1),
+            "in_ch_par": ("i", False, 1),  # Input channel parallelization
+            "out_ch_par": ("i", False, 1),  # Output channel parallelization
+            "in_w_par": ("i", False, 1),  # Input width parallelization
+            "out_w_par": ("i", False, 1),  # Output width parallelization
         }
 
     def make_shape_compatible_op(self, model):
@@ -145,7 +145,7 @@ class StreamingGlobalAveragePool(CustomOp):
         # Check if the scale is a power of two
         if self.__is_power_of_two(input_quant.scale) and self.__is_power_of_two(output_quant.scale):
             shift = int(np.log2(input_quant.scale)) - int(np.log2(output_quant.scale))
-            return f"DequantQuantPo2Types<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
@@ -288,6 +288,7 @@ class StreamingGlobalAveragePool(CustomOp):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
+            original_op_type=self.onnx_node.op_type,
             hls_variable_declarations=self.__get_variable_declaration(model),
             hls_run_call=self.__get_run_call(),
             hls_step_call=self.__get_step_call(),
