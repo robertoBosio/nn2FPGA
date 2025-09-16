@@ -1,4 +1,5 @@
 from onnx import NodeProto, helper
+from qonnx.custom_op.registry import getCustomOp
 
 def check_par_attributes(node: NodeProto) -> bool:
     """Check if a node has parallelization attributes."""
@@ -41,10 +42,4 @@ def set_par_attributes(node: NodeProto, par_attributes: dict) -> None:
     """Set parallelization attributes on a node."""
 
     for attr_name, attr_value in par_attributes.items():
-        node.attribute.append(
-            helper.make_attribute(
-                attr_name,
-                attr_value,
-                attr_type=helper.AttributeProto.INT
-            )
-        )
+        getCustomOp(node).set_nodeattr(attr_name, attr_value)
