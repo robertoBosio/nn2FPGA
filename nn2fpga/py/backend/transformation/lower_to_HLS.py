@@ -6,6 +6,7 @@ from qonnx.util.basic import qonnx_make_model
 from backend.custom_op.register_rewrite_rule import collect_rules
 from backend.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata, set_custom_tensor_fifo_metadata
 from backend.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
+from backend.core.acceleratorpackage import AcceleratorPackage
 from onnxscript import ir
 from onnx import TensorProto, helper, StringStringEntryProto
 import numpy as np
@@ -18,6 +19,7 @@ class LowerToHLS(Transformation):
         fifo = {}
         inits = []
         tensors = []
+        ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
 
         # iterate in topological order
         for node in model.graph.node:
@@ -104,7 +106,7 @@ class LowerToHLS(Transformation):
             if producer.op_type != "StreamToNHWC":
                 raise ValueError(f"Output {output.name} producer is not StreamToNHWC.")
             axi_word = getCustomOp(producer).get_nodeattr("axi_bitwidth")
-            tensor_quant = get_custom_tensor_datatype(model, input.name)
+            tensor_quant = get_custom_tensor_datatype(model, output.name)
             output_shape = model.get_tensor_shape(output.name)
             data_per_word = axi_word // int(tensor_quant.bitwidth)
             word_per_tensor = int(np.ceil(np.prod(output_shape) / data_per_word))
@@ -115,5 +117,5 @@ class LowerToHLS(Transformation):
                     depth=0, hls_type=f"ap_axiu<{axi_word}, 0, 0, 0>", n_array=word_per_tensor
                 ),
             )
-
+        
         return (hls_model, False)
