@@ -1,46 +1,128 @@
-import subprocess
-import os
-import pytest
+import numpy as np
+import onnxruntime as ort
+import csnake
+from onnx import TensorProto, helper
+from .base_hls_test import BaseHLSTest
 
-PROJECT_NAME = "proj_unit_test"
-FILE_DIR = f"/workspace/NN2FPGA/nn2fpga/library"
-FILENAME = "StreamingGlobalAveragePool"
+class TestStreamingGlobalAveragePool(BaseHLSTest):
 
-def test_dequant_quant_simulation():
+    @property
+    def operator_filename(self):
+        return "StreamingGlobalAveragePool"
     
-    # Write the Tcl script to a temporary file
-    tcl_script = f"""
-open_project "{PROJECT_NAME}"
-open_solution -reset solution0
-add_files {FILE_DIR}/include/{FILENAME}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
-add_files -tb {FILE_DIR}/test/Unit{FILENAME}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"
+    def generate_config_file(self, config_dict):
+        
+        # random tensors
+        input_tensor = np.random.randint(
+            -128,
+            127,
+            size=(1, config_dict["OUT_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]),
+            dtype=np.int8,
+        )
 
-csim_design
-exit
-"""
+        X = helper.make_tensor_value_info(
+            "X", TensorProto.INT8, [1, config_dict["OUT_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]]
+        )
+        Y = helper.make_tensor_value_info(
+            "Y",
+            TensorProto.INT8,
+            [
+                1,
+                config_dict["OUT_CH"],
+                1,
+                1,
+            ],
+        )
 
-    tcl_file = "script.tcl"
-    with open(tcl_file, 'w') as f:
-        f.write(tcl_script)
+        X_scale = helper.make_tensor(
+            "X_scale", TensorProto.FLOAT, [], [config_dict["X_SCALE"]]
+        )
+        X_zp = helper.make_tensor("X_zp", TensorProto.INT8, [], [config_dict["X_ZP"]])
+        Y_scale = helper.make_tensor(
+            "Y_scale", TensorProto.FLOAT, [], [config_dict["Y_SCALE"]]
+        )
+        Y_zp = helper.make_tensor("Y_zp", TensorProto.INT8, [], [config_dict["Y_ZP"]])
 
-    result = subprocess.run(
-        ["vitis_hls", "-f", tcl_file],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
+        dqlinear = helper.make_node(
+            "DequantizeLinear",
+            inputs=["X", "X_scale", "X_zp"],
+            outputs=["X_dq"],
+        )
 
-    assert result.returncode == 0, f"Simulation failed: {result.stderr}"
-    assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
+        global_avg_pool = helper.make_node(
+            "GlobalAveragePool",
+            inputs=["X_dq"],
+            outputs=["Y_dq"],
+        )
 
-    # Clean up the temporary Tcl file
-    os.remove(tcl_file)
+        qlinear = helper.make_node(
+            "QuantizeLinear",
+            inputs=["Y_dq", "Y_scale", "Y_zp"],
+            outputs=["Y"],
+        )
 
-    # Clean up the project directory
-    if os.path.exists(PROJECT_NAME):
-        os.system(f"rm -rf {PROJECT_NAME}")
+        graph = helper.make_graph(
+            [dqlinear, global_avg_pool, qlinear],
+            "qconv_test",
+            [X],
+            [Y],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+        )
+        model = helper.make_model(graph, producer_name="qonnx")
+        sess = ort.InferenceSession(
+            model.SerializeToString(), providers=["CPUExecutionProvider"]
+        )
+        y = sess.run(None, {"X": input_tensor})[0]
 
-    # Clean up vitis_hls log files
-    log_files = [f for f in os.listdir('.') if f.startswith('vitis_hls') and f.endswith('.log')]
-    for log_file in log_files:
-        os.remove(log_file) 
+        cwr = csnake.CodeWriter()
+        cwr.include("<cstdint>")
+        cwr.include("<array>")
+        cwr.include("<ap_int.h>")
+        cwr.add_line("namespace test_config {")
+        cwr.indent()
+        for key, value in config_dict.items():
+            if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
+                cwr.add_line(f"const float {key} = {value}f;")
+            else:
+                cwr.add_line(f"const int {key} = {value};")
+        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
+        cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+        cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
+        cwr.add_line(f"typedef ap_uint<{config_dict['DIV_DATAWIDTH']}> TDiv;")
+        cwr.add_line(f"typedef DequantQuantPo2<0, TAcc, TOutput> Quantizer;")
+        cwr.add_lines(
+            csnake.Variable(
+                "input_tensor",
+                primitive=f"ap_int<{config_dict['INPUT_DATAWIDTH']}>",
+                value=input_tensor,
+            ).generate_initialization()
+        )
+        cwr.add_lines(
+            csnake.Variable(
+                "output_tensor",
+                primitive=f"ap_int<{config_dict['OUTPUT_DATAWIDTH']}>",
+                value=y,
+            ).generate_initialization()
+        )
+        cwr.dedent()
+        cwr.add_line("}")
+        return cwr.code
+    
+    def test_7x7_po2(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "ACC_DATAWIDTH": 14,
+            "DIV_DATAWIDTH": 6,
+            "INPUT_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 7,
+            "IN_WIDTH": 7,
+            "OUT_CH": 100,
+            "OUT_CH_PAR": 5,
+            "X_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "X_ZP": 0,
+            "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)

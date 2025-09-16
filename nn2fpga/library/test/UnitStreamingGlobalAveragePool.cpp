@@ -1,257 +1,150 @@
+#include "DequantQuant.hpp"
 #include "StreamingGlobalAveragePool.hpp"
 #include "ap_int.h"
 #include "hls_stream.h"
+#include "test_config.hpp"
+#include "utils/CSDFG_utils.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <unordered_map>
 
-bool test_run_simple_square() {
-  // This function tests the run() method of StreamingGlobalAveragePool
-  // with a simple square input where each channel has the same value.
-  // The expected output is the average of the input values.
+using TInputWord = std::array<test_config::TInput, test_config::OUT_CH_PAR>;
+using TOutputWord = std::array<test_config::TOutput, test_config::OUT_CH_PAR>;
 
-  constexpr size_t IN_HEIGHT = 4;
-  constexpr size_t IN_WIDTH = 4;
-  constexpr size_t OUT_CH = 4;
-  constexpr size_t OUT_CH_PAR = 2;
-
-  using TInput = ap_uint<8>;
-  using TOutput = ap_uint<8>;
-  using TAcc = ap_int<32>;
-  using TDiv = ap_uint<16>;
-
-  using TInputStruct = std::array<TInput, OUT_CH_PAR>;
-  using TOutputStruct = std::array<TOutput, OUT_CH_PAR>;
-
-  // Simple quantizer: truncates accumulator
-  struct TruncQuantizer {
-    TOutput operator()(TAcc acc) const { return static_cast<TOutput>(acc); }
-  };
-
-  // Instantiate the operator
-  StreamingGlobalAveragePool<TInputStruct, TInput, TOutputStruct, TOutput, TAcc,
-                             TDiv, TruncQuantizer, IN_HEIGHT, IN_WIDTH, OUT_CH,
-                             OUT_CH_PAR>
+void wrap_run(hls::stream<TInputWord> i_data[1],
+              hls::stream<TOutputWord> o_data[1]) {
+  // Wrapper for synthesis.
+  StreamingGlobalAveragePool<TInputWord, test_config::TInput, TOutputWord,
+                             test_config::TOutput, test_config::TAcc,
+                             test_config::TDiv, test_config::Quantizer,
+                             test_config::IN_HEIGHT, test_config::IN_WIDTH,
+                             test_config::OUT_CH, test_config::OUT_CH_PAR>
       pool;
+  pool.run(i_data, o_data);
+}
+
+bool test_run() {
 
   // Prepare input and output streams
-  hls::stream<TInputStruct> in_stream[1];
-  hls::stream<TOutputStruct> out_stream[1];
+  hls::stream<TInputWord> in_stream[1];
+  hls::stream<TOutputWord> out_stream[1];
 
   // Prepare input data: fill every channel with 1, expect sum = 4 (2x2 window)
-  for (size_t i = 0; i < IN_HEIGHT * IN_WIDTH; i++) {
-    for (size_t c = 0; c < OUT_CH; c += OUT_CH_PAR) {
-      TInputStruct input_struct;
-      for (size_t j = 0; j < OUT_CH_PAR; j++) {
-        input_struct[j] = 1; // Fill each channel with value 1
+  for (size_t ih = 0; ih < test_config::IN_HEIGHT; ih++) {
+    for (size_t iw = 0; iw < test_config::IN_WIDTH; iw++) {
+      for (size_t c = 0; c < test_config::OUT_CH; c += test_config::OUT_CH_PAR) {
+        TInputWord input_struct;
+        for (size_t j = 0; j < test_config::OUT_CH_PAR; j++) {
+          input_struct[j] = test_config::input_tensor[0][c + j][ih][iw];
+        }
+        in_stream[0].write(input_struct);
       }
-      in_stream[0].write(input_struct);
     }
   }
 
   // Run pooling
-  pool.run(in_stream, out_stream);
+  wrap_run(in_stream, out_stream);
 
   // Read and check output
   bool flag = true;
-  for (size_t c = 0; c < OUT_CH; c += OUT_CH_PAR) {
-    TOutputStruct output_struct = out_stream[0].read();
-    for (size_t j = 0; j < OUT_CH_PAR; j++) {
+  for (size_t c = 0; c < test_config::OUT_CH; c += test_config::OUT_CH_PAR) {
+    TOutputWord output_struct;
+    out_stream[0].read(output_struct);
+    for (size_t j = 0; j < test_config::OUT_CH_PAR; j++) {
       // Each channel should have the average value of 1
-      flag &= (output_struct[j] == 1);
-    }
-  }
-
-  return flag;
-}
-
-bool test_step_simple_square(size_t PIPELINE_DEPTH = 1) {
-  // This function tests the step() method of StreamingGlobalAveragePool
-  // with a simple square input where each channel has the same value.
-  // The expected output is the average of the input values.
-
-  constexpr size_t IN_HEIGHT = 4;
-  constexpr size_t IN_WIDTH = 4;
-  constexpr size_t OUT_CH = 4;
-  constexpr size_t OUT_CH_PAR = 2;
-
-  using TInput = ap_uint<8>;
-  using TOutput = ap_uint<8>;
-  using TAcc = ap_int<32>;
-  using TDiv = ap_uint<16>;
-
-  using TInputStruct = std::array<TInput, OUT_CH_PAR>;
-  using TOutputStruct = std::array<TOutput, OUT_CH_PAR>;
-
-  hls::stream<TInputStruct> in_stream[1];
-  hls::stream<TOutputStruct> out_stream[1];
-
-  // Simple quantizer: truncates accumulator.
-  struct TruncQuantizer {
-    TOutput operator()(TAcc acc) const { return static_cast<TOutput>(acc); }
-  };
-
-  // Instantiate the operator
-  StreamingGlobalAveragePool<TInputStruct, TInput, TOutputStruct, TOutput, TAcc,
-                             TDiv, TruncQuantizer, IN_HEIGHT, IN_WIDTH, OUT_CH,
-                             OUT_CH_PAR>
-      pool(PIPELINE_DEPTH);
-
-  // Check step function not progressing before any input
-  ActorStatus actor_status = pool.step(in_stream, out_stream);
-  bool flag = actor_status.empty() && actor_status.get_current_index() == 0;
-
-  // Prepare input data.
-  for (size_t i = 0; i < IN_HEIGHT * IN_WIDTH; i++) {
-    for (size_t c = 0; c < OUT_CH; c += OUT_CH_PAR) {
-      TInputStruct input_struct;
-      for (size_t j = 0; j < OUT_CH_PAR; j++) {
-        input_struct[j] = 1; // Fill each channel with value 1
+      bool condition =
+          (output_struct[j] == test_config::output_tensor[0][c + j][0][0]);
+      if (!condition) {
+        std::cout << "Mismatch at channel " << (c + j) << ": got "
+                  << output_struct[j] << ", expected "
+                  << test_config::output_tensor[0][c + j][0][0] << std::endl;
       }
-      in_stream[0].write(input_struct);
+      flag &= condition;
     }
   }
 
-  // Step through pooling
-  for (size_t i = 0; i < IN_HEIGHT * IN_WIDTH * OUT_CH / OUT_CH_PAR; i++) {
-    actor_status = pool.step(in_stream, out_stream);
+  // Ensure all streams are empty
+  if (!in_stream[0].empty()) {
+    std::cout << "Input stream not empty after run." << std::endl;
+    flag = false;
   }
 
-  // Check step function restarted correctly
-  actor_status = pool.step(in_stream, out_stream);
-  flag &= actor_status.empty() && actor_status.get_current_index() == 0;
-
-  // Flush the output stream and check results.
-  TOutputStruct output_struct;
-  while (out_stream[0].read_nb(output_struct)) {
-    for (size_t j = 0; j < OUT_CH_PAR; j++) {
-      // Each channel should have the average value of 1
-      flag &= (output_struct[j] == 1);
-    }
+  if (!out_stream[0].empty()) {
+    std::cout << "Output stream not empty after run." << std::endl;
+    flag = false;
   }
 
   return flag;
 }
 
-bool test_step_simple_square_pipelined() {
-  // This function tests the step() method of StreamingGlobalAveragePool
-  // with a simple square input where each channel has the same value.
-  // The expected output is the average of the input values. The operator
-  // is pipelined, so the output is delayed by PIPELINE_DEPTH cycles.
+bool test_step() {
 
-  constexpr size_t IN_HEIGHT = 4;
-  constexpr size_t IN_WIDTH = 4;
-  constexpr size_t OUT_CH = 4;
-  constexpr size_t OUT_CH_PAR = 2;
-  constexpr size_t PIPELINE_DEPTH = 4;
+  static constexpr size_t expectedII =
+      test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::OUT_CH /
+      (test_config::OUT_CH_PAR);
 
-  using TInput = ap_uint<8>;
-  using TOutput = ap_uint<8>;
-  using TAcc = ap_int<32>;
-  using TDiv = ap_uint<16>;
+  // Create input and output streams
+  hls::stream<TInputWord> i_data[1];
+  hls::stream<TOutputWord> o_data[1];
 
-  using TInputStruct = std::array<TInput, OUT_CH_PAR>;
-  using TOutputStruct = std::array<TOutput, OUT_CH_PAR>;
+  // Run the global average pooling
+  StreamingGlobalAveragePool<TInputWord, test_config::TInput, TOutputWord,
+                             test_config::TOutput, test_config::TAcc,
+                             test_config::TDiv, test_config::Quantizer,
+                             test_config::IN_HEIGHT, test_config::IN_WIDTH,
+                             test_config::OUT_CH, test_config::OUT_CH_PAR>
+      pool(test_config::PIPELINE_DEPTH);
 
-  hls::stream<TInputStruct> in_stream[1];
-  hls::stream<TOutputStruct> out_stream[1];
+  std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
+  CSDFGState current_state;
+  size_t clock_cycles = 0;
+  size_t II = 0;
+  while (true) {
 
-  // Simple quantizer: truncates accumulator.
-  struct TruncQuantizer {
-    TOutput operator()(TAcc acc) const { return static_cast<TOutput>(acc); }
-  };
+    // Provide dummy input data to keep the pipeline busy
+    i_data[0].write(TInputWord());
 
-  StreamingGlobalAveragePool<TInputStruct, TInput, TOutputStruct, TOutput, TAcc,
-                             TDiv, TruncQuantizer, IN_HEIGHT, IN_WIDTH, OUT_CH,
-                             OUT_CH_PAR>
-      pool_with_delay(PIPELINE_DEPTH);
-
-  // Check step function not progressing before any input
-  ActorStatus actor_status =
-      pool_with_delay.step(in_stream, out_stream);
-  bool flag = actor_status.empty() && actor_status.get_current_index() == 0;
-
-  // Prepare input data.
-  for (size_t i = 0; i < IN_HEIGHT * IN_WIDTH; i++) {
-    for (size_t c = 0; c < OUT_CH; c += OUT_CH_PAR) {
-      TInputStruct input_struct;
-      for (size_t j = 0; j < OUT_CH_PAR; j++) {
-        input_struct[j] = 1; // Fill each channel with value 1
-      }
-      in_stream[0].write(input_struct);
+    ActorStatus actor_status = pool.step(i_data, o_data);
+    std::vector<ActorStatus> actor_statuses;
+    std::vector<size_t> channel_quantities;
+    actor_statuses.push_back(actor_status);
+    channel_quantities.push_back(0);
+    current_state = CSDFGState(actor_statuses, channel_quantities);
+    if (visited_states.find(current_state) != visited_states.end()) {
+      II = clock_cycles - visited_states[current_state];
+      break;
     }
+    visited_states.emplace(current_state, clock_cycles);
+
+    // Prevent infinite loops in case of errors
+    clock_cycles++;
+    assert(clock_cycles < 10 * expectedII);
   }
 
-  // Check behaviour at the start of the pipeline
-  for (size_t i = 1; i < PIPELINE_DEPTH; i++) {
-    actor_status = pool_with_delay.step(in_stream, out_stream);
-    flag &= actor_status.size() == i;
-    flag &= actor_status.get_current_index() == i;
-    flag &= out_stream[0].empty(); // No output yet
-  }
+  // Flush the output stream.
+  TOutputWord output_struct;
+  while (o_data[0].read_nb(output_struct))
+    ;
 
-  // Step through pooling
-  for (size_t i = PIPELINE_DEPTH;
-       i < IN_HEIGHT * IN_WIDTH * OUT_CH / OUT_CH_PAR; i++) {
-    actor_status = pool_with_delay.step(in_stream, out_stream);
-    flag &= actor_status.size() == PIPELINE_DEPTH - 1;
-    flag &= out_stream[0].empty();
-  }
-
-  // Check behaviour at the end of the pipeline
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= actor_status.size() == PIPELINE_DEPTH - 1;
-  flag &= actor_status.get_current_index() == 0; // Should have completed one full iteration
-  flag &= out_stream[0].empty();    // Should still not have output yet.
-
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= actor_status.size() == PIPELINE_DEPTH - 2;
-  flag &= actor_status.get_current_index() == 0; // Should have completed one full iteration
-  flag &= out_stream[0].empty();    // Should still not have output yet.
-
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= actor_status.size() == 1;
-  flag &= actor_status.get_current_index() == 0; // Should have completed one full iteration
-  flag &= !out_stream[0].empty();   // First output should be available now
-  TOutputStruct output_struct = out_stream[0].read();
-
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= actor_status.size() == 0;
-  flag &= actor_status.get_current_index() == 0; // Should have completed one full iteration
-  flag &= !out_stream[0].empty();   // Second output should be available now
-  output_struct = out_stream[0].read();
-
-  // Check step function after processing all but the last input
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= out_stream[0].empty(); // Should not have output now
-
-  // Loop through the remaining inputs.
-  for (size_t i = 0; i < (OUT_CH / OUT_CH_PAR) - 1; i++) {
-    actor_status = pool_with_delay.step(in_stream, out_stream);
-  }
-
-  // Check step function restarted correctly
-  actor_status = pool_with_delay.step(in_stream, out_stream);
-  flag &= actor_status.empty() && actor_status.get_current_index() == 0;
-
-  // Flush the output stream and check results.
-  while (out_stream[0].read_nb(output_struct)) {
-    for (size_t j = 0; j < OUT_CH_PAR; j++) {
-      // Each channel should have the average value of 1
-      flag &= (output_struct[j] == 1);
-    }
-  }
-
+  bool flag = (II == expectedII);
+  std::cout << "Expected II: " << expectedII << ", Measured II: " << II
+            << std::endl;
   return flag;
 }
 
-int main() {
+int main(int argc, char **argv) {
 
   bool all_passed = true;
 
-  all_passed &= test_run_simple_square();
-  all_passed &= test_step_simple_square();
-  all_passed &= test_step_simple_square_pipelined();
+  all_passed &= test_run();
+
+  // Testing the pipeline with csim only, as it is only relevant for fifo depth
+  // estimations
+  if (argc > 1 && std::string(argv[1]) == "csim") {
+    all_passed &= test_step();
+  }
+
   if (!all_passed) {
     std::cout << "Failed." << std::endl;
   } else {

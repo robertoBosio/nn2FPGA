@@ -69,16 +69,18 @@ public:
 
   void run(hls::stream<TInputStruct> i_data[1],
            hls::stream<TOutputStruct> o_data[1]) {
-    TAcc s_acc_buff[OUT_CH]; // Accumulator buffer for each output channel.
+    TAcc s_acc_buff[OUT_CH / OUT_CH_PAR]
+                   [OUT_CH_PAR]; // Accumulator buffer for each output channel.
+#pragma HLS array_partition variable = s_acc_buff dim = 2
 
     // Loop through the input height and width.
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw++) {
       // Loop through the output channels, with a step size equal to the number
       // of channels processed in parallel.
     STREAMINGGLOBALAVERAGEPOOL_RUN_LOOP:
-      for (size_t i_och = 0; i_och < OUT_CH; i_och += OUT_CH_PAR) {
+      for (size_t i_och = 0; i_och < OUT_CH / OUT_CH_PAR; i_och++) {
 #pragma HLS pipeline II = 1
-        StreamingGlobalAveragePool::pipeline_body(i_data, o_data, s_acc_buff,
+        StreamingGlobalAveragePool::pipeline_body(i_data, o_data, s_acc_buff[i_och],
                                                   i_hw, i_och);
       }
     }
@@ -93,7 +95,7 @@ public:
       // If there is data in the input stream, process it.
       hls::stream<TOutputStruct> output_stream[1];
       StreamingGlobalAveragePool::pipeline_body(
-          i_data, output_stream, STEP_s_acc_buff, STEP_i_hw, STEP_i_och);
+          i_data, output_stream, STEP_s_acc_buff[STEP_i_och], STEP_i_hw, STEP_i_och);
 
       // Insert new firing status into the multiset.
       STEP_actor_status.fire();
@@ -107,8 +109,8 @@ public:
       }
 
       // Update the counters.
-      STEP_i_och += OUT_CH_PAR;
-      if (STEP_i_och >= OUT_CH) {
+      STEP_i_och++;
+      if (STEP_i_och >= OUT_CH / OUT_CH_PAR) {
         // If we have processed all output channels, reset the index and
         // increment the height/width index.
         STEP_i_och = 0;
@@ -139,7 +141,7 @@ public:
 
 private:
   // State variables for step execution
-  TAcc STEP_s_acc_buff[OUT_CH];   // Accumulator buffer for each output channel
+  TAcc STEP_s_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR];   // Accumulator buffer for each output channel
   size_t STEP_i_hw;               // Current height and width index
   size_t STEP_i_och;              // Current output channel index
   size_t STEP_pipeline_depth = 1; // Pipeline depth for the actor
@@ -153,7 +155,7 @@ private:
 
   static void pipeline_body(hls::stream<TInputStruct> i_data[1],
                             hls::stream<TOutputStruct> o_data[1],
-                            TAcc s_acc_buff[OUT_CH], size_t i_hw,
+                            TAcc s_acc_buff[OUT_CH_PAR], size_t i_hw,
                             size_t i_och) {
 #pragma HLS inline
     TOutputStruct s_output_struct; // Output structure to hold the results.
@@ -163,12 +165,10 @@ private:
 
     // Loop through the channels processed in parallel.
     for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
-      unsigned int current_och =
-          i_och + i_och_par; // Current output channel index.
 
       // Initializing the accumulator for each window.
       if (i_hw == 0) {
-        s_acc_buff[current_och] = 0;
+        s_acc_buff[i_och_par] = 0;
       }
 
       // Reading packets of OUT_CH_PAR channels.
@@ -177,7 +177,7 @@ private:
       }
 
       // Accumulating the input data for the current output channel.
-      s_acc_buff[current_och] += s_input_struct[i_och_par];
+      s_acc_buff[i_och_par] += s_input_struct[i_och_par];
 
       // Writing the output at the end of the window
       if (i_hw == (IN_HEIGHT * IN_WIDTH - 1)) {
@@ -188,15 +188,19 @@ private:
         // This is not strictly correct, as ties should be rounded to the
         // nearest even number, but it requires the use of a modulo operation,
         // which is quite expensive. Instead, we are rounding ties up.
-        TAcc rounded_value = s_acc_buff[current_och] + (divisor >> 1);
+        TAcc bias = (s_acc_buff[i_och_par] >= 0) ? (TAcc)(divisor >> 1) : (TAcc)-(divisor >> 1);
+        TAcc rounded_value = s_acc_buff[i_och_par] + bias;
         TAcc result = rounded_value / divisor; // Calculate the average.
 
         // Potential logic for a rounding to the nearest even number
         // TAcc quotient = acc / div;
         // TDiv remainder = acc % div;
         // TDiv half = div >> 1;
-        // if (remainder > half || (remainder == half && quotient[0])) {
+        // if (remainder > half || (remainder == half && (quotient & 1))) {
         //   quotient += 1;
+        // }
+        // if (remainder < -half || (remainder == -half && (quotient & 1))) {
+        //   quotient -= 1;
         // }
         // TAcc result = quotient;
 
