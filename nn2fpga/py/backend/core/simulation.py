@@ -131,9 +131,9 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             return_type="void",
             templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
             arguments=[
-                cpp_variable("input_path", "std::string"),
-                cpp_variable(f"stream", f"hls::stream<TAxi>&"),
-                cpp_variable("data_per_word", "int"),
+                ("input_path", "std::string"),
+                (f"stream", f"hls::stream<TAxi>&"),
+                ("data_per_word", "int"),
             ],
         )
 
@@ -149,7 +149,7 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],
-                data_per_word,
+                str(data_per_word),
             ) + ";"
         )
 
@@ -163,10 +163,10 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             return_type="void",
             templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
             arguments=[
-                cpp_variable("input_path", "std::string"),
-                cpp_variable(f"stream", f"hls::stream<TAxi>&"),
-                cpp_variable("data_per_word", "int"),
-                cpp_variable("shape", "const std::vector<size_t>&"),
+                ("input_path", "std::string"),
+                (f"stream", f"hls::stream<TAxi>&"),
+                ("data_per_word", "int"),
+                ("shape", "const std::vector<size_t>&"),
             ],
         )
 
@@ -183,7 +183,7 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],
-                data_per_word,
+                str(data_per_word),
                 shape_str,
             ) + ";"
         )

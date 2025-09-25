@@ -103,7 +103,7 @@ def _make_streaming_memory_node_unpacked(
     in_ch_par = min(par.get("in_ch_par", 1), mem_shape[1])
     out_ch_par = min(par.get("out_ch_par", 1), mem_shape[0])
     in_w_par = 1
-    out_w_par = np.prod(out_tensor_shape[2:])
+    out_w_par = np.prod(mem_shape[2:])
     times = out_tensor_shape[2] * out_tensor_shape[3] // par.get("out_w_par", 1)
 
     sm_node = helper.make_node(

@@ -262,19 +262,18 @@ class StreamingMemory(CustomOp):
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
             for i in range(par["out_w_par"])
         ]
-    
-        if len(self.onnx_node.output) > 1:
-            output_names.append(f"{self.__get_stream_name(self.onnx_node.output[1])}_0_")
 
         tensors_fifo_metadata = {}
-        tensors_fifo_metadata[output_names[0]] = TensorFifo(
-            depth=0,
-            hls_type=f"{get_struct_type(output_quant, par['out_ch_par'] * par['in_ch_par'])}",
-            n_array=1,
-        )
+        for output in output_names:
+            tensors_fifo_metadata[output] = TensorFifo(
+                depth=0,
+                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'] * par['in_ch_par'])}",
+                n_array=par["out_w_par"],
+            )
 
         if len(self.onnx_node.output) > 1:
-            tensors_fifo_metadata[output_names[1]] = TensorFifo(
+            output_names.append(f"{self.__get_stream_name(self.onnx_node.output[1])}_0_")
+            tensors_fifo_metadata[output_names[-1]] = TensorFifo(
                 depth=0,
                 hls_type=f"{get_struct_type(get_custom_tensor_datatype(model, self.onnx_node.output[1]), 1)}",
                 n_array=1,

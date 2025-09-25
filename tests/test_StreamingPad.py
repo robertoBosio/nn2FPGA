@@ -1,0 +1,88 @@
+import numpy as np
+import onnxruntime as ort
+import csnake
+from onnx import TensorProto, helper
+from .base_hls_test import BaseHLSTest
+
+class TestStreamingPad(BaseHLSTest):
+
+    @property
+    def operator_filename(self):
+        return "StreamingPad"
+    
+    def generate_config_file(self, config_dict, **kwargs):
+        
+        # random tensors
+        input_tensor = np.random.randint(
+            -128,
+            127,
+            size=(1, config_dict["IN_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]),
+            dtype=np.int8,
+        )
+        
+        cwr = csnake.CodeWriter()
+        cwr.include("<cstdint>")
+        cwr.include("<array>")
+        cwr.include("<ap_int.h>")
+        cwr.add_line("namespace test_config {")
+        cwr.indent()
+        for key, value in config_dict.items():
+            cwr.add_line(f"const int {key} = {value};")
+        cwr.add_line(f"typedef std::array<ap_int<{config_dict['INPUT_DATAWIDTH']}>, CH_PAR> TWord;")
+        cwr.add_lines(
+            csnake.Variable(
+                "input_tensor",
+                primitive=f"ap_int<{config_dict['INPUT_DATAWIDTH']}>",
+                value=input_tensor,
+            ).generate_initialization()
+        )
+        cwr.dedent()
+        cwr.add_line("}")
+        return cwr.code
+    
+    def test_3x3_asympadding(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 6,
+            "FH": 3,
+            "FW": 3,
+            "STRIDE_H": 2,
+            "STRIDE_W": 2,
+            "PAD_T": 1,
+            "PAD_B": 0,
+            "PAD_L": 1,
+            "PAD_R": 0,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "CH_PAR": 3,
+            "W_PAR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+    
+    def test_3x3_sympadding(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUT_DATAWIDTH": 8,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "FH": 3,
+            "FW": 3,
+            "STRIDE_H": 1,
+            "STRIDE_W": 1,
+            "PAD_T": 1,
+            "PAD_B": 1,
+            "PAD_L": 1,
+            "PAD_R": 1,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "CH_PAR": 2,
+            "W_PAR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+    

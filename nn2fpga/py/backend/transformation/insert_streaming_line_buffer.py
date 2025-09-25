@@ -4,8 +4,15 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import get_by_name
 from onnx import helper
 from backend.util.par_utils import get_par_attributes
+from backend.core.tensor_quant import (
+    get_custom_tensor_datatype,
+    set_custom_tensor_datatype,
+)
 import backend.transformation as transformation
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 LAYERS_WITH_KERNELS = [
     "StreamingConv",
@@ -104,9 +111,11 @@ class InsertStreamingLineBuffer(Transformation):
                 kernel_shape=kernel_shape,
                 dilation=dilation,
                 stride=stride,
-                w_par=par["in_w_par"],
-                ch_par=par["in_ch_par"],
-                name=f"{node.name}_streaming_linebuffer"
+                in_w_par=par["in_w_par"],
+                in_ch_par=par["in_ch_par"],
+                out_w_par=par["in_w_par"],
+                out_ch_par=par["in_ch_par"],
+                name=f"{node.name}_streaming_linebuffer",
             )
 
             # Replace the node's input with the output of the StreamingLineBuffer

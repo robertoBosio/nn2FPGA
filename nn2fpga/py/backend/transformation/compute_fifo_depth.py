@@ -67,7 +67,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     for node in model.graph.node:
         if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
             for stream in list(node.input) + list(node.output):
-                m = re.match(r"(.*)_([0-9]+)_", stream)
+                m = re.match(r"(.*)_(\d+)_$", stream)
                 if m:
                     known_stream_depth.add(m.group(1))
     logger.info(f"Known stream depth for: {known_stream_depth}")
@@ -185,6 +185,13 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("}")
     function.add_code("visited_states.emplace(current_state, clock_cycle);")
     function.add_code("clock_cycle++;")
+    function.add_code(f"if (clock_cycle > {10 * model_II}) {{")
+    function.codewriter.indent()
+    function.add_code('std::cout << "Warning: Exceeded maximum clock cycles. The model might be deadlocked." << std::endl;')
+    function.add_code("actual_II = 0;")
+    function.add_code("break;")
+    function.codewriter.dedent()
+    function.add_code("}")
     function.codewriter.dedent()
     function.add_code("};")
 

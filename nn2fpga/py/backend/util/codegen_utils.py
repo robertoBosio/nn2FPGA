@@ -1,3 +1,4 @@
+import re
 from csnake import CodeWriter, Function, Variable
 from backend.core.tensor_quant import TensorQuant
 
@@ -43,6 +44,16 @@ class cpp_function(Function):
     ) -> None:
         super().__init__(name, return_type, qualifiers, arguments)
         self.templates = templates or []
+    
+    def __sanitize_args(self, args):
+        new_args = []
+        for arg in args:
+            m = re.match(r"(.*)_(\d+)_$", arg)
+            if m:
+                new_args.append(f"{m.group(1)}[{m.group(2)}]")
+            else:
+                new_args.append(arg)
+        return new_args
 
     def _generate_template_prefix(self) -> str:
         if not self.templates:
@@ -71,7 +82,7 @@ class cpp_function(Function):
         tmpl_str = ""
         if template_args:
             tmpl_str = f"<{', '.join(template_args)}>"
-        call_str = ", ".join(map(str, call_args))
+        call_str = ", ".join(map(str, self.__sanitize_args(call_args)))
         return f"{self.name}{tmpl_str}({call_str})"
 
     @property

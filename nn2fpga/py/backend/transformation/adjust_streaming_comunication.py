@@ -7,6 +7,7 @@ from backend.util.par_utils import get_par_attributes, check_par_attributes
 import backend.transformation as transformation
 import math
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ def adjust_bandwidth(
     producer,
     consumer,
     tensor_shape,
+    model_II,
 ):
     def adjust(par_in, par_out, axis, op_decr, op_incr, name_suffix):
         nonlocal last_output, last_ch_par, last_w_par
@@ -64,19 +66,26 @@ def adjust_bandwidth(
             if par_in % par_out != 0 and par_out % par_in != 0
             else None
         )
+        if middle is not None:
+
+            node_II = np.prod(tensor_shape) // (middle * last_w_par)
+            if node_II > model_II:
+                logger.info(f"Bandwidth adjustment computed based on GCD may not meet the throughput requirement of the model. Switching to LCM.")
+                middle = math.lcm(par_in, par_out)
 
         if middle:
             # Decrease to middle
+            middle_op = op_decr if par_in > middle else op_incr
             last_output, last_ch_par, last_w_par = insert_comm_node(
                 model,
-                f"{op_decr}_{producer.name}_middle_{consumer.name}",
-                op_decr,
+                f"{middle_op}_{producer.name}_middle_{consumer.name}",
+                middle_op,
                 last_output,
                 f"{op_base}_gcd",
-                last_ch_par if axis == "ch" else last_ch_par,
-                middle,
-                last_w_par if axis == "w" else last_w_par,
-                last_w_par if axis == "ch" else last_w_par,
+                par_in if axis == "ch" else last_ch_par,
+                middle if axis == "ch" else last_ch_par,
+                par_in if axis == "w" else last_w_par,
+                middle if axis == "w" else last_w_par,
                 tensor_shape,
             )
             par_in = middle
@@ -88,10 +97,10 @@ def adjust_bandwidth(
             final_op,
             last_output,
             f"{op_base}",
-            last_ch_par if axis == "ch" else last_ch_par,
-            par_out,
-            last_w_par if axis == "ch" else last_w_par,
-            last_w_par if axis == "ch" else last_w_par,
+            par_in if axis == "ch" else last_ch_par,
+            par_out if axis == "ch" else last_ch_par,
+            par_in if axis == "w" else last_w_par,
+            par_out if axis == "w" else last_w_par,
             tensor_shape,
         )
         return par_out
@@ -132,6 +141,7 @@ class AdjustStreamingCommunication(Transformation):
         communication_nodes = []
         queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
         mark_visited = set()
+        model_II = int(model.get_metadata_prop("model_II"))
 
         while queue:
             node = queue.popleft()
@@ -195,6 +205,7 @@ class AdjustStreamingCommunication(Transformation):
                     producer,
                     consumer,
                     tensor_shape,
+                    model_II,
                 )
 
                 for i, input_name in enumerate(consumer.input):
