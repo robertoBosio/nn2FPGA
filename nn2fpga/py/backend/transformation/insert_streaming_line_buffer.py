@@ -110,7 +110,7 @@ class InsertStreamingLineBuffer(Transformation):
                 pads=pads,
                 kernel_shape=kernel_shape,
                 dilation=dilation,
-                stride=stride,
+                strides=stride,
                 in_w_par=par["in_w_par"],
                 in_ch_par=par["in_ch_par"],
                 out_w_par=par["in_w_par"],

@@ -20,13 +20,14 @@ class LowerToHLS(Transformation):
         inits = []
         tensors = []
         ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
+        hls_tag = 0
 
         # iterate in topological order
         for node in model.graph.node:
             custom_op = getCustomOp(node)
 
             # ask the op to expand into multiple kernels
-            sub_nodes, sub_inits, sub_fifo = custom_op.lower_to_hls(model)
+            sub_nodes, sub_inits, sub_fifo, hls_tag = custom_op.lower_to_hls(model, hls_tag)
 
             # stitch in
             nodes.extend(sub_nodes)

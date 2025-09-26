@@ -419,7 +419,7 @@ class StreamingConv(CustomOp):
         """
         return ""
 
-    def __get_run_call(self) -> str:
+    def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
 
         # Generate the call to the StreamingConv run method.
@@ -447,7 +447,7 @@ class StreamingConv(CustomOp):
         )
 
         return run.generate_call(
-            [],
+            [hls_tag],
             self.__get_stream_name(self.onnx_node.input[0]),
             self.__get_stream_name(self.onnx_node.input[1]),
             self.__get_stream_name(self.onnx_node.input[5]),
@@ -489,7 +489,7 @@ class StreamingConv(CustomOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def lower_to_hls(self, model: ModelWrapper):
+    def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
         Returns:
           nodes: List[onnx.NodeProto]
@@ -498,13 +498,17 @@ class StreamingConv(CustomOp):
         """
 
         par = get_par_attributes(self.onnx_node)
+        FH = self.get_nodeattr("kernel_shape")[0]
+        FW = self.get_nodeattr("kernel_shape")[1]
+        STRIDE_W = self.get_nodeattr("strides")[1]
+        FW_EXTENDED = FW + (par["in_w_par"] - 1) * STRIDE_W
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
-            for i in range(par["in_w_par"])
+            for i in range(FH * FW_EXTENDED)
         ]
         input_names.extend([
             f"{self.__get_stream_name(self.onnx_node.input[1])}_{i}_"
@@ -534,10 +538,12 @@ class StreamingConv(CustomOp):
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
             original_op_type="StreamingConv",
+            hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(),
+            hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),
             hls_object_declaration=self.__get_object_declaration(model),
         )
+        hls_tag += 1
 
-        return [hls_kernel], [], tensors_fifo_metadata
+        return [hls_kernel], [], tensors_fifo_metadata, hls_tag

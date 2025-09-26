@@ -70,8 +70,8 @@ class StreamingMemory(CustomOp):
             str: A string representing the declaration of internal variables.
         """
         return ""
-    
-    def __get_run_call(self) -> str:
+
+    def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingMemory node. """
 
         if self.get_nodeattr("data_to_shift") > 0:
@@ -86,7 +86,7 @@ class StreamingMemory(CustomOp):
             )
 
             return run.generate_call(
-                [],
+                [hls_tag],
                 self.__get_stream_name(self.onnx_node.input[0]),
                 self.__get_stream_name(self.onnx_node.output[0]),
                 self.__get_stream_name(self.onnx_node.output[1]),
@@ -236,7 +236,7 @@ class StreamingMemory(CustomOp):
 
         return np.array(packed, dtype=np.uint32)
 
-    def lower_to_hls(self, model: ModelWrapper):
+    def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
         Returns:
           nodes: List[onnx.NodeProto]
@@ -285,10 +285,12 @@ class StreamingMemory(CustomOp):
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
             original_op_type=self.onnx_node.op_type,
+            hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(),
+            hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),
             hls_object_declaration=self.__get_object_declaration(model),
         )
-        
-        return [hls_kernel], [], tensors_fifo_metadata
+        hls_tag += 1
+
+        return [hls_kernel], [], tensors_fifo_metadata, hls_tag

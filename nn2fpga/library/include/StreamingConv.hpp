@@ -101,11 +101,11 @@ public:
     }
   }
 
-  void
-  run(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
-      hls::stream<TWeightWord> i_weights[FH * FW],
-      hls::stream<TBiasWord> i_biases[1],
-      hls::stream<TOutputWord> o_data[W_PAR]) {
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
+           hls::stream<TWeightWord> i_weights[FH * FW],
+           hls::stream<TBiasWord> i_biases[1],
+           hls::stream<TOutputWord> o_data[W_PAR]) {
 
     // Accumulator buffer.
     // The order of the loops impose that for each input window, we process

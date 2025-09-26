@@ -20,6 +20,7 @@ class HLSKernel(CustomOp):
         outputs,
         domain,
         original_op_type: str = "",
+        hls_tag: str = "",
         hls_variable_declarations: str = "",
         hls_object_declaration: str = "",
         hls_run_call: str = "",
@@ -32,6 +33,7 @@ class HLSKernel(CustomOp):
             name=name,
             domain=domain,
             original_op_type=original_op_type,
+            hls_tag=_b64_encode(str(hls_tag)),
             hls_variable_declarations=_b64_encode(hls_variable_declarations),
             hls_object_declaration=_b64_encode(hls_object_declaration),
             hls_run_call=_b64_encode(hls_run_call),
@@ -47,6 +49,7 @@ class HLSKernel(CustomOp):
     def get_nodeattr_types(self):
         return {
             "original_op_type": ("s", True, ""),
+            "hls_tag": ("s", True, ""),
             "hls_variable_declarations": ("s", False, ""),
             "hls_object_declaration": ("s", True, ""),
             "hls_run_call": ("s", True, ""),

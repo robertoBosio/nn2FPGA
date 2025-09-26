@@ -145,6 +145,7 @@ public:
     STEP_delayed_output[1] = PipelineDelayBuffer<TWord>(pipeline_depth);
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TWord> &i_data, hls::stream<TWord> &o_data,
            hls::stream<TWord> &o_shift_data) {
 
@@ -225,6 +226,7 @@ public:
     return STEP_actor_status;
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TWord> &i_data, hls::stream<TWord> &o_data) {
     for (size_t i_h = 0; i_h < IN_HEIGHT; i_h++) {
       for (size_t i_w = W_STREAM; i_w < IN_WIDTH; i_w += W_PAR) {

@@ -27,7 +27,7 @@ class StreamingLineBuffer(CustomOp):
             "in_w_par": ("i", True, 1),
             "out_w_par": ("i", True, 1),
             "kernel_shape": ("ints", True, [1, 1]),
-            "stride": ("ints", True, [1, 1]),
+            "strides": ("ints", True, [1, 1]),
             "pads": ("ints", True, [0, 0, 0, 0]),
             "dilation": ("ints", True, [1, 1]),
         }
@@ -71,7 +71,7 @@ class StreamingLineBuffer(CustomOp):
         """
         return ""
 
-    def lower_to_hls(self, model: ModelWrapper):
+    def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
         Returns:
           nodes: List[onnx.NodeProto]
@@ -96,8 +96,8 @@ class StreamingLineBuffer(CustomOp):
         FW = self.get_nodeattr("kernel_shape")[1]
         PAD_T = self.get_nodeattr("pads")[0]
         PAD_L = self.get_nodeattr("pads")[1]
-        STRIDE_H = self.get_nodeattr("stride")[0]
-        STRIDE_W = self.get_nodeattr("stride")[1]
+        STRIDE_H = self.get_nodeattr("strides")[0]
+        STRIDE_W = self.get_nodeattr("strides")[1]
         FW_EXTENDED = FW + (par["in_w_par"] - 1) * STRIDE_W
 
         # Create output fifo streams from the pixelWindowSelector and the
@@ -155,12 +155,10 @@ class StreamingLineBuffer(CustomOp):
                     pixel_input_name.append(
                         f"{self.__get_stream_name(self.onnx_node.input[0])}_{w_stream}_"
                     )
-                    print(f"Pixel {pixel_index} takes from input stream {w_stream}")
                 else:
                     # From the internal buffer.
                     buffer_index = pixel_index - par["in_w_par"]
                     pixel_input_name.append(f"{self.onnx_node.name}_buffer_stream_{buffer_index}_")
-                    print(f"Pixel {pixel_index} takes from buffer stream {buffer_index}")
                 function_args.add((
                     "i_data",
                     "hls::stream<TWord>",
@@ -195,7 +193,7 @@ class StreamingLineBuffer(CustomOp):
                     return_type="void",
                     arguments=function_args,
                 )
-                run_call = run.generate_call([], *pixel_input_name, *pixel_output_name)
+                run_call = run.generate_call([hls_tag], *pixel_input_name, *pixel_output_name)
 
                 # Create step call
                 step = cpp_function(
@@ -218,8 +216,8 @@ class StreamingLineBuffer(CustomOp):
                         (output_shape[1], "IN_CH"),
                         (self.get_nodeattr("kernel_shape")[0], "FH"),
                         (self.get_nodeattr("kernel_shape")[1], "FW"),
-                        (self.get_nodeattr("stride")[0], "STRIDE_H"),
-                        (self.get_nodeattr("stride")[1], "STRIDE_W"),
+                        (self.get_nodeattr("strides")[0], "STRIDE_H"),
+                        (self.get_nodeattr("strides")[1], "STRIDE_W"),
                         (self.get_nodeattr("dilation")[0], "DILATION_H"),
                         (self.get_nodeattr("dilation")[1], "DILATION_W"),
                         (self.get_nodeattr("pads")[0], "PAD_T"),
@@ -241,6 +239,7 @@ class StreamingLineBuffer(CustomOp):
                         name=f"{self.onnx_node.name}_pixel_{pixel_index}_hls",
                         domain="backend.custom_op",
                         original_op_type=self.onnx_node.op_type,
+                        hls_tag=hls_tag,
                         hls_variable_declarations=self.__get_variable_declaration(
                             model
                         ),
@@ -249,6 +248,8 @@ class StreamingLineBuffer(CustomOp):
                         hls_object_declaration=WindowSelector.generate_declaration(),
                     )
                 )
+
+                hls_tag += 1
 
         if self.get_nodeattr("pads") != [0, 0, 0, 0]:
             # Create the Pad kernel.
@@ -272,7 +273,7 @@ class StreamingLineBuffer(CustomOp):
                 return_type="void",
                 arguments=function_args,
             )
-            run_call = run.generate_call([], input_name, output_name)
+            run_call = run.generate_call([hls_tag], input_name, output_name)
 
             step = cpp_function(
                 name=f"{self.onnx_node.name}_pad.step",
@@ -295,8 +296,8 @@ class StreamingLineBuffer(CustomOp):
                     (output_shape[1], "IN_CH"),
                     (self.get_nodeattr("kernel_shape")[0], "FH"),
                     (self.get_nodeattr("kernel_shape")[1], "FW"),
-                    (self.get_nodeattr("stride")[0], "STRIDE_H"),
-                    (self.get_nodeattr("stride")[1], "STRIDE_W"),
+                    (self.get_nodeattr("strides")[0], "STRIDE_H"),
+                    (self.get_nodeattr("strides")[1], "STRIDE_W"),
                     (self.get_nodeattr("dilation")[0], "DILATION_H"),
                     (self.get_nodeattr("dilation")[1], "DILATION_W"),
                     (self.get_nodeattr("pads")[0], "PAD_T"),
@@ -314,11 +315,13 @@ class StreamingLineBuffer(CustomOp):
                     name=f"{self.onnx_node.name}_pad_hls",
                     domain="backend.custom_op",
                     original_op_type=self.onnx_node.op_type,
+                    hls_tag=hls_tag,
                     hls_variable_declarations=self.__get_variable_declaration(model),
                     hls_run_call=run_call,
                     hls_step_call=step_call,
                     hls_object_declaration=Pad.generate_declaration()
                 )
             )
+            hls_tag += 1
 
-        return hls_kernels, [], fifos
+        return hls_kernels, [], fifos, hls_tag

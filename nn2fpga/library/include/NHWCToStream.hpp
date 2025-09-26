@@ -80,6 +80,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> &input_data_stream,
            hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
     TOutput circular_buffer[DATA_PER_WORD * 2];

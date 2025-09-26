@@ -67,6 +67,7 @@ public:
                           IN_HEIGHT * IN_WIDTH * OUT_CH / OUT_CH_PAR),
         STEP_delayed_output(pipeline_depth) {}
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputStruct> i_data[1],
            hls::stream<TOutputStruct> o_data[1]) {
     TAcc s_acc_buff[OUT_CH / OUT_CH_PAR]
@@ -81,7 +82,7 @@ public:
       for (size_t i_och = 0; i_och < OUT_CH / OUT_CH_PAR; i_och++) {
 #pragma HLS pipeline II = 1
         StreamingGlobalAveragePool::pipeline_body(i_data, o_data, s_acc_buff[i_och],
-                                                  i_hw, i_och);
+                                                  i_hw);
       }
     }
   }
@@ -95,7 +96,7 @@ public:
       // If there is data in the input stream, process it.
       hls::stream<TOutputStruct> output_stream[1];
       StreamingGlobalAveragePool::pipeline_body(
-          i_data, output_stream, STEP_s_acc_buff[STEP_i_och], STEP_i_hw, STEP_i_och);
+          i_data, output_stream, STEP_s_acc_buff[STEP_i_och], STEP_i_hw);
 
       // Insert new firing status into the multiset.
       STEP_actor_status.fire();
@@ -155,8 +156,7 @@ private:
 
   static void pipeline_body(hls::stream<TInputStruct> i_data[1],
                             hls::stream<TOutputStruct> o_data[1],
-                            TAcc s_acc_buff[OUT_CH_PAR], size_t i_hw,
-                            size_t i_och) {
+                            TAcc s_acc_buff[OUT_CH_PAR], size_t i_hw) {
 #pragma HLS inline
     TOutputStruct s_output_struct; // Output structure to hold the results.
     TInputStruct

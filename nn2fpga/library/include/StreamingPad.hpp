@@ -35,6 +35,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TWord> i_data[FH * FW_EXPAND],
            hls::stream<TWord> o_data[FH * FW_EXPAND]) {
     for (size_t i_h = 0; i_h < OUT_HEIGHT; i_h++) {

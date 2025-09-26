@@ -74,6 +74,7 @@ public:
         STEP_actor_status(pipeline_depth, ITER / (IN_CH_PAR * IN_W_PAR)),
         STEP_delayed_output(pipeline_depth) {}
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
            hls::stream<TOutputWord> &output_data_stream) {
     TInput circular_buffer[DATA_PER_WORD * 2];

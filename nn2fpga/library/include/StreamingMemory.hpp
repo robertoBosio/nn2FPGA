@@ -106,12 +106,15 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> i_shift_data[1],
            hls::stream<TOutputWord> o_data[FH * FW],
            hls::stream<TInputWord> o_shift_data[1]) {
 
     // Initialize memory from input stream on first run
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
     static bool initialized_flag = false;
     if (!initialized_flag) {
       initialize_memory(i_shift_data, mem);

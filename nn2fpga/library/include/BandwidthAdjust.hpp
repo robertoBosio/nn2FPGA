@@ -38,6 +38,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
            hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += OUT_W_PAR) {
@@ -198,6 +199,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
            hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
@@ -355,6 +357,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
            hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
     TOutputStruct
@@ -523,6 +526,7 @@ public:
     }
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
            hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
     TInputStruct input_data[IN_W_PAR]; // Input structure to hold the data read.
