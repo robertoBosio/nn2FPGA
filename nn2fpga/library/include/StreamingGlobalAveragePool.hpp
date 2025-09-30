@@ -1,6 +1,7 @@
 #pragma once
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
+#include <cassert>
 #include <cstddef>
 
 /**
@@ -13,10 +14,10 @@
  * values across the height and width dimensions for each channel, thus an
  * accumulator is needed for each output, then computes the average.
  *
- * @tparam TInputStruct   Structure type for input data (vectorized
+ * @tparam TInputWord   Structure type for input data (vectorized
  * input).
  * @tparam TInput         Scalar type for input elements.
- * @tparam TOutputStruct  Structure type for output data (vectorized
+ * @tparam TOutputWord  Structure type for output data (vectorized
  * output).
  * @tparam TOutput        Scalar type for output elements.
  * @tparam TAcc           Accumulator type for intermediate sum.
@@ -35,20 +36,20 @@
  * - Use the run() method for functional verification and synthesis.
  * - Use the step() method for self-timed execution with actor status tracking,
  * which is needed for fifo depth estimation.
- * 
+ *
  * @section Parallelism
  * The class supports parallel processing of output channels, as specified by
  * OUT_CH_PAR. It does not support parallel processing of width, so only one
  * stream is used for input/output.
- * 
+ *
  * @section Quantization
- * The integer division is can introduce a small rounding error, since it 
+ * The integer division is can introduce a small rounding error, since it
  * does not round ties to the nearest even number. This is a trade-off
  * between accuracy and performance, as rounding to the nearest even number
  * would require a modulo operation, which is expensive in hardware.
  */
 
-template <typename TInputStruct, typename TInput, typename TOutputStruct,
+template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename TAcc, typename TDiv, typename Quantizer,
           size_t IN_HEIGHT, size_t IN_WIDTH, size_t OUT_CH, size_t OUT_CH_PAR>
 class StreamingGlobalAveragePool {
@@ -59,17 +60,43 @@ public:
   static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
                 "IN_HEIGHT and IN_WIDTH must be greater than 0");
 
-  StreamingGlobalAveragePool() : StreamingGlobalAveragePool(1) {}
+  StreamingGlobalAveragePool() = default;
 
-  StreamingGlobalAveragePool(size_t pipeline_depth)
-      : STEP_pipeline_depth(pipeline_depth), STEP_i_hw(0), STEP_i_och(0),
-        STEP_actor_status(pipeline_depth,
-                          IN_HEIGHT * IN_WIDTH * OUT_CH / OUT_CH_PAR),
-        STEP_delayed_output(pipeline_depth) {}
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_och = 0;
+
+    // Accumulator buffer for each output channel.
+    TAcc s_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR];
+
+    PipelineDelayBuffer<TOutputWord> delayed_output;
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      delayed_output = PipelineDelayBuffer<TOutputWord>(depth);
+      actor_status =
+          ActorStatus(depth, IN_HEIGHT * IN_WIDTH * OUT_CH / OUT_CH_PAR);
+      initialized = true;
+    }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputStruct> i_data[1],
-           hls::stream<TOutputStruct> o_data[1]) {
+  void run(hls::stream<TInputWord> i_data[1],
+           hls::stream<TOutputWord> o_data[1]) {
     TAcc s_acc_buff[OUT_CH / OUT_CH_PAR]
                    [OUT_CH_PAR]; // Accumulator buffer for each output channel.
 #pragma HLS array_partition variable = s_acc_buff dim = 2
@@ -81,85 +108,78 @@ public:
     STREAMINGGLOBALAVERAGEPOOL_RUN_LOOP:
       for (size_t i_och = 0; i_och < OUT_CH / OUT_CH_PAR; i_och++) {
 #pragma HLS pipeline II = 1
-        StreamingGlobalAveragePool::pipeline_body(i_data, o_data, s_acc_buff[i_och],
-                                                  i_hw);
+        StreamingGlobalAveragePool::pipeline_body(i_data, o_data,
+                                                  s_acc_buff[i_och], i_hw);
       }
     }
   }
 
-  ActorStatus
-  step(hls::stream<TInputStruct> i_data[1],
-       hls::stream<TOutputStruct> o_data[1]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[1],
+                   hls::stream<TOutputWord> o_data[1]) {
+    // Retrieve the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
 
-    if (!i_data[0].empty()) {
+    // Compute firing condition.
+    bool firing_condition = !i_data[0].empty();
+
+    if (firing_condition) {
 
       // If there is data in the input stream, process it.
-      hls::stream<TOutputStruct> output_stream[1];
+      hls::stream<TOutputWord> instant_output_stream[1];
       StreamingGlobalAveragePool::pipeline_body(
-          i_data, output_stream, STEP_s_acc_buff[STEP_i_och], STEP_i_hw);
+          i_data, instant_output_stream, st.s_acc_buff[st.i_och], st.i_hw);
 
       // Insert new firing status into the multiset.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      if (!output_stream[0].empty()) {
-        STEP_delayed_output.push(output_stream[0].read(), true);
+      if (!instant_output_stream[0].empty()) {
+        st.delayed_output.push(instant_output_stream[0].read(), true);
       } else {
-        STEP_delayed_output.push(TOutputStruct(),
-                                 false); // Placeholder, ignored
+        st.delayed_output.push(TOutputWord(),
+                               false); // Placeholder, ignored
       }
 
       // Update the counters.
-      STEP_i_och++;
-      if (STEP_i_och >= OUT_CH / OUT_CH_PAR) {
+      st.i_och++;
+      if (st.i_och >= OUT_CH / OUT_CH_PAR) {
         // If we have processed all output channels, reset the index and
         // increment the height/width index.
-        STEP_i_och = 0;
-        STEP_i_hw++;
+        st.i_och = 0;
+        st.i_hw++;
       }
-      if (STEP_i_hw >= IN_HEIGHT * IN_WIDTH) {
-        STEP_i_hw = 0; // Reset the height/width index if we have processed all
-                       // iterations.
+      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
+        st.i_hw = 0; // Reset the height/width index if we have processed all
+                     // iterations.
       }
 
     } else {
       // If there is no data in the input stream, push a delay slot.
-      STEP_delayed_output.push(TOutputStruct(), false);
+      st.delayed_output.push(TOutputWord(), false);
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
-    if (STEP_delayed_output.pop(out)) {
+    TOutputWord out;
+    if (st.delayed_output.pop(out)) {
       o_data[0].write(out);
     }
 
     // Return the actor status.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  // State variables for step execution
-  TAcc STEP_s_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR];   // Accumulator buffer for each output channel
-  size_t STEP_i_hw;               // Current height and width index
-  size_t STEP_i_och;              // Current output channel index
-  size_t STEP_pipeline_depth = 1; // Pipeline depth for the actor
-
-  // CSDFG actor state variables
-  ActorStatus STEP_actor_status;
-
-  // Pipeline state variables
-  // Delayed output buffer to maintain pipeline depth
-  PipelineDelayBuffer<TOutputStruct> STEP_delayed_output;
-
-  static void pipeline_body(hls::stream<TInputStruct> i_data[1],
-                            hls::stream<TOutputStruct> o_data[1],
+  static void pipeline_body(hls::stream<TInputWord> i_data[1],
+                            hls::stream<TOutputWord> o_data[1],
                             TAcc s_acc_buff[OUT_CH_PAR], size_t i_hw) {
 #pragma HLS inline
-    TOutputStruct s_output_struct; // Output structure to hold the results.
-    TInputStruct
+    TOutputWord s_output_struct; // Output structure to hold the results.
+    TInputWord
         s_input_struct;  // Input structure to read data from the input stream.
     Quantizer quantizer; // Quantizer instance for quantization.
 
@@ -188,7 +208,8 @@ private:
         // This is not strictly correct, as ties should be rounded to the
         // nearest even number, but it requires the use of a modulo operation,
         // which is quite expensive. Instead, we are rounding ties up.
-        TAcc bias = (s_acc_buff[i_och_par] >= 0) ? (TAcc)(divisor >> 1) : (TAcc)-(divisor >> 1);
+        TAcc bias = (s_acc_buff[i_och_par] >= 0) ? (TAcc)(divisor >> 1)
+                                                 : (TAcc) - (divisor >> 1);
         TAcc rounded_value = s_acc_buff[i_och_par] + bias;
         TAcc result = rounded_value / divisor; // Calculate the average.
 

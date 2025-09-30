@@ -21,7 +21,7 @@ void wrap_run(hls::stream<TInputWord> i_data[1],
                              test_config::IN_HEIGHT, test_config::IN_WIDTH,
                              test_config::OUT_CH, test_config::OUT_CH_PAR>
       pool;
-  pool.run(i_data, o_data);
+  pool.run<0>(i_data, o_data);
 }
 
 bool test_run() {
@@ -94,7 +94,8 @@ bool test_step() {
                              test_config::TDiv, test_config::Quantizer,
                              test_config::IN_HEIGHT, test_config::IN_WIDTH,
                              test_config::OUT_CH, test_config::OUT_CH_PAR>
-      pool(test_config::PIPELINE_DEPTH);
+      pool;
+  pool.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;

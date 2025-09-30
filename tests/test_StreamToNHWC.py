@@ -21,11 +21,11 @@ class TestStreamToNHWC(BaseHLSTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(
-            f"typedef DequantQuantPo2<0, {config_dict['IN_DATAWIDTH']}, {config_dict['IN_DATAWIDTH']}> Quantizer;"
-        )
         cwr.add_line(f"typedef ap_int<{config_dict['IN_DATAWIDTH']}> TInput;")
         cwr.add_line(f"typedef ap_int<{config_dict['AXI_DATAWIDTH']}> TOutput;")
+        cwr.add_line(
+            f"typedef DequantQuantPo2<0, TInput, TInput> Quantizer;"
+        )
         cwr.add_line(
             f"typedef ap_axiu<{config_dict['AXI_DATAWIDTH']}, 0, 0, 0> TOutputWord;"
         )

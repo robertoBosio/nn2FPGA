@@ -21,7 +21,7 @@ void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::IN_W_PAR],
                test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
                test_config::IN_CH_PAR>
       consumer;
-  consumer.run(input_data_stream, output_data_stream);
+  consumer.run<0>(input_data_stream, output_data_stream);
 }
 
 bool test_run() {
@@ -95,7 +95,8 @@ bool test_step() {
                test_config::DATA_PER_WORD, test_config::HEIGHT,
                test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
                test_config::IN_CH_PAR>
-      consumer(test_config::PIPELINE_DEPTH);
+      consumer;
+  consumer.step_init(test_config::PIPELINE_DEPTH);
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::IN_W_PAR];

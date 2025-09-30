@@ -23,11 +23,11 @@ class TestStreamingConv(BaseHLSTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(
-            f"typedef DequantQuantPo2<0, {config_dict['OUT_DATAWIDTH']}, {config_dict['OUT_DATAWIDTH']}> Quantizer;"
-        )
         cwr.add_line(f"typedef ap_int<{config_dict['IN_DATAWIDTH']}> TInput;")
         cwr.add_line(f"typedef ap_int<{config_dict['OUT_DATAWIDTH']}> TOutput;")
+        cwr.add_line(
+            f"typedef DequantQuantPo2<0, TOutput, TOutput> Quantizer;"
+        )
         cwr.add_line(f"using TInputWord = std::array<TInput, {config_dict['IN_CH_PAR']}>;")
         cwr.add_line(f"using TOutputWord = std::array<TOutput, {config_dict['OUT_CH_PAR']}>;")
         cwr.add_line(

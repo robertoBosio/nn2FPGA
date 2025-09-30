@@ -1,6 +1,7 @@
 #pragma once
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
+#include <cassert>
 #include <cstddef>
 
 template <typename TWord, size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH,
@@ -9,8 +10,10 @@ template <typename TWord, size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH,
           size_t PAD_B, size_t PAD_R, size_t W_PAR, size_t CH_PAR>
 class StreamingPad {
   static constexpr size_t FW_EXPAND = FW + (W_PAR - 1) * STRIDE_W;
-  static constexpr size_t OUT_HEIGHT = (IN_HEIGHT + PAD_T + PAD_B - DILATION_H * (FH - 1) - 1) / STRIDE_H + 1;
-  static constexpr size_t OUT_WIDTH = (IN_WIDTH + PAD_L + PAD_R - DILATION_W * (FW - 1) - 1) / STRIDE_W + 1;
+  static constexpr size_t OUT_HEIGHT =
+      (IN_HEIGHT + PAD_T + PAD_B - DILATION_H * (FH - 1) - 1) / STRIDE_H + 1;
+  static constexpr size_t OUT_WIDTH =
+      (IN_WIDTH + PAD_L + PAD_R - DILATION_W * (FW - 1) - 1) / STRIDE_W + 1;
 
 public:
   static_assert(FH > 0 && FW > 0, "FH and FW must be greater than 0");
@@ -23,16 +26,36 @@ public:
   static_assert(FW_EXPAND > 0,
                 "FW + (W_PAR-1)*STRIDE_W must be greater than 0");
 
-  StreamingPad() : StreamingPad(1) {}
+  StreamingPad() = default;
 
-  StreamingPad(size_t pipeline_depth)
-      : STEP_i_h(0), STEP_i_w(0), STEP_i_ch(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(1,
-                          OUT_HEIGHT * (OUT_WIDTH / W_PAR) * (IN_CH / CH_PAR)) {
-    for (size_t i = 0; i < FH * FW_EXPAND; i++) {
-      STEP_delayed_output[i] = PipelineDelayBuffer<TWord>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_h = 0, i_w = 0, i_ch = 0;
+    PipelineDelayBuffer<TWord> delayed_output[FH * FW_EXPAND];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < FH * FW_EXPAND; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TWord>(depth);
+      }
+      actor_status = ActorStatus(depth, OUT_HEIGHT * (OUT_WIDTH / W_PAR) *
+                                            (IN_CH / CH_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
@@ -51,12 +74,18 @@ public:
 
   ActorStatus step(hls::stream<TWord> i_data[FH * FW_EXPAND],
                    hls::stream<TWord> o_data[FH * FW_EXPAND]) {
+    // Find the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
     bool firing_condition = true;
     for (size_t i_fh = 0; i_fh < FH; i_fh++) {
       for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
         bool is_within_tensor = true;
-        size_t in_h = STEP_i_h * STRIDE_H + i_fh - PAD_T;
-        size_t in_w = STEP_i_w * STRIDE_W + i_fw - PAD_L;
+        size_t in_h = st.i_h * STRIDE_H + i_fh - PAD_T;
+        size_t in_w = st.i_w * STRIDE_W + i_fw - PAD_L;
         is_within_tensor &= (in_h < IN_HEIGHT && in_h >= 0);
         is_within_tensor &= (in_w < IN_WIDTH && in_w >= 0);
         if (is_within_tensor && i_data[i_fh * FW_EXPAND + i_fw].empty()) {
@@ -67,28 +96,28 @@ public:
 
     if (firing_condition) {
       hls::stream<TWord> instant_o_data[FH * FW_EXPAND];
-      StreamingPad::pipeline_body(i_data, instant_o_data, STEP_i_h, STEP_i_w);
+      StreamingPad::pipeline_body(i_data, instant_o_data, st.i_h, st.i_w);
 
-      STEP_i_ch += CH_PAR;
-      if (STEP_i_ch >= IN_CH) {
-        STEP_i_ch = 0;
-        STEP_i_w += W_PAR;
+      st.i_ch += CH_PAR;
+      if (st.i_ch >= IN_CH) {
+        st.i_ch = 0;
+        st.i_w += W_PAR;
       }
-      if (STEP_i_w >= OUT_WIDTH) {
-        STEP_i_w = 0;
-        STEP_i_h++;
+      if (st.i_w >= OUT_WIDTH) {
+        st.i_w = 0;
+        st.i_h++;
       }
-      if (STEP_i_h >= OUT_HEIGHT) {
-        STEP_i_h = 0;
+      if (st.i_h >= OUT_HEIGHT) {
+        st.i_h = 0;
       }
 
       // Insert the firing status for the current step.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
       for (size_t i_fh = 0; i_fh < FH; i_fh++) {
         for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
-          STEP_delayed_output[i_fh * FW_EXPAND + i_fw].push(
+          st.delayed_output[i_fh * FW_EXPAND + i_fw].push(
               instant_o_data[i_fh * FW_EXPAND + i_fw].read(), true);
         }
       }
@@ -98,36 +127,29 @@ public:
       // timing.
       for (size_t i_fh = 0; i_fh < FH; i_fh++) {
         for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
-          STEP_delayed_output[i_fh * FW_EXPAND + i_fw].push(TWord(), false);
+          st.delayed_output[i_fh * FW_EXPAND + i_fw].push(TWord(), false);
         }
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
     for (size_t i_fh = 0; i_fh < FH; i_fh++) {
       for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
         TWord out;
-        if (STEP_delayed_output[i_fh * FW_EXPAND + i_fw].pop(out)) {
+        if (st.delayed_output[i_fh * FW_EXPAND + i_fw].pop(out)) {
           o_data[i_fh * FW_EXPAND + i_fw].write(out);
         }
       }
     }
 
     // Return the actor status.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  size_t STEP_i_h = 0;
-  size_t STEP_i_w = 0;
-  size_t STEP_i_ch = 0;
-  size_t STEP_pipeline_depth = 1;
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TWord> STEP_delayed_output[FH * FW_EXPAND];
-
   static void pipeline_body(hls::stream<TWord> i_data[FH * FW_EXPAND],
                             hls::stream<TWord> o_data[FH * FW_EXPAND],
                             size_t i_h, size_t i_w) {

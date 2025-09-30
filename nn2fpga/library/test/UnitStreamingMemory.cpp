@@ -29,9 +29,9 @@ void wrap_run(hls::stream<TInputWord> i_shift_data[1],
                   test_config::IN_CH_PAR>
       mem;
   if (test_config::DATA_TO_SHIFT > 0) {
-    mem.run(i_shift_data, o_data, o_shift_data);
+    mem.run<0>(i_shift_data, o_data, o_shift_data);
   } else {
-    mem.run(i_shift_data, o_data);
+    mem.run<0>(i_shift_data, o_data);
   }
 }
 
@@ -117,7 +117,8 @@ bool test_step(){
                   test_config::OUT_CH, test_config::IN_CH, test_config::FW,
                   test_config::FH, test_config::OUT_CH_PAR,
                   test_config::IN_CH_PAR>
-      mem(test_config::PIPELINE_DEPTH);
+      mem;
+  mem.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;

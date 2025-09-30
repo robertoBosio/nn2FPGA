@@ -13,7 +13,7 @@ void wrap_run(
     hls::stream<test_config::TInputWord> input_data_stream[test_config::IN_W_PAR],
     hls::stream<test_config::TOutputWord> output_data_stream[test_config::OUT_W_PAR]) {
   test_config::BandwidthAdjust bandwidth_adjust;
-  bandwidth_adjust.run(input_data_stream, output_data_stream);
+  bandwidth_adjust.run<0>(input_data_stream, output_data_stream);
 }
 
 template <class BandwidthAdjust>
@@ -77,7 +77,8 @@ template <class BandwidthAdjust> bool test_step() {
   hls::stream<test_config::TInputWord> in_stream[test_config::IN_W_PAR];
   hls::stream<test_config::TOutputWord> out_stream[test_config::OUT_W_PAR];
 
-  BandwidthAdjust bandwidth_adjust(test_config::PIPELINE_DEPTH);
+  BandwidthAdjust bandwidth_adjust;
+  bandwidth_adjust.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;

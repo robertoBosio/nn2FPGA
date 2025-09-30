@@ -30,7 +30,7 @@ void wrap_run(
                test_config::PAD_L, test_config::PAD_B, test_config::PAD_R,
                test_config::W_PAR, test_config::CH_PAR>
       pad;
-  pad.run(i_data, o_data);
+  pad.run<0>(i_data, o_data);
 }
 
 bool test_run() {

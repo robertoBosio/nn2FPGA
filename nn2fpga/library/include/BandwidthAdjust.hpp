@@ -1,9 +1,10 @@
 #pragma once
-#include <cstddef>
-#include "utils/CSDFG_utils.hpp"
 #include "hls_stream.h"
+#include "utils/CSDFG_utils.hpp"
+#include <cstddef>
+#include <cassert>
 
-template <typename TInputStruct, typename TInput, typename TOutputStruct,
+template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t IN_HEIGHT,
           size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
           size_t IN_CH_PAR, size_t OUT_CH_PAR>
@@ -25,22 +26,42 @@ public:
   static_assert(IN_CH_PAR == OUT_CH_PAR,
                 "IN_CH_PAR must be equal to OUT_CH_PAR");
 
-  BandwidthAdjustIncreaseStreams() : BandwidthAdjustIncreaseStreams(1) {}
+  BandwidthAdjustIncreaseStreams() = default;
 
-  BandwidthAdjustIncreaseStreams(size_t pipeline_depth)
-      : STEP_i_hw(0), STEP_i_out_stream(0), STEP_i_ch(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                              (OUT_CH_PAR * IN_W_PAR)) {
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputStruct>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_out_stream = 0, i_ch = 0;
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < OUT_W_PAR; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
+                                            (OUT_CH_PAR * IN_W_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += OUT_W_PAR) {
       for (size_t i_out_stream = 0; i_out_stream < OUT_W_PAR;
            i_out_stream += IN_W_PAR) {
@@ -54,8 +75,14 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    // Get the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
     bool firing_condition = true;
     for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
       if (input_data_stream[i_in_stream].empty()) {
@@ -65,84 +92,72 @@ public:
 
     if (firing_condition) {
 
-      hls::stream<TOutputStruct> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
       BandwidthAdjustIncreaseStreams::pipeline_body(
-          input_data_stream, instant_output_stream, STEP_i_out_stream);
+          input_data_stream, instant_output_stream, st.i_out_stream);
 
-      STEP_i_ch += OUT_CH_PAR;
-      if (STEP_i_ch >= IN_CH) {
+      st.i_ch += OUT_CH_PAR;
+      if (st.i_ch >= IN_CH) {
         // If we have processed all input channels, reset the index and
         // increment the height/width index.
-        STEP_i_ch = 0;
-        STEP_i_out_stream += IN_W_PAR;
+        st.i_ch = 0;
+        st.i_out_stream += IN_W_PAR;
       }
-      if (STEP_i_out_stream >= OUT_W_PAR) {
+      if (st.i_out_stream >= OUT_W_PAR) {
         // If we have processed all output streams, reset the index and
         // increment the height/width index.
-        STEP_i_out_stream = 0;
-        STEP_i_hw += OUT_W_PAR;
+        st.i_out_stream = 0;
+        st.i_hw += OUT_W_PAR;
       }
-      if (STEP_i_hw >= IN_HEIGHT * IN_WIDTH) {
+      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
         // Reset height and width index if we have processed all data.
-        STEP_i_hw = 0;
+        st.i_hw = 0;
       }
 
       // Insert the firing status for the current step.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
       for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
         if (!instant_output_stream[i_w_par].empty()) {
-          STEP_delayed_output[i_w_par].push(
-              instant_output_stream[i_w_par].read(), true);
+          st.delayed_output[i_w_par].push(instant_output_stream[i_w_par].read(),
+                                          true);
         } else {
           // If the output stream is empty, push a placeholder.
-          STEP_delayed_output[i_w_par].push(TOutputStruct(), false);
+          st.delayed_output[i_w_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-        STEP_delayed_output[i_w_par].push(TOutputStruct(), false);
+        st.delayed_output[i_w_par].push(TOutputWord(), false);
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
+      if (st.delayed_output[i_w_par].pop(out)) {
         output_data_stream[i_w_par].write(out);
       }
     }
 
     // Return the current firing iteration index.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  size_t STEP_i_hw;           // Index for height and width.
-  size_t STEP_i_out_stream;   // Index for output stream.
-  size_t STEP_i_ch;           // Index for channels.
-  size_t STEP_pipeline_depth; // Pipeline depth for the actor.
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputStruct>
-      STEP_delayed_output[OUT_W_PAR]; // Delayed output buffers to maintain
-                                      // pipeline depth for each parallel
-                                      // output
-
   static void
-  pipeline_body(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR],
+  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
                 size_t i_out_stream) {
 #pragma HLS inline
-    TInputStruct
+    TInputWord
         s_input_struct; // Input structure to read data from the input stream.
-    TOutputStruct s_output_struct; // Output structure to hold the results.
+    TOutputWord s_output_struct; // Output structure to hold the results.
     Quantizer quantizer;           // Quantizer instance for quantization.
 
     for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
@@ -164,7 +179,7 @@ private:
   }
 };
 
-template <typename TInputStruct, typename TInput, typename TOutputStruct,
+template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t IN_HEIGHT,
           size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
           size_t IN_CH_PAR, size_t OUT_CH_PAR>
@@ -186,22 +201,42 @@ public:
   static_assert(IN_CH_PAR == OUT_CH_PAR,
                 "IN_CH_PAR must be equal to OUT_CH_PAR");
 
-  BandwidthAdjustDecreaseStreams() : BandwidthAdjustDecreaseStreams(1) {}
+  BandwidthAdjustDecreaseStreams() = default;
 
-  BandwidthAdjustDecreaseStreams(size_t pipeline_depth)
-      : STEP_i_hw(0), STEP_i_in_stream(0), STEP_i_ch(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                              (OUT_CH_PAR * OUT_W_PAR)) {
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputStruct>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_in_stream = 0, i_ch = 0;
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < OUT_W_PAR; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
+                                            (OUT_CH_PAR * OUT_W_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
       for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR;
            i_in_stream += OUT_W_PAR) {
@@ -215,92 +250,84 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    // Get the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
 
     // Check if there is data in the input streams considered in this step.
     bool firing_condition = true;
     for (size_t i_in_stream = 0; i_in_stream < OUT_W_PAR; i_in_stream++) {
-      if (input_data_stream[STEP_i_in_stream + i_in_stream].empty()) {
+      if (input_data_stream[st.i_in_stream + i_in_stream].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
 
-      hls::stream<TOutputStruct> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
       BandwidthAdjustDecreaseStreams::pipeline_body(
-          input_data_stream, instant_output_stream, STEP_i_in_stream);
+          input_data_stream, instant_output_stream, st.i_in_stream);
 
-      STEP_i_ch += OUT_CH_PAR;
-      if (STEP_i_ch >= IN_CH) {
+      st.i_ch += OUT_CH_PAR;
+      if (st.i_ch >= IN_CH) {
         // If we have processed all input channels, reset the index and
         // increment the height/width index.
-        STEP_i_ch = 0;
-        STEP_i_in_stream += OUT_W_PAR;
+        st.i_ch = 0;
+        st.i_in_stream += OUT_W_PAR;
       }
-      if (STEP_i_in_stream >= IN_W_PAR) {
+      if (st.i_in_stream >= IN_W_PAR) {
         // If we have processed all output streams, reset the index and
         // increment the height/width index.
-        STEP_i_in_stream = 0;
-        STEP_i_hw += IN_W_PAR;
+        st.i_in_stream = 0;
+        st.i_hw += IN_W_PAR;
       }
-      if (STEP_i_hw >= IN_HEIGHT * IN_WIDTH) {
-        STEP_i_hw =
+      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
+        st.i_hw =
             0; // Reset height and width index if we have processed all data.
       }
 
       // Insert the firing status for the current step.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
       for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        STEP_delayed_output[i].push(instant_output_stream[i].read(), true);
+        st.delayed_output[i].push(instant_output_stream[i].read(), true);
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        STEP_delayed_output[i].push(TOutputStruct(), false);
+        st.delayed_output[i].push(TOutputWord(), false);
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
+      if (st.delayed_output[i_w_par].pop(out)) {
         output_data_stream[i_w_par].write(
             out); // Write the output to the stream.
       }
     }
 
     // Return the current actor status.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  size_t STEP_i_hw;           // Index for height and width.
-  size_t STEP_i_in_stream;    // Index for input stream.
-  size_t STEP_i_ch;           // Index for channels.
-  size_t STEP_pipeline_depth; // Pipeline depth for the actor.
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputStruct>
-      STEP_delayed_output[OUT_W_PAR]; // Delayed output buffers to maintain
-                                      // pipeline depth for each parallel
-                                      // output
-
   static void
-  pipeline_body(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR],
+  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
                 size_t i_in_stream) {
 #pragma HLS inline
-    TInputStruct
+    TInputWord
         s_input_struct; // Input structure to read data from the input stream.
-    TOutputStruct s_output_struct; // Output structure to hold the results.
+    TOutputWord s_output_struct; // Output structure to hold the results.
     Quantizer quantizer;           // Quantizer instance for quantization.
 
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
@@ -322,7 +349,7 @@ private:
   }
 };
 
-template <typename TInputStruct, typename TInput, typename TOutputStruct,
+template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t IN_HEIGHT,
           size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
           size_t IN_CH_PAR, size_t OUT_CH_PAR>
@@ -344,23 +371,46 @@ public:
   static_assert(IN_CH % OUT_CH_PAR == 0,
                 "IN_CH must be a multiple of OUT_CH_PAR");
 
-  BandwidthAdjustIncreaseChannels() : BandwidthAdjustIncreaseChannels(1) {}
+  BandwidthAdjustIncreaseChannels() = default;
 
-  BandwidthAdjustIncreaseChannels(size_t pipeline_depth)
-      : STEP_i_hw(0), STEP_i_och_par(0), STEP_i_ch(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                              (IN_CH_PAR * IN_W_PAR)) {
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputStruct>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_och_par = 0, i_ch = 0;
+
+    // Output data buffer
+    TOutputWord output_data[OUT_W_PAR];
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < OUT_W_PAR; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
+                                            (IN_CH_PAR * IN_W_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
-    TOutputStruct
+  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    TOutputWord
         output_data[OUT_W_PAR]; // Output structure to hold the results.
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
       for (size_t i_ch = 0; i_ch < IN_CH; i_ch += OUT_CH_PAR) {
@@ -375,9 +425,14 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    // Get the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
 
+    // Compute firing condition.
     bool firing_condition = true;
     for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
       if (input_data_stream[i_in_stream].empty()) {
@@ -386,84 +441,70 @@ public:
     }
 
     if (firing_condition) {
-      hls::stream<TOutputStruct> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
       BandwidthAdjustIncreaseChannels::pipeline_body(
-          input_data_stream, instant_output_stream, STEP_output_data,
-          STEP_i_och_par);
+          input_data_stream, instant_output_stream, st.output_data,
+          st.i_och_par);
 
-      STEP_i_och_par += IN_CH_PAR;
-      if (STEP_i_och_par >= OUT_CH_PAR) {
+      st.i_och_par += IN_CH_PAR;
+      if (st.i_och_par >= OUT_CH_PAR) {
         // If we have processed all input channels, reset the index and
         // increment the height/width index.
-        STEP_i_och_par = 0;
-        STEP_i_ch += OUT_CH_PAR;
+        st.i_och_par = 0;
+        st.i_ch += OUT_CH_PAR;
       }
-      if (STEP_i_ch >= IN_CH) {
+      if (st.i_ch >= IN_CH) {
         // If we have processed all output streams, reset the index and
         // increment the height/width index.
-        STEP_i_ch = 0;
-        STEP_i_hw += IN_W_PAR;
+        st.i_ch = 0;
+        st.i_hw += IN_W_PAR;
       }
-      if (STEP_i_hw >= IN_HEIGHT * IN_WIDTH) {
-        STEP_i_hw =
+      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
+        st.i_hw =
             0; // Reset height and width index if we have processed all data.
       }
 
       // Insert the firing status for the current step.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
       for (size_t i = 0; i < OUT_W_PAR; ++i) {
         if (!instant_output_stream[i].empty()) {
-          STEP_delayed_output[i].push(instant_output_stream[i].read(), true);
+          st.delayed_output[i].push(instant_output_stream[i].read(), true);
         } else {
           // If the output stream is empty, push a placeholder.
-          STEP_delayed_output[i].push(TOutputStruct(), false);
+          st.delayed_output[i].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        STEP_delayed_output[i].push(TOutputStruct(), false);
+        st.delayed_output[i].push(TOutputWord(), false);
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
+      if (st.delayed_output[i_w_par].pop(out)) {
         output_data_stream[i_w_par].write(out);
       }
     }
 
     // Return the current firing iteration index.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  TOutputStruct
-      STEP_output_data[OUT_W_PAR]; // Output structure to hold the results.
-  size_t STEP_i_hw;                // Index for height and width.
-  size_t STEP_i_och_par;           // Index for output channels.
-  size_t STEP_i_ch;                // Index for input channels.
-  size_t STEP_pipeline_depth;      // Pipeline depth for the actor.
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputStruct>
-      STEP_delayed_output[OUT_W_PAR]; // Delayed output buffers to maintain
-                                      // pipeline depth for each parallel
-                                      // output
-
   static void
-  pipeline_body(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR],
-                TOutputStruct s_output_struct[OUT_W_PAR], size_t i_och_par) {
+  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
+                TOutputWord s_output_struct[OUT_W_PAR], size_t i_och_par) {
 #pragma HLS inline
-    TInputStruct
+    TInputWord
         s_input_struct;  // Input structure to read data from the input stream.
     Quantizer quantizer; // Quantizer instance for quantization.
 
@@ -491,7 +532,7 @@ private:
   }
 };
 
-template <typename TInputStruct, typename TInput, typename TOutputStruct,
+template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t IN_HEIGHT,
           size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
           size_t IN_CH_PAR, size_t OUT_CH_PAR>
@@ -513,23 +554,46 @@ public:
   static_assert(IN_CH % OUT_CH_PAR == 0,
                 "IN_CH must be a multiple of OUT_CH_PAR");
 
-  BandwidthAdjustDecreaseChannels() : BandwidthAdjustDecreaseChannels(1) {}
+  BandwidthAdjustDecreaseChannels() = default;
 
-  BandwidthAdjustDecreaseChannels(size_t pipeline_depth)
-      : STEP_i_hw(0), STEP_i_ich_par(0), STEP_i_ch(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                              (OUT_CH_PAR * IN_W_PAR)) {
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputStruct>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_ich_par = 0, i_ch = 0;
+
+    // Input data buffer
+    TInputWord input_data[IN_W_PAR];
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < OUT_W_PAR; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
+                                            (OUT_CH_PAR * IN_W_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
-    TInputStruct input_data[IN_W_PAR]; // Input structure to hold the data read.
+  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    TInputWord input_data[IN_W_PAR]; // Input structure to hold the data read.
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
       for (size_t i_ch = 0; i_ch < IN_CH; i_ch += IN_CH_PAR) {
       BANDWIDTHADJUSTDECREASECHANNELS_RUN_LOOP:
@@ -543,90 +607,83 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-              hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+    // Get the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
     bool firing_condition = true;
-    if (STEP_i_ich_par == 0) {
+    if (st.i_ich_par == 0) {
       for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
         if (input_data_stream[i_in_stream].empty()) {
-            firing_condition = false;
+          firing_condition = false;
         }
       }
     }
 
     if (firing_condition) {
-        hls::stream<TOutputStruct> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
       BandwidthAdjustDecreaseChannels::pipeline_body(
-          input_data_stream, instant_output_stream, STEP_input_data,
-          STEP_i_ich_par);
+          input_data_stream, instant_output_stream, st.input_data,
+          st.i_ich_par);
 
-      STEP_i_ich_par += OUT_CH_PAR;
-      if (STEP_i_ich_par >= IN_CH_PAR) {
+      st.i_ich_par += OUT_CH_PAR;
+      if (st.i_ich_par >= IN_CH_PAR) {
         // If we have processed all input channels, reset the index and
         // increment the height/width index.
-        STEP_i_ich_par = 0;
-        STEP_i_ch += IN_CH_PAR;
+        st.i_ich_par = 0;
+        st.i_ch += IN_CH_PAR;
       }
-      if (STEP_i_ch >= IN_CH) {
+      if (st.i_ch >= IN_CH) {
         // If we have processed all output streams, reset the index and
         // increment the height/width index.
-        STEP_i_ch = 0;
-        STEP_i_hw += IN_W_PAR;
+        st.i_ch = 0;
+        st.i_hw += IN_W_PAR;
       }
-      if (STEP_i_hw >= IN_HEIGHT * IN_WIDTH) {
-        STEP_i_hw =
+      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
+        st.i_hw =
             0; // Reset height and width index if we have processed all data.
       }
 
-        // Insert the firing status for the current step.
-        STEP_actor_status.fire();
+      // Insert the firing status for the current step.
+      st.actor_status.fire();
 
-        // Add the output to the delayed output stream.
-        for (size_t i = 0; i < OUT_W_PAR; ++i) {
-          STEP_delayed_output[i].push(instant_output_stream[i].read(), true);
-        }
+      // Add the output to the delayed output stream.
+      for (size_t i = 0; i < OUT_W_PAR; ++i) {
+        st.delayed_output[i].push(instant_output_stream[i].read(), true);
+      }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        STEP_delayed_output[i].push(TOutputStruct(), false);
+        st.delayed_output[i].push(TOutputWord(), false);
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputStruct out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
+      if (st.delayed_output[i_w_par].pop(out)) {
         output_data_stream[i_w_par].write(out);
       }
     }
 
     // Return the current actor status.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  TInputStruct
-      STEP_input_data[IN_W_PAR]; // Output structure to hold the results.
-  size_t STEP_i_hw;              // Index for height and width.
-  size_t STEP_i_ich_par;         // Index for input channels.
-  size_t STEP_i_ch;              // Index for input channels.
-  size_t STEP_pipeline_depth;    // Pipeline depth for the actor.
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputStruct>
-      STEP_delayed_output[OUT_W_PAR]; // Delayed output buffers to maintain
-                                      // pipeline depth for each parallel
-                                      // output
   static void
-  pipeline_body(hls::stream<TInputStruct> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputStruct> output_data_stream[OUT_W_PAR],
-                TInputStruct s_input_struct[IN_W_PAR], size_t i_ich_par) {
+  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
+                TInputWord s_input_struct[IN_W_PAR], size_t i_ich_par) {
 #pragma HLS inline
-    TOutputStruct
+    TOutputWord
         s_output_struct; // Output structure to read data from the input stream.
     Quantizer quantizer; // Quantizer instance for quantization.
 

@@ -3,6 +3,7 @@
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
+#include <cassert>
 
 /**
  * @class StreamToNHWC
@@ -66,13 +67,7 @@ public:
   static_assert(CH % IN_CH_PAR == 0, "CH must be a multiple of IN_CH_PAR");
   static_assert(WIDTH % IN_W_PAR == 0, "WIDTH must be a multiple of IN_W_PAR");
 
-  StreamToNHWC() : StreamToNHWC(1) {}
-
-  StreamToNHWC(size_t pipeline_depth)
-      : STEP_pipeline_depth(pipeline_depth), STEP_i_input_word(0), STEP_head(0),
-        STEP_tail(0), STEP_size(0),
-        STEP_actor_status(pipeline_depth, ITER / (IN_CH_PAR * IN_W_PAR)),
-        STEP_delayed_output(pipeline_depth) {}
+  StreamToNHWC() = default;
 
   template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
@@ -93,8 +88,47 @@ STREAM_TO_NHWC_MAINLOOP:
     }
   }
 
+  struct StepState {
+    // Circular buffer to hold output data for processing.
+    TInput circular_buffer[DATA_PER_WORD * 2];
+
+    // Indexes and size for the circular buffer.
+    char head = 0, tail = 0, size = 0;
+
+    // Loop iteration index for the input word.
+    size_t i_input_word = 0;
+    ActorStatus actor_status{1, 1};
+    PipelineDelayBuffer<TOutputWord> delayed_output;
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      delayed_output = PipelineDelayBuffer<TOutputWord>(depth);
+      actor_status = ActorStatus(depth, ITER / (IN_W_PAR * IN_CH_PAR));
+      initialized = true;
+    }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
+
   ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
                    hls::stream<TOutputWord> &output_data_stream) {
+
+    // Find the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() &&
+           "step_init() must be called before step()");
+    StepState &st = it->second;
 
     // Compute firing condition.
     bool firing_condition = true;
@@ -107,52 +141,41 @@ STREAM_TO_NHWC_MAINLOOP:
     if (firing_condition) {
       hls::stream<TOutputWord> instant_output_stream;
       StreamToNHWC::pipeline_body(input_data_stream, instant_output_stream,
-                                  circular_buffer, STEP_head, STEP_size,
-                                  STEP_tail, STEP_i_input_word);
-      STEP_i_input_word += IN_CH_PAR * IN_W_PAR;
-      if (STEP_i_input_word >= ITER) {
-        STEP_i_input_word = 0;
+                                  st.circular_buffer, st.head, st.size, st.tail,
+                                  st.i_input_word);
+      st.i_input_word += IN_CH_PAR * IN_W_PAR;
+      if (st.i_input_word >= ITER) {
+        st.i_input_word = 0;
       }
 
-      STEP_actor_status.fire(); // Fire the actor status.
+      st.actor_status.fire(); // Fire the actor status.
 
       // Add the output to the delayed output stream.
       if (!instant_output_stream.empty()) {
-        STEP_delayed_output.push(instant_output_stream.read(), true);
+        st.delayed_output.push(instant_output_stream.read(), true);
       } else {
-        STEP_delayed_output.push(TOutputWord(),
-                                 false); // Placeholder, ignored
+        st.delayed_output.push(TOutputWord(),
+                               false); // Placeholder, ignored
       }
     } else {
       // If the firing condition is not met, push a placeholder to maintain the
       // pipeline depth.
-      STEP_delayed_output.push(TOutputWord(), false);
+      st.delayed_output.push(TOutputWord(), false);
     }
 
     // Advance the actor status.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
     TOutputWord out;
-    if (STEP_delayed_output.pop(out)) {
+    if (st.delayed_output.pop(out)) {
       output_data_stream.write(out);
     }
 
-    return STEP_actor_status; // Return the current actor status.
+    return st.actor_status; // Return the current actor status.
   }
 
 private:
-  // State variables for step execution
-  size_t STEP_i_input_word;           // Current word index
-  size_t STEP_pipeline_depth;   // Pipeline depth for the step
-  char STEP_head;            // Head index for circular buffer
-  char STEP_tail;            // Tail index for circular buffer
-  char STEP_size;            // Current size of data in circular buffer
-  TInput circular_buffer[DATA_PER_WORD * 2]; // Circular buffer for input data
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputWord> STEP_delayed_output;
 
   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
                             hls::stream<TOutputWord> &output_data_stream,

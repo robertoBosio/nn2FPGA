@@ -3,6 +3,7 @@
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
+#include <cassert>
 
 /**
  * @brief NHWCToStream is a templated class for streaming data into neural
@@ -68,17 +69,7 @@ public:
   static_assert(WIDTH % OUT_W_PAR == 0,
                 "WIDTH must be a multiple of OUT_W_PAR");
 
-  NHWCToStream()
-      : NHWCToStream(1) {}
-
-  NHWCToStream(size_t pipeline_depth)
-      : STEP_pipeline_depth(pipeline_depth), STEP_i_output_word(0),
-        STEP_head(0), STEP_tail(0), STEP_size(0),
-        STEP_actor_status(pipeline_depth, ITER) {
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i] = PipelineDelayBuffer<TOutputWord>(pipeline_depth);
-    }
-  }
+  NHWCToStream() = default;
 
   template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> &input_data_stream,
@@ -89,82 +80,109 @@ public:
     char size = 0; // Current size of the circular buffer
 
     // Loop through the word packets of the output tensor.
-NHWC_TO_STREAM_MAINLOOP:
-  for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
+  NHWC_TO_STREAM_MAINLOOP:
+    for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
 #pragma HLS pipeline II = 1
-    NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
-                                circular_buffer, head, size, tail);
-  }
-}
-
-ActorStatus step(hls::stream<TInputWord> &input_data_stream,
-                 hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
-
-  bool firing_condition = true;
-  if (STEP_size < OUT_CH_PAR * OUT_W_PAR && input_data_stream.empty()) {
-    firing_condition = false;
+      NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
+                                  circular_buffer, head, size, tail);
+    }
   }
 
-  if (firing_condition) {
-    hls::stream<TOutputWord> output_stream[OUT_W_PAR];
-    NHWCToStream::pipeline_body(input_data_stream, output_stream,
-                                STEP_circular_buffer, STEP_head, STEP_size,
-                                STEP_tail);
-    STEP_i_output_word++;
-    if (STEP_i_output_word >= ITER) {
-      STEP_i_output_word = 0;
+  struct StepState {
+    // Circular buffer to hold input data for processing.
+    TOutput circular_buffer[DATA_PER_WORD * 2];
+
+    // Indexes and size for the circular buffer.
+    char head = 0, tail = 0, size = 0;
+
+    // Loop iteration index for the output word.
+    size_t i_output_word = 0;
+    ActorStatus actor_status{1, 1};
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      actor_status = ActorStatus(depth, ITER);
+      for (size_t i = 0; i < OUT_W_PAR; ++i)
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      initialized = true;
+    }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
+
+  ActorStatus step(hls::stream<TInputWord> &input_data_stream,
+                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+
+    // Find the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() &&
+           "step_init() must be called before step()");
+    StepState &st = it->second;
+
+    // Compute firing condition.
+    bool firing_condition = true;
+    if (st.size < OUT_CH_PAR * OUT_W_PAR && input_data_stream.empty()) {
+      firing_condition = false;
     }
 
-    // Insert the firing status for the current step.
-    STEP_actor_status.fire();
+    if (firing_condition) {
+      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
+      NHWCToStream::pipeline_body(input_data_stream, instant_output_stream,
+                                  st.circular_buffer, st.head, st.size,
+                                  st.tail);
+      st.i_output_word++;
+      if (st.i_output_word >= ITER) {
+        st.i_output_word = 0;
+      }
 
-    // Add the output to the delayed output stream.
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (!output_stream[i_w_par].empty()) {
-        STEP_delayed_output[i_w_par].push(output_stream[i_w_par].read(), true);
-      } else {
-        STEP_delayed_output[i_w_par].push(TOutputWord(),
+      // Insert the firing status for the current step.
+      st.actor_status.fire();
+
+      // Add the output to the delayed output stream.
+      for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
+        if (!instant_output_stream[i_w_par].empty()) {
+          st.delayed_output[i_w_par].push(instant_output_stream[i_w_par].read(),
+                                          true);
+        } else {
+          st.delayed_output[i_w_par].push(TOutputWord(),
                                           false); // Placeholder, ignored
+        }
+      }
+    } else {
+
+      for (size_t i = 0; i < OUT_W_PAR; ++i) {
+        st.delayed_output[i].push(TOutputWord(), false);
       }
     }
-  } else {
 
-    for (size_t i = 0; i < OUT_W_PAR; ++i) {
-      STEP_delayed_output[i].push(TOutputWord(), false);
+    // Advance the state of the actor firings.
+    st.actor_status.advance();
+
+    // Write the output data to the output stream.
+    TOutputWord out;
+    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
+      if (st.delayed_output[i_w_par].pop(out)) {
+        output_data_stream[i_w_par].write(out);
+      }
     }
+
+    // Return the current firing iteration index.
+    return st.actor_status;
   }
-
-  // Advance the state of the actor firings.
-  STEP_actor_status.advance();
-
-  // Write the output data to the output stream.
-  TOutputWord out;
-  for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-    if (STEP_delayed_output[i_w_par].pop(out)) {
-      output_data_stream[i_w_par].write(out);
-    }
-  }
-
-  // Return the current firing iteration index.
-  return STEP_actor_status;
-}
 
 private:
-  // State variables for step execution
-  TOutput
-      STEP_circular_buffer[DATA_PER_WORD * 2]; // Circular buffer for input data
-  char STEP_head = 0;                        // Head index for circular buffer
-  char STEP_tail = 0;                        // Tail index for circular buffer
-  char STEP_size = 0;           // Current size of the circular buffer
-  size_t STEP_i_output_word = 0;  // Current output word index
-  size_t STEP_pipeline_depth = 1; // Pipeline depth
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputWord>
-      STEP_delayed_output[OUT_W_PAR]; // Delayed output buffers to maintain
-                                      // pipeline depth for each parallel output
-
   static void
   pipeline_body(hls::stream<TInputWord> &input_data_stream,
                 hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],

@@ -3,6 +3,7 @@
 #include "ap_int.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
+#include <cassert>
 
 /**
  * @brief StreamingMemory implements a memory as a stream of data.
@@ -39,15 +40,8 @@ class StreamingMemory {
 private:
   static constexpr size_t CH_GROUPS = OUT_CH * IN_CH / (OUT_CH_PAR * IN_CH_PAR);
 
-  size_t STEP_i_ch_groups;
-  size_t STEP_i_hw;
-  size_t STEP_pipeline_depth;
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputWord> STEP_delayed_output[FH * FW];
-
-  static void
-  pipeline_body(hls::stream<TOutputWord> o_data[FH * FW],
-                TOutput mem[OUT_CH_PAR * IN_CH_PAR][FH * FW]) {
+  static void pipeline_body(hls::stream<TOutputWord> o_data[FH * FW],
+                            TOutput mem[OUT_CH_PAR * IN_CH_PAR][FH * FW]) {
 #pragma HLS inline
     for (size_t i_fhw = 0; i_fhw < FH * FW; i_fhw++) {
       TOutputWord out_word;
@@ -68,7 +62,7 @@ private:
     auto i_fhw = 0;
     auto i_ch_groups = 0;
     auto i_par = 0;
-MEMORY_INIT_LOOP:
+  MEMORY_INIT_LOOP:
     for (size_t i_word = 0; i_word < FH * FW * IN_CH * OUT_CH;
          i_word += DATA_PER_WORD) {
 #pragma HLS pipeline off
@@ -97,13 +91,35 @@ MEMORY_INIT_LOOP:
   }
 
 public:
-  StreamingMemory() : StreamingMemory(1) {}
-  StreamingMemory(size_t pipeline_depth)
-      : STEP_i_ch_groups(0), STEP_i_hw(0), STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth, CH_GROUPS * TIMES) {
-    for (size_t i = 0; i < FH * FW; ++i) {
-      STEP_delayed_output[i] = PipelineDelayBuffer<TOutputWord>(pipeline_depth);
+  StreamingMemory() = default;
+
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_ch_groups = 0, i_hw = 0;
+    PipelineDelayBuffer<TOutputWord> delayed_output[FH * FW];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < FH * FW; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status = ActorStatus(depth, CH_GROUPS * TIMES);
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
@@ -145,11 +161,12 @@ public:
     return step(i_shift_data, o_data);
   }
 
+  template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> i_shift_data[1],
            hls::stream<TOutputWord> o_data[FH * FW]) {
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
     static bool initialized_flag = false;
-    
+
     // Initialize memory from input stream on first run
     if (!initialized_flag) {
       initialize_memory(i_shift_data, mem);
@@ -169,34 +186,39 @@ public:
                    hls::stream<TOutputWord> o_data[FH * FW]) {
     (void)i_shift_data;
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
+
+    // Find the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
     hls::stream<TOutputWord> instant_output_stream[FH * FW];
-    StreamingMemory::pipeline_body(instant_output_stream,
-                                   mem[STEP_i_ch_groups]);
-    STEP_i_ch_groups++;
-    if (STEP_i_ch_groups >= CH_GROUPS) {
-      STEP_i_ch_groups = 0;
-      STEP_i_hw++;
+    StreamingMemory::pipeline_body(instant_output_stream, mem[st.i_ch_groups]);
+    st.i_ch_groups++;
+    if (st.i_ch_groups >= CH_GROUPS) {
+      st.i_ch_groups = 0;
+      st.i_hw++;
     }
-    if (STEP_i_hw >= TIMES) {
-      STEP_i_hw = 0;
+    if (st.i_hw >= TIMES) {
+      st.i_hw = 0;
     }
-    STEP_actor_status.fire();
-    STEP_actor_status.advance();
+    st.actor_status.fire();
+    st.actor_status.advance();
     for (size_t i_fhw = 0; i_fhw < FH * FW; ++i_fhw) {
       if (!instant_output_stream[i_fhw].empty()) {
-        STEP_delayed_output[i_fhw].push(instant_output_stream[i_fhw].read(),
-                                        true);
+        st.delayed_output[i_fhw].push(instant_output_stream[i_fhw].read(),
+                                      true);
       } else {
         // If the output stream is empty, push a placeholder.
-        STEP_delayed_output[i_fhw].push(TOutputWord(), false);
+        st.delayed_output[i_fhw].push(TOutputWord(), false);
       }
     }
     for (size_t i_fhw = 0; i_fhw < FH * FW; i_fhw++) {
       TOutputWord out;
-      if (STEP_delayed_output[i_fhw].pop(out)) {
+      if (st.delayed_output[i_fhw].pop(out)) {
         o_data[i_fhw].write(out);
       }
     }
-    return STEP_actor_status;
+    return st.actor_status;
   }
 };

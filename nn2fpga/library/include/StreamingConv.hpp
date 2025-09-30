@@ -3,6 +3,7 @@
 #include "ap_int.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
+#include <cassert>
 
 /**
  * @brief StreamingConv implements a quantized convolution with only streaming
@@ -40,17 +41,17 @@
  * Since we need to read FH*FW weights at each cycle, the weight input stream
  * is an array of FH*FW streams. Each stream provides IN_CH_PAR*OUT_CH_PAR
  * weights. Weights are read at each step. The only filter reuse is due to the
- * W_PAR factor, which allows to reuse the same weights for W_PAR adjacent output
- * pixels.
+ * W_PAR factor, which allows to reuse the same weights for W_PAR adjacent
+ * output pixels.
  * - Input data are packed into words of IN_CH_PAR channels. The window is
  * expanded to account for the stride and the width parallelism factor W_PAR,
  * such that no data is duplicated. The input stream is an array of
  * FH*(FW+(W_PAR-1)*STRIDE_W) streams, each providing IN_CH_PAR input channels.
  * The input window is completely reused.
  * - Biases are packed into words of OUT_CH_PAR channels. The bias stream
- * provides OUT_CH_PAR biases. 
+ * provides OUT_CH_PAR biases.
  * - Accumulators and input buffers are partitioned for parallel access.
- * 
+ *
  * @todo
  * - Add support for grouped convolutions.
  *
@@ -87,18 +88,44 @@ public:
                 "OUT_WIDTH must be a multiple of W_PAR");
   static_assert(GROUP == 1, "Grouped convolution not supported yet");
 
-  StreamingConv() : StreamingConv(1) {}
+  StreamingConv() = default;
 
-  StreamingConv(size_t pipeline_depth)
-      : STEP_i_hw(0), STEP_i_ich(0), STEP_i_och(0),
-        STEP_pipeline_depth(pipeline_depth),
-        STEP_actor_status(pipeline_depth,
-                          (OUT_HEIGHT * OUT_WIDTH / W_PAR) * (OUT_CH / OUT_CH_PAR) *
-                              (IN_CH / IN_CH_PAR)) {
-    for (size_t i = 0; i < W_PAR; ++i) {
-      STEP_delayed_output[i] =
-          PipelineDelayBuffer<TOutputWord>(pipeline_depth);
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_hw = 0, i_ich = 0, i_och = 0;
+
+    // Accumulator buffers.
+    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+
+    // Input buffer to hold the input data.
+    TInputWord input_data[FH][FW_EXPAND];
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < W_PAR; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status =
+          ActorStatus(depth, OUT_HEIGHT * (OUT_WIDTH / W_PAR) *
+                                 (OUT_CH / OUT_CH_PAR) * (IN_CH / IN_CH_PAR));
+      initialized = true;
     }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
   }
 
   template <size_t HLS_TAG>
@@ -139,11 +166,17 @@ public:
                    hls::stream<TWeightWord> i_weights[FH * FW],
                    hls::stream<TBiasWord> i_biases[1],
                    hls::stream<TOutputWord> o_data[W_PAR]) {
+    // Get the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
     bool firing_condition = true;
 
     // Check non empty input streams. Input data are read only at the
     // beginning of the computation of the output channels.
-    if (STEP_i_och == 0) {
+    if (st.i_och == 0) {
       for (size_t i_in_stream = 0; i_in_stream < FH * FW_EXPAND;
            i_in_stream++) {
         if (i_data[i_in_stream].empty()) {
@@ -162,7 +195,7 @@ public:
 
     // Check non empty bias stream. Biases are read only at the end of the
     // computation of the output.
-    if (STEP_i_ich == IN_CH - IN_CH_PAR) {
+    if (st.i_ich == IN_CH - IN_CH_PAR) {
       if (i_biases[0].empty()) {
         firing_condition = false;
       }
@@ -172,81 +205,69 @@ public:
 
       hls::stream<TOutputWord> instant_output_stream[W_PAR];
       StreamingConv::pipeline_body(
-          i_data, i_weights, i_biases, instant_output_stream, STEP_input_data,
-          STEP_acc_buff[STEP_i_och / OUT_CH_PAR], STEP_i_ich, STEP_i_och);
+          i_data, i_weights, i_biases, instant_output_stream, st.input_data,
+          st.acc_buff[st.i_och / OUT_CH_PAR], st.i_ich, st.i_och);
 
-      STEP_i_och += OUT_CH_PAR;
-      if (STEP_i_och >= OUT_CH) {
+      st.i_och += OUT_CH_PAR;
+      if (st.i_och >= OUT_CH) {
         // If we have processed all output channels, reset the index and
         // increment the input channels index.
-        STEP_i_och = 0;
-        STEP_i_ich += IN_CH_PAR;
+        st.i_och = 0;
+        st.i_ich += IN_CH_PAR;
       }
-      if (STEP_i_ich >= IN_CH) {
+      if (st.i_ich >= IN_CH) {
         // Reset input channel index if we have processed all
         // input channels and increment the pixel index.
-        STEP_i_ich = 0;
-        STEP_i_hw++;
+        st.i_ich = 0;
+        st.i_hw++;
       }
-      if (STEP_i_hw >= OUT_HEIGHT * OUT_WIDTH / W_PAR) {
-        STEP_i_hw = 0;
+      if (st.i_hw >= OUT_HEIGHT * OUT_WIDTH / W_PAR) {
+        st.i_hw = 0;
       }
 
       // Insert the firing status for the current step.
-      STEP_actor_status.fire();
+      st.actor_status.fire();
 
       // Add the output to the delayed output stream.
       for (size_t i_w_par = 0; i_w_par < W_PAR; ++i_w_par) {
         if (!instant_output_stream[i_w_par].empty()) {
-          STEP_delayed_output[i_w_par].push(
-              instant_output_stream[i_w_par].read(), true);
+          st.delayed_output[i_w_par].push(instant_output_stream[i_w_par].read(),
+                                          true);
         } else {
           // If the output stream is empty, push a placeholder.
-          STEP_delayed_output[i_w_par].push(TOutputWord(), false);
+          st.delayed_output[i_w_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i_w_par = 0; i_w_par < W_PAR; ++i_w_par) {
-        STEP_delayed_output[i_w_par].push(TOutputWord(), false);
+        st.delayed_output[i_w_par].push(TOutputWord(), false);
       }
     }
 
     // Advance the state of the actor firings.
-    STEP_actor_status.advance();
+    st.actor_status.advance();
 
     // Write the output data to the output stream.
     TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (STEP_delayed_output[i_w_par].pop(out)) {
+      if (st.delayed_output[i_w_par].pop(out)) {
         o_data[i_w_par].write(out);
       }
     }
 
     // Return the current actor status.
-    return STEP_actor_status;
+    return st.actor_status;
   }
 
 private:
-  // State variables for the step function.
-  size_t STEP_i_hw;
-  size_t STEP_i_ich;
-  size_t STEP_i_och;
-  size_t STEP_pipeline_depth;
-  TInputWord STEP_input_data[FH][FW_EXPAND];
-  TAcc STEP_acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
-
-  // CSDFG state variables
-  ActorStatus STEP_actor_status;
-  PipelineDelayBuffer<TOutputWord> STEP_delayed_output[W_PAR];
-
   static void pipeline_body(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
                             hls::stream<TWeightWord> i_weights[FH * FW],
                             hls::stream<TBiasWord> i_biases[1],
                             hls::stream<TOutputWord> o_data[W_PAR],
                             TInputWord input_data[FH][FW_EXPAND],
-                            TAcc acc_buff_par[OUT_CH_PAR * W_PAR],
-                            size_t i_ich, size_t i_och) {
+                            TAcc acc_buff_par[OUT_CH_PAR * W_PAR], size_t i_ich,
+                            size_t i_och) {
 #pragma HLS inline
 
     Quantizer quantizer;

@@ -18,9 +18,9 @@ static constexpr size_t OUT_WIDTH = 1 + (test_config::IN_WIDTH +
                                          test_config::DIL_W * (test_config::FW - 1) - 1) /
                                             test_config::STRIDE_W;
 
-void wrap_run(hls::stream<test_config::TWord> input_data_stream[1],
-              hls::stream<test_config::TWord> output_data_stream[1],
-              hls::stream<test_config::TWord> output_shift_data_stream[1]) {
+void wrap_run(hls::stream<test_config::TWord> &input_data_stream,
+              hls::stream<test_config::TWord> &output_data_stream,
+              hls::stream<test_config::TWord> &output_shift_data_stream) {
   StreamingWindowSelector<
       test_config::TWord, test_config::IN_HEIGHT, test_config::IN_WIDTH,
       test_config::IN_CH, test_config::FH, test_config::FW,
@@ -29,14 +29,14 @@ void wrap_run(hls::stream<test_config::TWord> input_data_stream[1],
       test_config::PAD_B, test_config::PAD_R, test_config::POS_H,
       test_config::POS_W, test_config::W_PAR, test_config::CH_PAR>
       window_selector;
-  window_selector.run(input_data_stream, output_data_stream,
+  window_selector.run<0>(input_data_stream, output_data_stream,
                       output_shift_data_stream);
 }
 
 bool test_run() {
-  hls::stream<test_config::TWord> in_stream[1];
-  hls::stream<test_config::TWord> out_stream[1];
-  hls::stream<test_config::TWord> out_shift_stream[1];
+  hls::stream<test_config::TWord> in_stream;
+  hls::stream<test_config::TWord> out_stream;
+  hls::stream<test_config::TWord> out_shift_stream;
   static constexpr size_t W_STREAM =
       (test_config::POS_W + test_config::PAD_L * (test_config::W_PAR - 1)) %
       test_config::W_PAR;
@@ -55,7 +55,7 @@ bool test_run() {
 
           // Write only the correct section of the tensor based on position
           if (W_STREAM == w_par) {
-            in_stream[0].write(input_word);
+            in_stream.write(input_word);
           }
         }
       }
@@ -81,7 +81,7 @@ bool test_run() {
         if (input_index_h >= 0 && input_index_h < test_config::IN_HEIGHT &&
             input_index_w >= 0 && input_index_w < test_config::IN_WIDTH) {
           test_config::TWord data;
-          data = out_stream[0].read();
+          data = out_stream.read();
           for (size_t i_ch_par = 0; i_ch_par < test_config::CH_PAR;
                i_ch_par++) {
             bool cmp =
@@ -106,7 +106,7 @@ bool test_run() {
 
   // Empty shift output stream
   test_config::TWord shift_data;
-  while (out_shift_stream[0].read_nb(shift_data))
+  while (out_shift_stream.read_nb(shift_data))
     ;
 
   return flag;
@@ -119,9 +119,9 @@ bool test_step() {
       (test_config::CH_PAR * test_config::W_PAR);
 
   // Create input and output streams
-  hls::stream<test_config::TWord> in_stream[1];
-  hls::stream<test_config::TWord> out_stream[1];
-  hls::stream<test_config::TWord> out_shift_stream[1];
+  hls::stream<test_config::TWord> in_stream;
+  hls::stream<test_config::TWord> out_stream;
+  hls::stream<test_config::TWord> out_shift_stream;
 
   // Run the WindowSelector
   StreamingWindowSelector<
@@ -131,7 +131,8 @@ bool test_step() {
       test_config::DIL_W, test_config::PAD_T, test_config::PAD_L,
       test_config::PAD_B, test_config::PAD_R, test_config::POS_H,
       test_config::POS_W, test_config::W_PAR, test_config::CH_PAR>
-      window_selector(test_config::PIPELINE_DEPTH);
+      window_selector;
+  window_selector.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;
@@ -139,7 +140,7 @@ bool test_step() {
   size_t II = 0;
   while (true) {
 
-    in_stream[0].write(test_config::TWord());
+    in_stream.write(test_config::TWord());
     ActorStatus actor_status =
         window_selector.step(in_stream, out_stream, out_shift_stream);
     std::vector<ActorStatus> actor_statuses;
@@ -160,7 +161,7 @@ bool test_step() {
 
   // Flush the output stream.
   test_config::TWord data;
-  while (out_stream[0].read_nb(data))
+  while (out_stream.read_nb(data))
     ;
 
   bool flag = (II == expectedII);
