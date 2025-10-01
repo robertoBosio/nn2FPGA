@@ -228,19 +228,19 @@ class ConvertToQCDQ(Transformation):
                 model.graph.node.append(quantize_node)
                 new_inputs_map[inp] = (i, f"{inp}_quantized")
 
-            # Replace the inputs with the transposed versions
-            for old_name, (index, new_name) in new_inputs_map.items():
-                partition_node.input[index] = new_name
+            if new_inputs_map:
+                # Replace the inputs with the transposed versions
+                for old_name, (index, new_name) in new_inputs_map.items():
+                    partition_node.input[index] = new_name
 
-            # 2) Update the input map in the accelerator package and preserve the order
-            rename = {old: new for old, (_, new) in new_inputs_map.items()}
-            old_map = ap.input_map
-            ap.input_map = {rename.get(k, k): v for k, v in old_map.items()}
+                # 2) Update the input map in the accelerator package and preserve the order
+                rename = {old: new for old, (_, new) in new_inputs_map.items()}
+                old_map = ap.input_map
+                ap.input_map = {rename.get(k, k): v for k, v in old_map.items()}
 
-            # 3) Update shapes
-            for old_name, (_, new_name) in new_inputs_map.items():
-                ap.input_map[new_name]["shape"] = toNHWC(ap.input_map[new_name]["shape"])
-
+                # 3) Update shapes
+                for old_name, (_, new_name) in new_inputs_map.items():
+                    ap.input_map[new_name]["shape"] = toNHWC(ap.input_map[new_name]["shape"])
 
             new_outputs_map = {}
             for i, out in enumerate(partition_node.output):
@@ -308,19 +308,20 @@ class ConvertToQCDQ(Transformation):
                     model.graph.node.append(transpose_after)
                 new_outputs_map[out] = (i, f"{out}_quantized")
 
-            # Replace the outputs with the transposed versions
-            for old_name, (index, new_name) in new_outputs_map.items():
-                # Update the partition node output
-                partition_node.output[index] = new_name
+            if new_outputs_map:
+                # Replace the outputs with the transposed versions
+                for old_name, (index, new_name) in new_outputs_map.items():
+                    # Update the partition node output
+                    partition_node.output[index] = new_name
 
-            # 2) Update the output map in the accelerator package and preserve the order
-            rename = {old: new for old, (_, new) in new_outputs_map.items()}
-            old_map = ap.output_map
-            ap.output_map = {rename.get(k, k): v for k, v in old_map.items()}
+                # 2) Update the output map in the accelerator package and preserve the order
+                rename = {old: new for old, (_, new) in new_outputs_map.items()}
+                old_map = ap.output_map
+                ap.output_map = {rename.get(k, k): v for k, v in old_map.items()}
 
-            # 3) Update shapes
-            for old_name, (_, new_name) in new_outputs_map.items():
-                ap.output_map[new_name]["shape"] = toNHWC(ap.output_map[new_name]["shape"])
+                # 3) Update shapes
+                for old_name, (_, new_name) in new_outputs_map.items():
+                    ap.output_map[new_name]["shape"] = toNHWC(ap.output_map[new_name]["shape"])
 
             # Set the updated accelerator package back to the partition node
             getCustomOp(partition_node).set_nodeattr(

@@ -539,6 +539,7 @@ class StreamingConv(CustomOp):
             domain="backend.custom_op",
             original_op_type="StreamingConv",
             hls_tag=hls_tag,
+            hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),
             hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),

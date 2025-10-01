@@ -81,7 +81,7 @@ class cpp_function(Function):
         """
         tmpl_str = ""
         if template_args:
-            tmpl_str = f"<{', '.join(template_args)}>"
+            tmpl_str = f"<{', '.join(map(str, template_args))}>"
         call_str = ", ".join(map(str, self.__sanitize_args(call_args)))
         return f"{self.name}{tmpl_str}({call_str})"
 

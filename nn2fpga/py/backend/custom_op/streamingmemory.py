@@ -103,7 +103,7 @@ class StreamingMemory(CustomOp):
             )
 
             return run.generate_call(
-                [],
+                [hls_tag],
                 self.__get_stream_name(self.onnx_node.input[0]),
                 self.__get_stream_name(self.onnx_node.output[0]),
             )
@@ -285,6 +285,7 @@ class StreamingMemory(CustomOp):
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
             original_op_type=self.onnx_node.op_type,
+            hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
             hls_run_call=self.__get_run_call(hls_tag),

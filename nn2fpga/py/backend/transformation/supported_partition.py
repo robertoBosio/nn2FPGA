@@ -22,10 +22,10 @@ FPGA_SUPPORTED_OPS = {
     # "Add",
     # "AveragePool",
     # "Concat",
-    # "Conv",
+    "Conv",
     # "Flatten",
     # "Gemm",
-    "GlobalAveragePool",
+    # "GlobalAveragePool",
     # "GlobalMaxPool",
     # "IntQuant",
     # "MaxPool",
@@ -224,9 +224,11 @@ def is_fpga_supported_op(model: ModelWrapper, node: onnx.NodeProto) -> bool:
     if node.op_type not in FPGA_SUPPORTED_OPS:
         reasons.append(f"Not supported operation")
         is_supported = False
-
+    
     # Per operation checks
     elif node.op_type == "Conv":
+        if node.name != "Conv_0":
+            is_supported = False
 
         # Check Conv activation quantization
         act_quant = model.find_producer(node.input[0])
@@ -589,7 +591,6 @@ class SupportedPartition(Transformation):
 
         # Post-process the partitioned model to restore ONNX compliance
         parent_model = parent_model.transform(PostProcessPartitionModel())
-        parent_model = parent_model.transform(ConvertToQCDQ())
         parent_model.save(self.partition_directory + "/wrapper_model.onnx")
 
         # Load the FPGA partition model

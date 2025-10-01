@@ -20,6 +20,7 @@ class HLSKernel(CustomOp):
         outputs,
         domain,
         original_op_type: str = "",
+        hls_object_name: str = "",
         hls_tag: str = "",
         hls_variable_declarations: str = "",
         hls_object_declaration: str = "",
@@ -33,6 +34,7 @@ class HLSKernel(CustomOp):
             name=name,
             domain=domain,
             original_op_type=original_op_type,
+            hls_object_name=_b64_encode(hls_object_name),
             hls_tag=_b64_encode(str(hls_tag)),
             hls_variable_declarations=_b64_encode(hls_variable_declarations),
             hls_object_declaration=_b64_encode(hls_object_declaration),
@@ -49,7 +51,11 @@ class HLSKernel(CustomOp):
     def get_nodeattr_types(self):
         return {
             "original_op_type": ("s", True, ""),
+            "read_skew": ("i", False, 0), # Maximum skew in cycles inside the pipeline between the fifo reads.
+            "write_skew": ("i", False, 0), # Maximum skew in cycles inside the pipeline between the fifo writes.
+            "pipeline_stages": ("i", False, 1), # Number of stages in the pipeline. 
             "hls_tag": ("s", True, ""),
+            "hls_object_name": ("s", True, ""), # Name of the HLS object (class instance).
             "hls_variable_declarations": ("s", False, ""),
             "hls_object_declaration": ("s", True, ""),
             "hls_run_call": ("s", True, ""),

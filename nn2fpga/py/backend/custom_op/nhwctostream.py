@@ -128,9 +128,6 @@ class NHWCToStream(CustomOp):
                 (input_shape[1], "CH"),
                 (par_attribute["out_w_par"], "OUT_W_PAR"),
                 (par_attribute["out_ch_par"], "OUT_CH_PAR"),
-            ],
-            [
-                (f"{self.get_nodeattr('pipeline_depth')}", "pipeline_depth"),
             ]
         )
 
@@ -210,6 +207,7 @@ class NHWCToStream(CustomOp):
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
             original_op_type=self.onnx_node.op_type,
+            hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_cpp(model),
             hls_run_call=self.__get_run_call(hls_tag),

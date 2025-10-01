@@ -1,4 +1,6 @@
+from copy import deepcopy
 import re
+from onnx import TensorProto, helper, StringStringEntryProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.custom_op.registry import getCustomOp
@@ -7,9 +9,14 @@ from backend.core.tensor_fifo import (
     get_custom_tensor_fifo_metadata,
     set_custom_tensor_fifo_metadata,
 )
+from backend.core.hls_schedule_parser import VitisHlsReportParser
+from backend.core.tensor_quant import TensorQuant, set_custom_tensor_datatype
+from qonnx.util.basic import qonnx_make_model
 from backend.util.codegen_utils import cpp_function, cpp_object, cpp_variable, NewCodeWriter
 from backend.util.board_util import read_board_info
 from backend.core.acceleratorpackage import AcceleratorPackage
+from backend.transformation.embed_hls_code import EmbedHLSCode
+from backend.transformation.generate_bitstream import GenerateBitstream
 import os
 import json
 import subprocess
@@ -81,6 +88,9 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
         # Declare the object.
         function.add_code(custom_op.get_nodeattr("hls_object_declaration"))
 
+        # Set the pipeline depth
+        function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
+
     # Declare the output streams.
     consumers_step_calls = []
     for output in model.graph.output:
@@ -128,7 +138,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
         function.add_code(f"{stream.generate_declaration()};")
 
     # Declare the array of streams sizes.
-    stream_sizes = cpp_variable("stream_max_size", primitive="size_t", value=[2] * stream_count) 
+    stream_sizes = cpp_variable("stream_max_size", primitive="size_t", value=[1] * stream_count) 
     function.add_code(stream_sizes.generate_initialization())
 
     # Declare the clock cycle counter.
@@ -294,6 +304,135 @@ def generate_tcl_script(top_name, part_name, frequency, hls_version):
 
     return "\n".join(lines).format(top_name=top_name, part_name=part_name, t_clk=t_clk)
 
+def generate_schedule(model: ModelWrapper, work_root: str):
+
+    # Create a dummy model with only the nn2FPGAPartition node, to generate the schedule.
+    ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
+    inputs = []
+    outputs = []
+    inputs_names = []
+    outputs_names = []
+    for k, v in [(k, v) for k, v in ap.input_map.items() if v["value"] is None]:
+        inputs.append(helper.make_tensor_value_info(k, TensorProto.FLOAT, v["shape"]))
+        inputs_names.append(k)
+        logger.info(f"Creating value info for input {k} with shape {v['shape']}")
+    for k, v in [(k, v) for k, v in ap.output_map.items() if v["value"] is None]:
+        outputs.append(helper.make_tensor_value_info(k, TensorProto.FLOAT, v["shape"]))
+        outputs_names.append(k)
+        logger.info(f"Creating value info for output {k} with shape {v['shape']}")
+
+    nn2FPGA_node_copy = helper.make_node(
+        "nn2fpgaPartition",
+        inputs=inputs_names,
+        outputs=outputs_names,
+        name="nn2fpgaPartition_0",
+        domain="backend.custom_op",
+    )
+
+    graph = helper.make_graph(
+        nodes=[nn2FPGA_node_copy],
+        name="schedule_graph",
+        inputs=inputs,
+        outputs=outputs,
+    )
+
+    schedule_model = qonnx_make_model(graph)
+    schedule_model = ModelWrapper(schedule_model)
+    
+    # Build index of existing keys in dst
+    dst_idx = {}
+    for p in model.model.metadata_props:
+        if p.key in dst_idx:
+            schedule_model.model.metadata_props[dst_idx[p.key]].value = p.value
+        else:
+            kv = StringStringEntryProto()
+            kv.key = p.key
+            kv.value = p.value
+            schedule_model.model.metadata_props.append(kv)
+
+    for input in schedule_model.graph.input:
+        tensor_quant = TensorQuant.from_canonical_name(ap.input_map[input.name]["quant"])
+        set_custom_tensor_datatype(schedule_model, input.name, tensor_quant)
+    for output in schedule_model.graph.output:
+        tensor_quant = TensorQuant.from_canonical_name(ap.output_map[output.name]["quant"])
+        set_custom_tensor_datatype(schedule_model, output.name, tensor_quant)
+
+    schedule_model = schedule_model.transform(EmbedHLSCode(nn2fpga_model=model, erase=False, work_root=work_root))
+    schedule_model = schedule_model.transform(GenerateBitstream(work_dir=work_root, erase=False, only_synthesize=True))
+
+    # Extract the scheduling information from the HLS report for each node in the original model.
+    for node in model.graph.node:
+        custom_op = getCustomOp(node)
+        hls_tag = custom_op.get_nodeattr("hls_tag")
+        scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
+        if not os.path.exists(scheduling_report_file):
+            logger.warning(f"Scheduling report file not found for node {node.name}. Skipping depth adjustment.")
+            read_skew = 0
+            write_skew = 0
+            pipeline_stages = 1
+
+        else:
+            scheduling_parser = VitisHlsReportParser(scheduling_report_file)
+            if not scheduling_parser.single_loop_function:
+                logger.info(f"Node {node.name} is not single loop pipelined.")
+                read_skew = 0
+                write_skew = 0
+                pipeline_stages = 1
+                custom_op.set_nodeattr("read_skew", read_skew)
+                custom_op.set_nodeattr("write_skew", write_skew)
+                custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
+                continue
+
+            read_skew = 0
+            write_skew = 0
+            max_read_state = 0
+            min_read_state = scheduling_parser.pipeline_depth + 1
+            max_write_state = 0
+            min_write_state = scheduling_parser.pipeline_depth + 1
+            for op in scheduling_parser.fifo_ops:
+                if op["op_type"] == "read":
+                    max_read_state = max(max_read_state, op["state"])
+                    min_read_state = min(min_read_state, op["state"])
+                elif op["op_type"] == "write":
+                    max_write_state = max(max_write_state, op["state"])
+                    min_write_state = min(min_write_state, op["state"])
+            read_skew = max_read_state - min_read_state
+            write_skew = max_write_state - min_write_state
+            pipeline_stages = scheduling_parser.pipeline_depth
+
+        custom_op.set_nodeattr("read_skew", read_skew)
+        custom_op.set_nodeattr("write_skew", write_skew)
+        custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
+        logger.info(f"Node {node.name}: read_skew={read_skew}, write_skew={write_skew}, pipeline_stages={pipeline_stages}")
+
+def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
+    """Adjust the FIFO depth based on the scheduling information."""
+
+    known_stream_depth = set()
+    for node in model.graph.node:
+        if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
+            for stream in list(node.input) + list(node.output):
+                m = re.match(r"(.*)_(\d+)_$", stream)
+                if m:
+                    known_stream_depth.add(m.group(1))
+
+    for stream_name in fifo_depths.keys():
+        if stream_name[:-3] in known_stream_depth:
+            logger.info(f"Skipping depth adjustment for stream {stream_name} with known depth.")
+            continue
+
+        producer = model.find_producer(stream_name)
+        consumer = model.find_consumer(stream_name)
+        if producer is None or consumer is None:
+            logger.warning(f"Could not find producer or consumer for stream {stream_name}. Skipping depth adjustment.")
+            continue
+
+        read_skew = getCustomOp(consumer).get_nodeattr("read_skew")
+        write_skew = getCustomOp(producer).get_nodeattr("write_skew")
+        fifo_depths[stream_name] += read_skew + write_skew
+    
+    return fifo_depths
+
 def make_build_dir(work_dir: str) -> None:
     """Create the working directory for the simulation."""
     os.makedirs(work_dir, exist_ok=True)
@@ -317,6 +456,9 @@ class ComputeFifoDepth(Transformation):
 
         # Create the working directory for the simulation.
         make_build_dir(self.work_root)
+
+        # Schedule the model to retrieve information about the pipelines.
+        generate_schedule(model, self.work_root)
 
         with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
             f.write(generate_hls_code(model, self.work_root))
@@ -357,11 +499,14 @@ class ComputeFifoDepth(Transformation):
         fifo_depths = fifo_depth_data.get("fifo_depth", {})
         if not fifo_depths:
             raise ValueError("No FIFO depth data found in the generated file.")
+
+        # Adjust the FIFO depths based on scheduling information.
+        fifo_depths = adjust_depth_based_on_scheduling(model, fifo_depths, self.work_root)
         
         # Store the FIFO depth in the model metadata.
         for stream_name, depth in fifo_depths.items():
             current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
-            current_meta.depth = depth
+            current_meta.depth = depth + 1
             set_custom_tensor_fifo_metadata(model, stream_name, current_meta)
         
         # Optionally erase the working directory.
