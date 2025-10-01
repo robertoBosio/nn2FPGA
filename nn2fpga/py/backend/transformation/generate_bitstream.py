@@ -327,11 +327,18 @@ class GenerateBitstream(Transformation):
             f.write(base64.b64decode(ap.hls_code_b64).decode())
 
         # Synthesize and export the design.
-        subprocess.run(
-            ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
-            cwd=work_dir,
-            check=True
-        )
+        if float(model.get_metadata_prop("hls_version")) > 2025:
+            subprocess.run(
+                ["vitis-run", "--mode", "hls", "--tcl", f"{work_dir}/setup.tcl"],
+                cwd=work_dir,
+                check=True
+            )
+        else:
+            subprocess.run(
+                ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
+                cwd=work_dir,
+                check=True
+            )
 
         if self.only_synthesize:
             return model, False

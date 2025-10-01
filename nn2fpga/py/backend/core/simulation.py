@@ -39,6 +39,7 @@ def dump_tcl_script(top_name, part_name, frequency, hls_version, input_files):
             'set_top "{top_name}"',
             'set_part {part_name}',
             'create_clock -period {t_clk}',
+            'config_compile -pipeline_style flp',
             'csim_design -argv "{argv}"',
             'csynth_design',
             'cosim_design -argv "{argv}"',
@@ -258,11 +259,18 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         ))
 
     # run the simulation
-    subprocess.run(
-        ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
-        cwd=work_dir,
-        check=True
-    )
+    if float(ap.hls_version) > 2025:
+        subprocess.run(
+            ["vitis-run", "--mode", "hls", "--tcl", f"{work_dir}/setup.tcl"],
+            cwd=work_dir,
+            check=True
+        )
+    else:
+        subprocess.run(
+            ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
+            cwd=work_dir,
+            check=True
+        )
 
     # Read the output files and update the context
     for old_name, value in output_map.items():

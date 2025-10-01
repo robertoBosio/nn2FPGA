@@ -181,7 +181,6 @@ class StreamingLineBuffer(CustomOp):
                             break
                     next_pixel_index = next_pixel_index - par["in_w_par"]
                     pixel_output_name.append(f"{self.onnx_node.name}_buffer_stream_{next_pixel_index}_")
-                    print(f"Pixel {pixel_index} shifts to buffer stream {next_pixel_index}")
                     function_args.add((
                         "o_shift_data",
                         "hls::stream<TWord>",

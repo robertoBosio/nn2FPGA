@@ -364,7 +364,10 @@ def generate_schedule(model: ModelWrapper, work_root: str):
     for node in model.graph.node:
         custom_op = getCustomOp(node)
         hls_tag = custom_op.get_nodeattr("hls_tag")
-        scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
+        if float(model.get_metadata_prop("hls_version")) > 2025:
+            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/hls/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
+        else:
+            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
         if not os.path.exists(scheduling_report_file):
             logger.warning(f"Scheduling report file not found for node {node.name}. Skipping depth adjustment.")
             read_skew = 0
@@ -481,11 +484,18 @@ class ComputeFifoDepth(Transformation):
             f.write(tcl_script)
 
         # run the simulation
-        subprocess.run(
-            ["vitis_hls", "-f", f"{self.work_root}/setup.tcl"],
-            cwd=self.work_root,
-            check=True
-        )
+        if float(model.get_metadata_prop("hls_version")) > 2025:
+            subprocess.run(
+                ["vitis-run", "--mode", "hls", "--tcl", f"{self.work_root}/setup.tcl"],
+                cwd=self.work_root,
+                check=True
+            )
+        else:
+            subprocess.run(
+                ["vitis_hls", "-f", f"{self.work_root}/setup.tcl"],
+                cwd=self.work_root,
+                check=True
+            )
 
         # Read the fifo depth from the generated json file.
         fifo_depth_file = os.path.join(self.work_root, "fifo_depth.json")
