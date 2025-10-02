@@ -1,6 +1,7 @@
 import os
 import subprocess
 from abc import ABC, abstractmethod
+import sys
 
 PROJECT_NAME = "proj_unit_test"
 FILE_DIR = "/workspace/NN2FPGA/nn2fpga/library"
@@ -56,8 +57,13 @@ class BaseHLSTest(ABC):
 
     @staticmethod
     def runhls(tcl_file: str):
+        xilinx_version = os.environ.get("XILINX_VERSION", "0")
+        if float(xilinx_version) < 2025.1:
+            cmd = ["vitis_hls", "-f", tcl_file]
+        else:
+            cmd = ["vitis-run", "--mode", "hls", "--tcl", tcl_file]
         return subprocess.run(
-            ["vitis_hls", "-f", tcl_file],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
