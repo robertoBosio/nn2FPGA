@@ -1,6 +1,6 @@
 import numpy as np
 import onnxruntime as rt
-from onnx import TensorProto, helper
+from onnx import TensorProto, helper, numpy_helper
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from backend.core.tensor_quant import get_custom_tensor_datatype
@@ -19,8 +19,10 @@ from backend.util.par_utils import get_par_attributes
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.custom_op.register_rewrite_rule import register_rules
 from onnxscript.rewriter import pattern
+import numpy as np
 
-class StreamingConv(CustomOp):
+
+class StreamingDepthwiseConv(CustomOp):
     """ Node implementing the output-stationary convolution operation. """
 
     @staticmethod
@@ -74,7 +76,7 @@ class StreamingConv(CustomOp):
             w_quant,
             b_quant,
             dilations=dilations,
-            group=1,
+            group=group,
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
@@ -106,8 +108,7 @@ class StreamingConv(CustomOp):
         b_narrow,
         b_rounding_mode,
     ):
-
-        return op.StreamingConv(
+        return op.StreamingDepthwiseConv(
             x,
             w_value,
             w_scale,
@@ -124,19 +125,63 @@ class StreamingConv(CustomOp):
             b_narrow=b_narrow.value,
             b_rounding_mode=b_rounding_mode.value,
             dilations=dilations,
-            group=group,
+            group=group,               # preserve original group
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
             _domain="backend.custom_op",
         )
 
+    @staticmethod
+    def _is_depthwise_conv(
+        op,
+        x,
+        dilations,
+        group,
+        kernel_shape,
+        pads,
+        strides,
+        w_value,
+        w_scale,
+        w_zeropt,
+        w_bitwidth,
+        b_value,
+        b_scale,
+        b_zeropt,
+        b_bitwidth,
+        w_signed,
+        w_narrow,
+        w_rounding_mode,
+        b_signed,
+        b_narrow,
+        b_rounding_mode,
+    ) -> bool:
+
+        x_shape = x.shape
+        w_shape = w_value.shape
+        group_val = group.as_int()
+
+        if x_shape is None or w_shape is None or group_val is None:
+            return False
+        
+        x_shape = x_shape.numpy()
+        w_shape = w_shape.numpy()
+
+        if len(x_shape) != 4 or len(w_shape) != 4:
+            return False
+        
+        if group_val != x_shape[1] or w_shape[0] != x_shape[1] or w_shape[1] != 1:
+            return False
+        
+        return True
+
     @register_rules
     def _rewriter_rules():
         return [
             pattern.RewriteRule(
-                StreamingConv.pattern,
-                StreamingConv.rewrite,
+                StreamingDepthwiseConv.pattern,
+                StreamingDepthwiseConv.rewrite,
+                StreamingDepthwiseConv._is_depthwise_conv,  # <-- only depthwise matches pass
             )
         ]
 
@@ -159,7 +204,7 @@ class StreamingConv(CustomOp):
             "b_narrow": ("i", False, 0),  # 0: full range, 1: narrow range
             "b_rounding_mode": ("s", False, "ROUND"),
 
-            # Custom attributes for parallelization of StreamingConv
+            # Custom attributes for parallelization of StreamingDepthwiseConv
             "in_ch_par" : ("i", False, 1),
             "out_ch_par" : ("i", False, 1),
             "in_w_par" : ("i", False, 1),
@@ -181,7 +226,7 @@ class StreamingConv(CustomOp):
             input_list = [node.input[0], node.input[1], node.input[5]] + node.input[2:5] + node.input[6:9]
         else:
             raise ValueError(
-                f"Unexpected number of inputs for StreamingConv node {node.name}: {len(node.input)}"
+                f"Unexpected number of inputs for StreamingDepthwiseConv node {node.name}: {len(node.input)}"
             )
 
         return helper.make_node(
@@ -299,7 +344,7 @@ class StreamingConv(CustomOp):
         if isinstance(weights_quant.scale, (list, np.ndarray)):
             if len(weights_quant.scale) != 1:
                 raise ValueError(
-                    "Per-channel quantization is currently not supported for StreamingConv.  "
+                    "Per-channel quantization is currently not supported for StreamingDepthwiseConv.  "
                 )
             weights_scale = weights_quant.scale[0]
         else:
@@ -323,7 +368,7 @@ class StreamingConv(CustomOp):
             )
 
     def __get_object_declaration(self, model) -> cpp_object:
-        """ Generate the cpp_object for the StreamingConv operation. """
+        """ Generate the cpp_object for the StreamingDepthwiseConv operation. """
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
@@ -366,9 +411,9 @@ class StreamingConv(CustomOp):
         if weights_shape is None:
             raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
 
-        # Create the StreamingConv object.
-        StreamingConv = cpp_object(
-            "StreamingConv",
+        # Create the StreamingDepthwiseConv object.
+        StreamingDepthwiseConv = cpp_object(
+            "StreamingDepthwiseConv",
             f"{self.onnx_node.name}",
             template_args=[
                 (
@@ -377,7 +422,7 @@ class StreamingConv(CustomOp):
                 ),
                 (f"{get_hls_quant_type(input_quant)}", "TInput"),
                 (
-                    f"{get_struct_type(weights_quant, par_attribute['in_ch_par'] * par_attribute['out_ch_par'])}",
+                    f"{get_struct_type(weights_quant, par_attribute['out_ch_par'])}",
                     "TWeightStruct",
                 ),
                 (
@@ -398,21 +443,19 @@ class StreamingConv(CustomOp):
                 (input_shape[1], "IN_CH"),
                 (output_shape[2], "IN_HEIGHT"),
                 (output_shape[3], "IN_WIDTH"),
-                (self.get_nodeattr("group"), "GROUP"),
                 (self.get_nodeattr("kernel_shape")[0], "FH"),
                 (self.get_nodeattr("kernel_shape")[1], "FW"),
                 (self.get_nodeattr("strides")[0], "STRIDE_H"),
                 (self.get_nodeattr("strides")[1], "STRIDE_W"),
-                (par_attribute["in_ch_par"], "IN_CH_PAR"),
-                (par_attribute["out_ch_par"], "OUT_CH_PAR"),
+                (par_attribute["out_ch_par"], "CH_PAR"),
                 (par_attribute["out_w_par"], "W_PAR"),
             ],
         )
 
-        return StreamingConv.generate_declaration()
+        return StreamingDepthwiseConv.generate_declaration()
 
     def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingConv node.
+        """ Get the internal cpp variables of the StreamingDepthwiseConv node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -421,9 +464,9 @@ class StreamingConv(CustomOp):
         return ""
 
     def __get_run_call(self, hls_tag: int) -> str:
-        """ Generates the C++ code necessary to run the StreamingConv node. """
+        """ Generates the C++ code necessary to run the StreamingDepthwiseConv node. """
 
-        # Generate the call to the StreamingConv run method.
+        # Generate the call to the StreamingDepthwiseConv run method.
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
@@ -456,9 +499,9 @@ class StreamingConv(CustomOp):
         )
 
     def __get_step_call(self) -> str:
-        """ Generates the C++ code necessary to step the StreamingConv node. """
+        """ Generates the C++ code necessary to step the StreamingDepthwiseConv node. """
 
-        # Generate the call to the StreamingConv step method.
+        # Generate the call to the StreamingDepthwiseConv step method.
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
             return_type="void",
@@ -538,7 +581,7 @@ class StreamingConv(CustomOp):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
-            original_op_type="StreamingConv",
+            original_op_type="StreamingDepthwiseConv",
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),

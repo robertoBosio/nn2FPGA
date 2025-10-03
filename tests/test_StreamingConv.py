@@ -9,6 +9,10 @@ class TestStreamingConv(BaseHLSTest):
     @property
     def operator_filename(self) -> str:
         return "StreamingConv"
+    
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingConv"
 
     def generate_config_file(self, config_dict):
         IN_HEIGHT = (

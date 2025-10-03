@@ -240,8 +240,8 @@ def vivado_tcl_script(
     lines.append(f'save_bd_design')
 
     # Make wrapper
-    lines.append(f'make_wrapper -files [get_files {work_dir}/vivadoproj_{top_name}/vivadoproj_{top_name}.srcs/sources_1/bd/{top_name}_bd/{top_name}_bd.bd] -top')
-    lines.append(f'add_files -norecurse {work_dir}/vivadoproj_{top_name}/vivadoproj_{top_name}.gen/sources_1/bd/{top_name}_bd/hdl/{top_name}_bd_wrapper.v')
+    lines.append(f'make_wrapper -files [get_files {work_dir}/vivadoproj/vivadoproj.srcs/sources_1/bd/{top_name}_bd/{top_name}_bd.bd] -top')
+    lines.append(f'add_files -norecurse {work_dir}/vivadoproj/vivadoproj.gen/sources_1/bd/{top_name}_bd/hdl/{top_name}_bd_wrapper.v')
     lines.append(f'set_property top {top_name}_bd [current_fileset]')
     lines.append(f'update_compile_order -fileset sources_1')
 
@@ -391,7 +391,7 @@ class GenerateBitstream(Transformation):
         )
 
         # Check if the bitstream was generated successfully.
-        bitstream_path = f"{work_dir}/vivadoproj_{top_name}/vivadoproj_{top_name}.runs/impl_1/{top_name}_bd.bit"
+        bitstream_path = f"{work_dir}/vivadoproj/vivadoproj.runs/impl_1/{top_name}_bd.bit"
         if not os.path.exists(bitstream_path):
             raise RuntimeError(f"Bitstream generation failed: {bitstream_path} does not exist.")
 
@@ -399,7 +399,7 @@ class GenerateBitstream(Transformation):
         ap.set_bitstream(bitstream_path)
 
         # Check the HWH file.
-        hwh_path = f"{work_dir}/vivadoproj_{top_name}/vivadoproj_{top_name}.gen/sources_1/bd/{top_name}_bd/hw_handoff/{top_name}_bd.hwh"
+        hwh_path = f"{work_dir}/vivadoproj/vivadoproj.gen/sources_1/bd/{top_name}_bd/hw_handoff/{top_name}_bd.hwh"
         if not os.path.exists(hwh_path):
             raise RuntimeError(f"HWH file generation failed: {hwh_path} does not exist.")
 

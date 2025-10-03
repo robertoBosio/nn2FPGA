@@ -9,7 +9,11 @@ class TestStreamingGlobalAveragePool(BaseHLSTest):
     @property
     def operator_filename(self):
         return "StreamingGlobalAveragePool"
-    
+
+    @property
+    def unit_filename(self):
+        return "StreamingGlobalAveragePool"
+
     def generate_config_file(self, config_dict):
         
         # random tensors

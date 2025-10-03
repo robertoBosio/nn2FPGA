@@ -7,6 +7,7 @@ from backend.custom_op.nhwctostream import NHWCToStream
 from backend.custom_op.nn2fpgapartition import nn2fpgaPartition
 from backend.custom_op.streaminglinebuffer import StreamingLineBuffer
 from backend.custom_op.streamingconv import StreamingConv
+from backend.custom_op.streamingdepthwiseconv import StreamingDepthwiseConv
 from backend.custom_op.streamingglobalaveragepool import StreamingGlobalAveragePool
 from backend.custom_op.streamingadd import StreamingAdd
 from backend.custom_op.streamingmemory import StreamingMemory
@@ -24,6 +25,7 @@ custom_op = {
     "nn2fpgaPartition": nn2fpgaPartition,
     "StreamingAdd": StreamingAdd,
     "StreamingConv": StreamingConv,
+    "StreamingDepthwiseConv": StreamingDepthwiseConv,
     "StreamingGlobalAveragePool": StreamingGlobalAveragePool,
     "StreamingLineBuffer": StreamingLineBuffer,
     "StreamingMemory": StreamingMemory,

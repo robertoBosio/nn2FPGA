@@ -8,6 +8,10 @@ class TestStreamingMemory(BaseHLSTest):
     def operator_filename(self) -> str:
         return "StreamingMemory"
 
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingMemory"
+
     @staticmethod
     def pack_values_to_int32words(arr: np.ndarray, bitwidth: int) -> np.ndarray:
         """

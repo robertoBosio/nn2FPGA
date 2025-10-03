@@ -285,7 +285,7 @@ public:
         st.i_w += W_PAR;
       }
       if (st.i_w >= IN_WIDTH) {
-        st.i_w = 0;
+        st.i_w = W_STREAM;
         st.i_h++;
       }
       if (st.i_h >= IN_HEIGHT) {

@@ -19,6 +19,7 @@ LAYERS_WITH_KERNELS = [
     "MaxPool",
     "AveragePool",
     "ConvTranspose",
+    "StreamingDepthwiseConv",
 ]
 
 def has_streaming_linebuffer(op_type: str, kernel: int, w_par: int) -> bool:

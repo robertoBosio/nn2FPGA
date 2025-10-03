@@ -16,6 +16,7 @@ from backend.core.acceleratorpackage import AcceleratorPackage
 
 NODE_WITH_PARAMS = [
     "StreamingConv",
+    "StreamingDepthwiseConv",
     "Gemm",
     "MatMul",
 ]
@@ -134,7 +135,6 @@ def hoist_params_to_streaming_memory_unpacked(model: ModelWrapper, node: NodePro
 
     Mutates `model` in-place.
     """
-    assert node.op_type == "StreamingConv", "This helper is intended for StreamingConv nodes only."
     custom_node = getCustomOp(node)
     par = get_par_attributes(node)
     out_tensor_shape = model.get_tensor_shape(node.output[0])
@@ -258,7 +258,7 @@ class AddStreamingParams(Transformation):
         )
 
         for node in model.graph.node:
-            if node.op_type == "StreamingConv":
+            if node.op_type in NODE_WITH_PARAMS:
                 hoist_params_to_streaming_memory_unpacked(model, node)
 
         # Find all nodes with parameters that need streaming

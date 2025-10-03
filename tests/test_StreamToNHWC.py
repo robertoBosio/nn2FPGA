@@ -6,6 +6,10 @@ class TestStreamToNHWC(BaseHLSTest):
     @property
     def operator_filename(self) -> str:
         return "StreamToNHWC"
+    
+    @property
+    def unit_filename(self) -> str:
+        return "StreamToNHWC"
 
     def generate_config_file(self, config_dict):
 

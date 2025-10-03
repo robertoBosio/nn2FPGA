@@ -9,6 +9,10 @@ class TestStreamingConv(BaseHLSTest):
     @property
     def operator_filename(self) -> str:
         return "StreamingDepthwiseConv"
+    
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingDepthwiseConv"
 
     def generate_config_file(self, config_dict):
         IN_HEIGHT = (
@@ -349,5 +353,39 @@ class TestStreamingConv(BaseHLSTest):
             "W_ZP": 0,
             "Y_ZP": 0,
             "PIPELINE_DEPTH": 3,
+        }
+        self.run(config_dict, hls_steps)
+    
+    def test_3x3_pertensor_po2_wpar4(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "INPUT_DATAWIDTH": 8,
+            "WEIGHT_DATAWIDTH": 8,
+            "BIAS_DATAWIDTH": 32,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUT_HEIGHT": 112,
+            "OUT_WIDTH": 112,
+            "IN_CH": 32,
+            "OUT_CH": 32,
+            "FH": 3,
+            "FW": 3,
+            "STRIDE_H": 1,
+            "STRIDE_W": 1,
+            "PAD_T": 1,
+            "PAD_B": 1,
+            "PAD_L": 1,
+            "PAD_R": 1,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "CH_PAR": 2,
+            "W_PAR": 4,
+            "X_SCALE": 2**-5,
+            "W_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "X_ZP": 0,
+            "W_ZP": 0,
+            "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)

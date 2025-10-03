@@ -66,11 +66,13 @@ def adjust_bandwidth(
             if par_in % par_out != 0 and par_out % par_in != 0
             else None
         )
-        if middle is not None:
 
+        if middle is not None:
             node_II = np.prod(tensor_shape) // (middle * last_w_par)
             if node_II > model_II:
-                logger.info(f"Bandwidth adjustment computed based on GCD may not meet the throughput requirement of the model. Switching to LCM.")
+                logger.info(
+                    f"Bandwidth adjustment computed based on GCD may not meet the throughput requirement of the model. Switching to LCM."
+                )
                 middle = math.lcm(par_in, par_out)
 
         if middle:
@@ -105,25 +107,61 @@ def adjust_bandwidth(
         )
         return par_out
 
-    # Adjust channels
-    last_ch_par = adjust(
-        last_ch_par,
-        target_ch_par,
-        "ch",
-        "BandwidthAdjustDecreaseChannels",
-        "BandwidthAdjustIncreaseChannels",
-        "bwch",
+    II_chfirst_graph = max(
+        np.prod(tensor_shape) // (last_w_par * min(target_ch_par, last_ch_par)),
+        np.prod(tensor_shape) // (target_ch_par * min(last_w_par, target_w_par)),
     )
+    II_wfirst_graph = max(
+        np.prod(tensor_shape) // (last_ch_par * min(target_w_par, last_w_par)),
+        np.prod(tensor_shape) // (target_w_par * min(last_ch_par, target_ch_par)),
+    )
+    if min(II_chfirst_graph, II_wfirst_graph) > model_II:
+        raise ValueError(
+            f"Cannot adjust bandwidth between {producer.name} and {consumer.name} to meet the model II requirement."
+        )
+    
+    if II_chfirst_graph <= II_wfirst_graph:
 
-    # Adjust streams (width)
-    last_w_par = adjust(
-        last_w_par,
-        target_w_par,
-        "w",
-        "BandwidthAdjustDecreaseStreams",
-        "BandwidthAdjustIncreaseStreams",
-        "bww",
-    )
+        # Adjust channels
+        last_ch_par = adjust(
+            last_ch_par,
+            target_ch_par,
+            "ch",
+            "BandwidthAdjustDecreaseChannels",
+            "BandwidthAdjustIncreaseChannels",
+            "bwch",
+        )
+
+        # Adjust streams (width)
+        last_w_par = adjust(
+            last_w_par,
+            target_w_par,
+            "w",
+            "BandwidthAdjustDecreaseStreams",
+            "BandwidthAdjustIncreaseStreams",
+            "bww",
+        )
+    
+    else:
+        # Adjust streams (width)
+        last_w_par = adjust(
+            last_w_par,
+            target_w_par,
+            "w",
+            "BandwidthAdjustDecreaseStreams",
+            "BandwidthAdjustIncreaseStreams",
+            "bww",
+        )
+
+        # Adjust channels
+        last_ch_par = adjust(
+            last_ch_par,
+            target_ch_par,
+            "ch",
+            "BandwidthAdjustDecreaseChannels",
+            "BandwidthAdjustIncreaseChannels",
+            "bwch",
+        )
 
     return last_output, last_ch_par, last_w_par
 

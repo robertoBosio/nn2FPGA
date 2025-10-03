@@ -17,7 +17,16 @@ from onnx import NodeProto
 import logging
 logger = logging.getLogger(__name__)
 
-PARALLELIZABLE_LAYERS = ["StreamingConv", "StreamingGlobalAveragePool", "StreamingGlobalMaxPool", "AveragePool", "MaxPool", "NHWCToStream", "StreamToNHWC"]
+PARALLELIZABLE_LAYERS = [
+    "StreamingConv",
+    "StreamingDepthwiseConv",
+    "StreamingGlobalAveragePool",
+    "StreamingGlobalMaxPool",
+    "AveragePool",
+    "MaxPool",
+    "NHWCToStream",
+    "StreamToNHWC",
+]
 
 def packing_feature(operands_bitwidth, par, silvia_packing):
     """ Returns the number of operation that can be packed in a single DSP. 
@@ -106,7 +115,7 @@ def dsp_consumption(layer, parallelism, silvia_packing):
         # If the layer is depthwise-like, we have one less loop.
         parallelism = (1, parallelism[1], parallelism[2])
     
-    if (layer["type"] == "StreamingConv"):
+    if (layer["type"] in ["StreamingConv", "StreamingDepthwiseConv"]):
         # For Conv layers, the unrolling is done over the output width, output channels and input channels.
         # The DSPs considered are coming from the MAC operation, considering the packing.
         op_per_dsp, _ = packing_feature((layer["weight_bits"], layer["act_bits"]), parallelism, silvia_packing)
@@ -275,7 +284,23 @@ def layers_extractions(model: ModelWrapper) -> list:
                 )
                 weight_bits = model.get_initializer(node.input[3])
                 act_bits = get_custom_tensor_datatype(model, node.input[0]).bitwidth
-                depth = group == input_shape[1] 
+                depth = False
+
+            elif node.op_type == "StreamingDepthwiseConv":
+                kernel_shape = get_by_name(node.attribute, "kernel_shape").ints
+                kernel = int(math.prod(kernel_shape))
+                group = get_by_name(node.attribute, "group").i
+                ops = (
+                    output_shape[1]
+                    * output_shape[2]
+                    * output_shape[3]
+                    * input_shape[1]
+                    * kernel
+                    // group
+                )
+                weight_bits = model.get_initializer(node.input[3])
+                act_bits = get_custom_tensor_datatype(model, node.input[0]).bitwidth
+                depth = True
 
             elif node.op_type in ["StreamingStreamingGlobalAveragePool", "StreamingStreamingGlobalMaxPool"]:
                 kernel_shape = (input_shape[2], input_shape[3])
@@ -781,7 +806,7 @@ def print_report(layers_info, layer_par, n_variables, n_constraints, model_II, t
             och_ops = layer_par[layer["name"]][0]
 
             port = dsp = 0
-            if (layer["type"] == "StreamingConv"):
+            if (layer["type"] == "StreamingConv" or layer["type"] == "StreamingDepthwiseConv"):
                 bits = layer["weight_bits"]
                 dsp = dsp_consumption(layer, layer_par[layer['name']], silvia_packing)
 

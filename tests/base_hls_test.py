@@ -18,12 +18,24 @@ class BaseHLSTest(ABC):
 
     @property
     @abstractmethod
-    def operator_filename(self) -> str:
+    def operator_filename(self) -> str | list[str]:
         """The filename of the operator under test."""
+        ...
+    
+    @property
+    @abstractmethod
+    def unit_filename(self) -> str:
+        """The filename of the unit test for the operator."""
         ...
 
     def generate_hls_script(self, steps: str) -> str:
-        filename = self.operator_filename
+        op_filenames = self.operator_filename
+        un_filename = self.unit_filename
+
+        # allow single string or list of strings
+        if isinstance(op_filenames, str):
+            op_filenames = [op_filenames]
+
         steps_list = [s.strip() for s in steps.split(",")]
         do_csim   = "csim"   in steps_list
         do_csynth = (
@@ -35,9 +47,11 @@ class BaseHLSTest(ABC):
         lines = [
             f'open_project -reset "{PROJECT_NAME}"',
             'open_solution -reset solution0',
-            f'add_files {FILE_DIR}/include/{filename}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"',
-            f'add_files {FILE_DIR}/test/Unit{filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
-            f'add_files -tb {FILE_DIR}/test/Unit{filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
+            *(
+                f'add_files {FILE_DIR}/include/{op_name}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"' for op_name in op_filenames
+            ),
+            f'add_files {FILE_DIR}/test/Unit{un_filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
+            f'add_files -tb {FILE_DIR}/test/Unit{un_filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include -I/workspace/NN2FPGA/nn2fpga/"',
             "set_top wrap_run",
             "set_part xck26-sfvc784-2LV-c",
             "create_clock -period 3.33ns",

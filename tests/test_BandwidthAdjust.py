@@ -6,6 +6,10 @@ class TestStreamingConv(BaseHLSTest):
     @property
     def operator_filename(self) -> str:
         return "BandwidthAdjust"
+    
+    @property
+    def unit_filename(self) -> str:
+        return "BandwidthAdjust"
 
     def generate_config_file(
         self, config_dict, class_name: str = "BandwidthAdjustIncreaseStreams"

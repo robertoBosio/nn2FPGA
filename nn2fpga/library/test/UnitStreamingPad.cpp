@@ -154,7 +154,8 @@ bool test_step() {
                test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
                test_config::PAD_L, test_config::PAD_B, test_config::PAD_R,
                test_config::W_PAR, test_config::CH_PAR>
-      pad(test_config::PIPELINE_DEPTH);
+      pad;
+  pad.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;

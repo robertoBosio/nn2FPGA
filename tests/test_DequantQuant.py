@@ -6,6 +6,10 @@ class TestDequantQuant(BaseHLSTest):
     @property
     def operator_filename(self) -> str:
         return "DequantQuant"
+    
+    @property
+    def unit_filename(self) -> str:
+        return "DequantQuant"
 
     def generate_config_file(self, config_dict):
 
