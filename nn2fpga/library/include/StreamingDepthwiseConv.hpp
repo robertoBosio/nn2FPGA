@@ -16,6 +16,7 @@
  * @tparam TOutputWord     Data type for output word (packed output channels).
  * @tparam TOutput         Data type for individual output elements.
  * @tparam TAcc            Data type for accumulator (intermediate sum).
+ * @tparam Activation      Activation functor type for output activation.
  * @tparam Quantizer       Quantizer functor type for output quantization.
  * @tparam OUT_CH          Number of output channels.
  * @tparam IN_CH           Number of input channels.
@@ -54,8 +55,8 @@
 
 template <typename TInputWord, typename TInput, typename TWeightWord,
           typename TBiasWord, typename TOutputWord, typename TOutput,
-          typename TAcc, typename Quantizer, size_t OUT_CH, size_t IN_CH,
-          size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t FH,
+          typename TAcc, typename Activation, typename Quantizer, size_t OUT_CH,
+          size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t FH,
           size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t CH_PAR,
           size_t W_PAR>
 class StreamingDepthwiseConv {
@@ -221,6 +222,7 @@ private:
 #pragma HLS inline
 
     Quantizer quantizer;
+    Activation activation;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.
@@ -274,7 +276,8 @@ private:
         }
 
         // Finalize the output.
-        ap_int<32> wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
+        TAcc wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
+        wide_acc = activation(wide_acc);
         TOutput output_value = quantizer(wide_acc);
         output_data[i_ch_par] = output_value;
 

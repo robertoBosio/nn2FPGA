@@ -17,6 +17,7 @@
  * @tparam TOutput         Data type for individual output elements.
  * @tparam TAcc            Data type for accumulator (intermediate sum).
  * @tparam Quantizer       Quantizer functor type for output quantization.
+ * @tparam Activation      Activation functor type for output activation.
  * @tparam OUT_CH          Number of output channels.
  * @tparam IN_CH           Number of input channels.
  * @tparam OUT_HEIGHT      Output feature map height.
@@ -59,10 +60,10 @@
 
 template <typename TInputWord, typename TInput, typename TWeightWord,
           typename TBiasWord, typename TOutputWord, typename TOutput,
-          typename TAcc, typename Quantizer, size_t OUT_CH, size_t IN_CH,
-          size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t GROUP, size_t FH,
-          size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t IN_CH_PAR,
-          size_t OUT_CH_PAR, size_t W_PAR>
+          typename TAcc, typename Activation, typename Quantizer, size_t OUT_CH,
+          size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t GROUP,
+          size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
+          size_t IN_CH_PAR, size_t OUT_CH_PAR, size_t W_PAR>
 class StreamingConv {
   static constexpr size_t FW_EXPAND = FW + (W_PAR - 1) * STRIDE_W;
 
@@ -270,7 +271,10 @@ private:
                             size_t i_och) {
 #pragma HLS inline
 
+    // Quantizer instance.
     Quantizer quantizer;
+    // Activation instance.
+    Activation activation;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.

@@ -148,12 +148,13 @@ class TestStreamingConv(BaseHLSTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
+        cwr.add_line(f"typedef ap_uint<{config_dict['INPUT_DATAWIDTH']}> TInput;")
         cwr.add_line(f"typedef ap_int<{config_dict['WEIGHT_DATAWIDTH']}> TWeight;")
         cwr.add_line(f"typedef ap_int<{config_dict['BIAS_DATAWIDTH']}> TBias;")
         cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
-        cwr.add_line(f"typedef DequantQuantPo2<5, TAcc, TOutput> Quantizer;")
+        cwr.add_line(f"typedef DequantQuantPo2<8, TAcc, TOutput> Quantizer;")
+        cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
@@ -363,5 +364,41 @@ class TestStreamingConv(BaseHLSTest):
             "W_ZP": 0,
             "Y_ZP": 0,
             "PIPELINE_DEPTH": 3,
+        }
+        self.run(config_dict, hls_steps)
+    
+    def test_pointwise_pertensor_chpar12_wpar4(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "ACC_DATAWIDTH": 33,
+            "INPUT_DATAWIDTH": 8,
+            "WEIGHT_DATAWIDTH": 8,
+            "BIAS_DATAWIDTH": 32,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUT_HEIGHT": 56,
+            "OUT_WIDTH": 56,
+            "IN_CH": 96,
+            "OUT_CH": 24,
+            "FH": 1,
+            "FW": 1,
+            "STRIDE_H": 1,
+            "STRIDE_W": 1,
+            "PAD_T": 0,
+            "PAD_B": 0,
+            "PAD_L": 0,
+            "PAD_R": 0,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "IN_CH_PAR": 1,
+            "OUT_CH_PAR": 12,
+            "W_PAR": 4,
+            "GROUP": 1,
+            "X_SCALE": 2**-5,
+            "W_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "X_ZP": 0,
+            "W_ZP": 0,
+            "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
