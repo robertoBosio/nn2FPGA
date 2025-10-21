@@ -4,36 +4,50 @@ from onnx import TensorProto, helper
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
+from backend.core.tensor_quant import get_custom_tensor_datatype
+from backend.core.tensor_fifo import TensorFifo
+from backend.custom_op.hlskernel import HLSKernel
+from backend.util.codegen_utils import (
+    cpp_function,
+    cpp_variable,
+    cpp_object,
+    get_struct_type,
+    get_stream_type,
+    get_hls_quant_type,
+)
+from backend.core.tensor_quant import TensorQuant
+from backend.util.par_utils import get_par_attributes
+from backend.custom_op.register_rewrite_rule import register_rules
+from onnxscript.rewriter import pattern
 
-class StreamingRelu(CustomOp):
-    """ Node implementing the output-stationary convolution operation. """
+class StreamingReLU(CustomOp):
+    """ Node implementing the ReLU operation. """
 
     @staticmethod
-    def from_onnx_node(onnx_node):
-        """ Create a StreamingRelu instance from an ONNX node.
+    def pattern(op, x):
+        return op.Relu(x, _allow_other_attributes=True)
 
-        Args:
-            onnx_node: The ONNX node to convert.
-
-        Returns:
-            StreamingRelu: An instance of the StreamingRelu class.
-        """
-        if onnx_node.op_type != "Relu":
-            raise ValueError(f"Expected Relu node to be converted in StreamingRelu, got {onnx_node.op_type}")
-
-        return helper.make_node(
-            "StreamingRelu",
-            domain="backend.custom_op",
-            inputs=onnx_node.input,
-            outputs=onnx_node.output,
-            name=onnx_node.name,
+    @staticmethod
+    def rewrite(op, x):
+        return op.StreamingReLU(
+            x,
+            _domain="backend.custom_op",
         )
+
+    @register_rules
+    def register_rules():
+        return [
+            pattern.RewriteRule(
+                StreamingReLU.pattern, StreamingReLU.rewrite
+            )
+        ]
 
     def get_nodeattr_types(self):
         return {
-            # Custom attributes for parallelization of StreamingRelu
-            "och_par" : ("i", False, 1),
-            "w_par" : ("i", False, 1),
+            "in_ch_par": ("i", False, 1),  # Input channel parallelization
+            "out_ch_par": ("i", False, 1),  # Output channel parallelization
+            "in_w_par": ("i", False, 1),  # Input width parallelization
+            "out_w_par": ("i", False, 1),  # Output width parallelization
         }
 
     def make_shape_compatible_op(self, model):

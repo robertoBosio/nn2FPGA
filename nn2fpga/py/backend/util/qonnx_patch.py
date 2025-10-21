@@ -127,7 +127,7 @@ def patch_qonnx_ops():
             for o in p_out_vi:
                 if o in p_model.graph.value_info:
                     p_model.graph.value_info.remove(o)
-
+            
             # Build the accelerator package input/output maps
             # It is fundamental to maintain consistency between the maps and the inputs/outputs names
             # in the partition model. We use the same name convention as qonnx's GiveReadableTensorNames

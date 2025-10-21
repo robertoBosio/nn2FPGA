@@ -148,7 +148,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code(actual_II.generate_initialization())
 
     # Declare the CSDFGState and CSDFGStateHasher for the visited states.
-    function.add_code("std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;")
+    function.add_code("std::unordered_map<CompactState, size_t, CompactHasher> visited_states;")
     function.add_code("CSDFGState current_state;")
 
     # Write the while loop to process the data until all the processors are waiting.
@@ -187,19 +187,25 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
             function.add_code(f"channel_quantities.push_back({stream.name}.size());")
 
     function.add_code("current_state = CSDFGState(actor_statuses, channel_quantities);")
-    function.add_code("if (visited_states.find(current_state) != visited_states.end()) {")
+    function.add_code("CompactState compact = make_compact_state(current_state);")
+    function.add_code("if (visited_states.find(compact) != visited_states.end()) {")
     function.codewriter.indent()
-    function.add_code("actual_II = clock_cycle - visited_states[current_state];")
+    function.add_code("actual_II = clock_cycle - visited_states[compact];")
     function.add_code("break;")
     function.codewriter.dedent()
     function.add_code("}")
-    function.add_code("visited_states.emplace(current_state, clock_cycle);")
+    function.add_code("visited_states.emplace(std::move(compact), clock_cycle);")
     function.add_code("clock_cycle++;")
     function.add_code(f"if (clock_cycle > {10 * model_II}) {{")
     function.codewriter.indent()
     function.add_code('std::cout << "Warning: Exceeded maximum clock cycles. The model might be deadlocked." << std::endl;')
     function.add_code("actual_II = 0;")
     function.add_code("break;")
+    function.codewriter.dedent()
+    function.add_code("}")
+    function.add_code(f"if (clock_cycle % 100000 == 0) {{")
+    function.codewriter.indent()
+    function.add_code('std::cout << "Current clock cycle: " << clock_cycle << std::endl;')
     function.codewriter.dedent()
     function.add_code("}")
     function.codewriter.dedent()
@@ -292,7 +298,7 @@ def generate_tcl_script(top_name, part_name, frequency, hls_version):
 
     lines.extend(
         [
-            'add_files fifo_depth.cpp -cflags " -I/workspace/NN2FPGA/nn2fpga/library/include"',
+            'add_files fifo_depth.cpp -cflags "-O3 -I/workspace/NN2FPGA/nn2fpga/library/include"',
             'add_files -tb testbench.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"',
             'set_top "{top_name}"',
             'set_part {part_name}',
@@ -338,7 +344,7 @@ def generate_schedule(model: ModelWrapper, work_root: str):
 
     schedule_model = qonnx_make_model(graph)
     schedule_model = ModelWrapper(schedule_model)
-    
+
     # Build index of existing keys in dst
     dst_idx = {}
     for p in model.model.metadata_props:
@@ -392,21 +398,49 @@ def generate_schedule(model: ModelWrapper, work_root: str):
             min_read_state = scheduling_parser.pipeline_depth + 1
             max_write_state = 0
             min_write_state = scheduling_parser.pipeline_depth + 1
+            write_op = False
+            read_op = False
             for op in scheduling_parser.fifo_ops:
+                sequential_state = scheduling_parser.pipeline_states.index(op["state"])
                 if op["op_type"] == "read":
-                    max_read_state = max(max_read_state, op["state"])
-                    min_read_state = min(min_read_state, op["state"])
+                    max_read_state = max(max_read_state, sequential_state)
+                    min_read_state = min(min_read_state, sequential_state)
+                    read_op = True
                 elif op["op_type"] == "write":
-                    max_write_state = max(max_write_state, op["state"])
-                    min_write_state = min(min_write_state, op["state"])
-            read_skew = max_read_state - min_read_state
-            write_skew = max_write_state - min_write_state
-            pipeline_stages = scheduling_parser.pipeline_depth
+                    max_write_state = max(max_write_state, sequential_state)
+                    min_write_state = min(min_write_state, sequential_state)
+                    write_op = True
+            read_skew = max_read_state - min_read_state if read_op else 0
+            write_skew = max_write_state - min_write_state if write_op else 0
+
+            # Vitis HLS is able to optimize concurrent processes inside a single function.
+            # Therefore, a state of the FSM is not monolithic, but can contain multiple unrelated processes.
+            # This means that there could be an actual skew between read and write operations that are scheduled in the same state.
+            # This could happen only to processes that can be logically divided into independent parts, such as
+            # StreamingPad where each stream is indipendent from the others.
+            if custom_op.get_nodeattr("original_op_type") in [
+                "StreamingPad",
+                "StreamingAdd",
+                "BandwidthAdjustIncreaseStreams",
+                "BandwidthAdjustDecreaseStreams",
+                "TensorDuplicator",
+            ]:
+                if read_op:
+                    read_skew += 1
+                if write_op:
+                    write_skew += 1
+                logger.info(f"Node {node.name} is a {custom_op.get_nodeattr('original_op_type')} with possible independent processes. Incrementing read_skew to {read_skew} and write_skew to {write_skew}.")
+            if write_op and read_op:
+                pipeline_stages = max_write_state - min_read_state + 1
+            else:
+                pipeline_stages = 1
+            if pipeline_stages < 1:
+                logger.error(f"Node {node.name} has invalid pipeline stages: {pipeline_stages} because {max_write_state} - {min_read_state} + 1 < 1. Setting to 1.")
 
         custom_op.set_nodeattr("read_skew", read_skew)
         custom_op.set_nodeattr("write_skew", write_skew)
         custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
-        logger.info(f"Node {node.name}: read_skew={read_skew}, write_skew={write_skew}, pipeline_stages={pipeline_stages}")
+        logger.info(f"Node {node.name}: read_skew={read_skew}, write_skew={write_skew}, adjusted_pipeline_stages={pipeline_stages}\n")
 
 def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
     """Adjust the FIFO depth based on the scheduling information."""

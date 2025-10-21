@@ -11,4 +11,4 @@ def collect_rules() -> pattern.RewriteRuleSet:
     rules: List[pattern.RewriteRule] = []
     for prov in _RULE_PROVIDERS:
         rules.extend(prov() or [])
-    return pattern.RewriteRuleSet(rules, commute=True)
+    return pattern.RewriteRuleSet(rules, commute=False)

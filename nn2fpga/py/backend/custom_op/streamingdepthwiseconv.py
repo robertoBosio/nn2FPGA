@@ -212,6 +212,9 @@ class StreamingDepthwiseConv(CustomOp):
 
             # Custom attributes for zero point folding into bias
             "asym_folding": ("i", False, 0),  # 0: no folding, 1: fold zeropt into bias
+
+            # Custom attribute for activation function
+            "activation": ("s", False, "NoOp"),  # NoOp, ReLU
         }
 
     def make_shape_compatible_op(self, model):
@@ -333,6 +336,19 @@ class StreamingDepthwiseConv(CustomOp):
 
         return f"{get_hls_quant_type(acc_quant)}"
 
+    def __get_activation(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """ Returns the activation functor for the StreamingConv operation. """
+
+        activation = self.get_nodeattr("activation")
+        if activation == "NoOp":
+            return f"DequantQuantEqual<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
+        elif activation == "ReLU":
+            return f"ReLU<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
+        else:
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingConv."
+            )
+
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
@@ -435,6 +451,7 @@ class StreamingDepthwiseConv(CustomOp):
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TAcc"),
+                (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
                 (
                     self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
                     "Quantizer",

@@ -2,8 +2,7 @@ from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.util.board_util import read_board_info
 from onnx import helper
-from qonnx.util.basic import get_by_name
-from backend.core.tensor_quant import get_custom_tensor_datatype, TensorQuant, set_custom_tensor_datatype
+from backend.core.tensor_quant import get_custom_tensor_datatype, set_custom_tensor_datatype
 import logging
 logger = logging.getLogger(__name__)
 
@@ -72,7 +71,7 @@ class InsertAXIConverters(Transformation):
         new_nodes = []
         for i, out in enumerate(model.graph.output):
             producer = model.find_producer(out.name)
-            if producer is not None and producer.op_type == "StreamToNHWC":
+            if producer is None or producer.op_type == "StreamToNHWC":
                 # This output is already transformed, skip it.
                 continue
 
@@ -83,8 +82,8 @@ class InsertAXIConverters(Transformation):
             consume_node = helper.make_node(
                 op_type="StreamToNHWC",
                 domain="backend.custom_op",
-                outputs=[consume_stream_output],
-                inputs=[orig_output_name],
+                inputs=[consume_stream_output],
+                outputs=[orig_output_name],
                 axi_bitwidth=board_res["axi_bitwidth"],
                 name=f"StreamToNHWC_{i}",
                 in_ch_par=1,
@@ -93,7 +92,11 @@ class InsertAXIConverters(Transformation):
                 out_w_par=1,
             )
 
-            get_by_name(model.graph.output, orig_output_name).name = consume_stream_output 
+            # Rewire all the producers of orig_output_name to produce to consume_stream_output
+            for j, prod_out in enumerate(producer.output):
+                if prod_out == orig_output_name:
+                    producer.output[j] = consume_stream_output
+
             model.set_tensor_shape(
                 consume_stream_output, model.get_tensor_shape(orig_output_name)
             )
@@ -106,5 +109,5 @@ class InsertAXIConverters(Transformation):
         # Insert all new nodes at the beginning
         for node in new_nodes:
             model.graph.node.append(node)
-
+        
         return (model, False)

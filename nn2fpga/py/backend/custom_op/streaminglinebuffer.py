@@ -237,7 +237,7 @@ class StreamingLineBuffer(CustomOp):
                         outputs=pixel_output_name,
                         name=f"{self.onnx_node.name}_pixel_{pixel_index}_hls",
                         domain="backend.custom_op",
-                        original_op_type=self.onnx_node.op_type,
+                        original_op_type="StreamingWindowSelector",
                         hls_object_name=f"{self.onnx_node.name}_pixel_{pixel_index}",
                         hls_tag=hls_tag,
                         hls_variable_declarations=self.__get_variable_declaration(
@@ -314,7 +314,7 @@ class StreamingLineBuffer(CustomOp):
                     outputs=output_names,
                     name=f"{self.onnx_node.name}_pad_hls",
                     domain="backend.custom_op",
-                    original_op_type=self.onnx_node.op_type,
+                    original_op_type="StreamingPad",
                     hls_object_name=f"{self.onnx_node.name}_pad",
                     hls_tag=hls_tag,
                     hls_variable_declarations=self.__get_variable_declaration(model),

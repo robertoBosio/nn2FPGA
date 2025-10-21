@@ -14,6 +14,7 @@ from backend.util.board_util import read_board_info
 from backend.transformation.insert_streaming_line_buffer import has_streaming_linebuffer
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from onnx import NodeProto
+from qonnx.custom_op.registry import getCustomOp
 import logging
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ def generate_architectures(
 
     valid_par_solutions = []
     for layer in layers_info:
-        iw_clip = 4  # Heuristic clip for input width
+        iw_clip = 20  # Heuristic clip for input width
         och_clip = 20  # Heuristic clip for output channels
         max_och_par = layer["och"]
         max_ich_par = layer["ich"]
@@ -273,7 +274,7 @@ def layers_extractions(model: ModelWrapper) -> list:
             if node.op_type == "StreamingConv":
                 kernel_shape = get_by_name(node.attribute, "kernel_shape").ints
                 kernel = int(math.prod(kernel_shape))
-                group = get_by_name(node.attribute, "group").i
+                group = getCustomOp(node).get_nodeattr("group")
                 ops = (
                     output_shape[1]
                     * output_shape[2]
@@ -282,27 +283,24 @@ def layers_extractions(model: ModelWrapper) -> list:
                     * kernel
                     // group
                 )
-                weight_bits = model.get_initializer(node.input[3])
+                weight_bits = int(model.get_initializer(node.input[4]))
                 act_bits = get_custom_tensor_datatype(model, node.input[0]).bitwidth
                 depth = False
 
             elif node.op_type == "StreamingDepthwiseConv":
                 kernel_shape = get_by_name(node.attribute, "kernel_shape").ints
                 kernel = int(math.prod(kernel_shape))
-                group = get_by_name(node.attribute, "group").i
                 ops = (
-                    output_shape[1]
-                    * output_shape[2]
+                    output_shape[2]
                     * output_shape[3]
                     * input_shape[1]
                     * kernel
-                    // group
                 )
-                weight_bits = model.get_initializer(node.input[3])
+                weight_bits = int(model.get_initializer(node.input[4]))
                 act_bits = get_custom_tensor_datatype(model, node.input[0]).bitwidth
                 depth = True
 
-            elif node.op_type in ["StreamingStreamingGlobalAveragePool", "StreamingStreamingGlobalMaxPool"]:
+            elif node.op_type in ["StreamingGlobalAveragePool", "StreamingGlobalMaxPool"]:
                 kernel_shape = (input_shape[2], input_shape[3])
                 # kernel = int(math.prod(kernel_shape))
                 kernel = 1
@@ -411,8 +409,8 @@ def parallelismILP(layers_info, valid_par_solutions, NUM_DSP, NUM_PORTS, silvia_
         if (layer["type"] == "StreamingConv"):
             n_weights = layer["ich"] * layer["och"] * layer["kernel"]
 
-            if (layer["depth"]):
-                n_weights = layer["ich"] * layer["kernel"]
+        elif (layer["type"] == "StreamingDepthwiseConv"):
+            n_weights = layer["ich"] * layer["kernel"]
 
         for single_par in layer_par:
             bram_used = compute_bram_layer(layer["weight_bits"], n_weights, np.prod(single_par[:2]) * layer["kernel"])
@@ -504,7 +502,7 @@ def parallelismILP(layers_info, valid_par_solutions, NUM_DSP, NUM_PORTS, silvia_
         for s in range(len(layer)):
             if int(layer_binary_variables[i][s].value()) == 1:
                 parallel_op[f"{layers_info[i]['name']}"] = layer[s]
-    
+
     return parallel_op, int(pulp.value(prob.objective)), sum([len(s) for s in valid_par_solutions]), constraints_counter, (end_time - start_time)
 
 def resourceILP(layers_info, model_II, valid_par_solutions, parallel_op, NUM_DSP, NUM_PORTS, silvia_packing, prj_root="/tmp"):
@@ -680,6 +678,7 @@ def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
             for consumer in consumers:
                 if not check_par_attributes(consumer):
                     # If the consumer does not have parallelization attributes, set them.
+                    logger.info(f"Propagating parallelism from {node.name} to {consumer.name}")
                     set_par_attributes(consumer, par)
                 if consumer.name not in mark_visited:
                 # If the consumer is not already visited, add it to the queue.
@@ -884,8 +883,8 @@ class BalanceComputation(Transformation):
         )
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
-        NUM_PORTS = int(NUM_PORTS * 0.85)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.05  # 5% of the DSPs are used for parallelization
+        NUM_PORTS = int(NUM_PORTS * 1.2)  # 85% of the BRAMs are used for parallelization
+        NUM_DSP = board_res["dsp"] * 0.4  # 40% of the DSPs are used for parallelization
 
         # Extract layers information
         layers_info = layers_extractions(model)
@@ -929,6 +928,7 @@ class BalanceComputation(Transformation):
             generate_report_file,
             prj_root=self.nn2fpga_root,
         )
+        exit(0)
 
         # Update the model with the parallelization chosen for each layer
         model = update_model(model, layer_par)

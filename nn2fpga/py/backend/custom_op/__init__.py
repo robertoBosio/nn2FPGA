@@ -11,7 +11,7 @@ from backend.custom_op.streamingdepthwiseconv import StreamingDepthwiseConv
 from backend.custom_op.streamingglobalaveragepool import StreamingGlobalAveragePool
 from backend.custom_op.streamingadd import StreamingAdd
 from backend.custom_op.streamingmemory import StreamingMemory
-from backend.custom_op.streamingrelu import StreamingRelu
+from backend.custom_op.streamingrelu import StreamingReLU
 from backend.custom_op.streamtonhwc import StreamToNHWC
 from backend.custom_op.tensorduplicator import TensorDuplicator
 
@@ -29,7 +29,7 @@ custom_op = {
     "StreamingGlobalAveragePool": StreamingGlobalAveragePool,
     "StreamingLineBuffer": StreamingLineBuffer,
     "StreamingMemory": StreamingMemory,
-    "StreamingRelu": StreamingRelu,
+    "StreamingReLU": StreamingReLU,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
 }

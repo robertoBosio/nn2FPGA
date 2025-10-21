@@ -192,6 +192,40 @@ struct CSDFGStateHasher {
   }
 };
 
+struct CompactState {
+    std::vector<uint32_t> data;
+    bool operator==(const CompactState &o) const { return data == o.data; }
+};
+
+struct CompactHasher {
+    size_t operator()(const CompactState &s) const {
+        size_t h = 0;
+        for (auto v : s.data)
+            h ^= std::hash<uint32_t>()(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
+CompactState make_compact_state(const CSDFGState &s) {
+    CompactState c;
+    const auto &tokens = s.get_tokens();
+    const auto &actors = s.get_actor_statuses();
+    c.data.reserve(tokens.size() + 8 * actors.size()); // heuristic
+    for (auto t : tokens)
+        c.data.push_back(static_cast<uint32_t>(t));
+    c.data.push_back(0xFFFFFFFF); // separator
+
+    for (const auto &a : actors) {
+        c.data.push_back(static_cast<uint32_t>(a.get_current_index()));
+        for (const auto &f : a.get_firings()) {
+            c.data.push_back(static_cast<uint32_t>(f.get_remaining_time()));
+            c.data.push_back(static_cast<uint32_t>(f.get_firing_index()));
+        }
+        c.data.push_back(0xFFFFFFFF); // actor separator
+    }
+    return c;
+}
+
 #ifndef __SYNTHESIS__
 template <typename T> class PipelineDelayBuffer {
 public:

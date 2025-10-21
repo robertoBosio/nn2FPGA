@@ -58,7 +58,7 @@
 template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t DATA_PER_WORD,
           size_t HEIGHT, size_t WIDTH, size_t CH, size_t OUT_W_PAR,
-          size_t OUT_CH_PAR>
+          size_t OUT_CH_PAR, bool ONLY_ONCE = false>
 class NHWCToStream {
   static constexpr size_t ITER = HEIGHT * WIDTH * CH / (OUT_W_PAR * OUT_CH_PAR);
 
@@ -78,14 +78,19 @@ public:
     char head = 0; // Head index for circular buffer
     char tail = 0; // Tail index for circular buffer
     char size = 0; // Current size of the circular buffer
+    bool static only_once_flag = false;
+    if (!only_once_flag) {
 
-    // Loop through the word packets of the output tensor.
-  NHWC_TO_STREAM_MAINLOOP:
-    for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
+      // Loop through the word packets of the output tensor.
+    NHWC_TO_STREAM_MAINLOOP:
+      for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
 #pragma HLS pipeline II = 1
-      NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
-                                  circular_buffer, head, size, tail);
+        NHWCToStream::pipeline_body(input_data_stream, output_data_stream,
+                                    circular_buffer, head, size, tail);
+      }
     }
+    if (ONLY_ONCE)
+      only_once_flag = true;
   }
 
   struct StepState {

@@ -19,19 +19,19 @@ FPGA_SUPPORTED_QUANTIZED_ACTIVATIONS = {
 }
 
 FPGA_SUPPORTED_OPS = {
-    # "Add",
+    "Add",
     # "AveragePool",
     # "Concat",
     "Conv",
-    # "Flatten",
-    # "Gemm",
-    # "GlobalAveragePool",
+    "Flatten",
+    "Gemm",
+    "GlobalAveragePool",
     # "GlobalMaxPool",
     # "IntQuant",
     # "MaxPool",
     "Quant",
-    # "Relu",
-    # "Reshape",
+    "Relu",
+    "Reshape",
     # "Resize",
 }
 
@@ -227,8 +227,8 @@ def is_fpga_supported_op(model: ModelWrapper, node: onnx.NodeProto) -> bool:
     
     # Per operation checks
     elif node.op_type == "Conv":
-        if node.name != "Conv_0":
-            is_supported = False
+        # if node.name not in [f"Conv_{i}" for i in range(30)]:
+        #     is_supported = False
 
         # Check Conv activation quantization
         act_quant = model.find_producer(node.input[0])
@@ -425,6 +425,17 @@ def is_fpga_supported_op(model: ModelWrapper, node: onnx.NodeProto) -> bool:
         # Check activation quantization
         act_quant = model.find_producer(node.input[0])
         is_supported = is_supported and check_act_quant(model, act_quant, reasons)
+    
+    elif node.op_type == "Relu":
+        # Check activation quantization
+        act_quant = model.find_producer(node.input[0])
+
+        # Either is quantized or can be fused in an operator.
+        if not check_act_quant(model, act_quant, reasons):
+            producer = act_quant
+            if producer.op_type not in ["Conv", "Gemm"]:
+                reasons.append(f"Relu activation must be quantized or fused into a preceding operator like Conv or Gemm")
+                is_supported = False
 
     elif node.op_type in ["IntQuant", "Quant"]:
         # In case of multiple Quant nodes, only checking the Quant nodes attached to some

@@ -9,6 +9,7 @@ from backend.transformation.fold_asymmetric_act_quant import FoldAsymmetricActQu
 from backend.transformation.fold_quant import FoldQuant
 from backend.transformation.fold_reshape_into_initializer import FoldReshapeIntoInitializer
 from backend.transformation.fullyconnected_to_conv import FullyConnectedToPointwise
+from backend.transformation.fuse_elementwise_op import FuseElementwiseOps
 from backend.transformation.generate_bitstream import GenerateBitstream
 from backend.transformation.generate_driver import GenerateDriver
 from backend.transformation.infer_quant import InferQuant

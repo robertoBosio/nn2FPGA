@@ -25,7 +25,6 @@ QUANT_INVARIANT_NODES = [
     "MaxPool",
     "NHWCToStream",  # nn2FPGA
     "Pad",
-    "Relu",
     "Reshape",
     "Split",
     "StreamingLineBuffer",  # nn2FPGA
