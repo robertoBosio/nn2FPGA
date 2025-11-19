@@ -4,9 +4,19 @@ set -e
 # Read project root from environment, with fallback
 SILVIA_DIR="${NN2FPGA_ROOT_DIR}/deps/SILVIA"
 PASS_LIB_PATH="${SILVIA_DIR}/build/SILVIAMuladd/LLVMSILVIAMuladd.so"
-VIVADO_PATH="${XILINX_DIR}/Xilinx/Vivado/${XILINX_VERSION}"
-VITIS_PATH="${XILINX_DIR}/Xilinx/Vitis/${XILINX_VERSION}"
-HLS_PATH="${XILINX_DIR}/Xilinx/Vitis_HLS/${XILINX_VERSION}"
+
+if [[ "$(printf '%s\n2025.1' "$XILINX_VERSION" | sort -V | tail -n1)" == "$XILINX_VERSION" ]]; then
+    # old structure
+    VIVADO_PATH="${XILINX_DIR}/Xilinx/${XILINX_VERSION}/Vivado"
+    VITIS_PATH="${XILINX_DIR}/Xilinx/${XILINX_VERSION}/Vitis"
+else
+    # new structure
+    VIVADO_PATH="${XILINX_DIR}/Xilinx/Vivado/${XILINX_VERSION}"
+    VITIS_PATH="${XILINX_DIR}/Xilinx/Vitis/${XILINX_VERSION}"
+fi
+echo "Sourcing Xilinx tools from $VITIS_PATH and $VIVADO_PATH"
+
+
 HOME="/tmp/homedir"
 
 echo "Project root: $NN2FPGA_ROOT_DIR"
@@ -16,12 +26,6 @@ if [ -f "$VITIS_PATH/settings64.sh" ]; then
     source "$VITIS_PATH/settings64.sh"
 else
     echo "Unable to find Vitis" >&2
-    exit 1
-fi
-if [ -f "$HLS_PATH/settings64.sh" ]; then
-    source "$HLS_PATH/settings64.sh"
-else
-    echo "Unable to find Vitis HLS" >&2
     exit 1
 fi
 if [ -f "$VIVADO_PATH/settings64.sh" ]; then
@@ -38,7 +42,7 @@ if [ ! -f "$PASS_LIB_PATH" ]; then
     echo "LLVM pass not found — compiling..."
 
     cd "$SILVIA_DIR"
-    chmod +x install_llvm.sh build_pass.sh
+    # chmod +x install_llvm.sh build_pass.sh
 
     if ! ./install_llvm.sh; then
         echo "install_llvm.sh failed." >&2
@@ -67,7 +71,6 @@ mkdir -p "$HOME/.Xilinx"
 # Set up environment variables
 export XILINX_VIVADO="${VIVADO_PATH}"
 export XILINX_VITIS="${VITIS_PATH}"
-export XILINX_HLS="${HLS_PATH}"
 export XILINX_XRT="/opt/xilinx/xrt"
 export SILVIA_ROOT="${SILVIA_DIR}"
 export SILVIA_LLVM_ROOT="${SILVIA_DIR}/llvm-project/install"
@@ -77,7 +80,7 @@ export ONNXRUNTIME_SDK_INCLUDE=${ONNXRUNTIME_SDK_INCLUDE:-/opt/onnxruntime-sdk/i
 export CC=aarch64-linux-gnu-gcc
 export CXX=aarch64-linux-gnu-g++
 
-chmod +x tools/build_customop.sh
+# chmod +x tools/build_customop.sh
 
 cd $NN2FPGA_ROOT_DIR/nn2fpga
 

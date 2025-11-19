@@ -10,7 +10,7 @@ USER_ID="$(id -u)"
 GROUP_ID="$(id -g)"
 XILINX_DIR="/tools"
 XRT_DIR="/opt/xilinx/xrt"
-XILINX_VERSION="2024.2"
+XILINX_VERSION="2025.1"
 DATASET_DIR="/home-ssd/datasets"
 WORKSPACE_ROOT_DIR="/workspace"
 HISTORY_FILE="$(pwd)/.docker_bash_history"
@@ -39,6 +39,7 @@ docker run -it --rm \
     -v "${DATASET_DIR}:/home/datasets" \
     --network=host \
     --gpus all \
+    --memory 80g \
     --env NVIDIA_VISIBLE_DEVICES=all \
     --env NVIDIA_DRIVER_CAPABILITIES=all \
     --env NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/NN2FPGA" \
