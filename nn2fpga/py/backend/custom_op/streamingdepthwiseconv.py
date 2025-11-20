@@ -129,6 +129,7 @@ class StreamingDepthwiseConv(CustomOp):
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
+            param_storage="INTERNAL",
             _domain="backend.custom_op",
         )
 
@@ -215,6 +216,9 @@ class StreamingDepthwiseConv(CustomOp):
 
             # Custom attribute for activation function
             "activation": ("s", False, "NoOp"),  # NoOp, ReLU
+
+            # Custom attribute for internal/external parameters (weights, biases) storage
+            "param_storage": ("s", True, "INTERNAL"),  # INTERNAL, EXTERNAL
         }
 
     def make_shape_compatible_op(self, model):
@@ -441,10 +445,12 @@ class StreamingDepthwiseConv(CustomOp):
                     f"{get_struct_type(weights_quant, par_attribute['out_ch_par'])}",
                     "TWeightStruct",
                 ),
+                (f"{get_hls_quant_type(weights_quant)}", "TWeight"),
                 (
                     f"{get_struct_type(bias_quant, par_attribute['out_ch_par'])}",
                     "TBiasStruct",
                 ),
+                (f"{get_hls_quant_type(bias_quant)}", "TBias"),
                 (
                     f"{get_struct_type(output_quant, par_attribute['out_ch_par'])}",
                     "TOutputStruct",
@@ -478,7 +484,83 @@ class StreamingDepthwiseConv(CustomOp):
         Returns:
             str: A string representing the declaration of internal variables.
         """
-        return ""
+
+        weights_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[2]),
+            zeropt=model.get_initializer(self.onnx_node.input[3]),
+            bitwidth=model.get_initializer(self.onnx_node.input[4]),
+            signed=bool(self.get_nodeattr("w_signed")),
+            narrow=bool(self.get_nodeattr("w_narrow")),
+            rounding_mode=self.get_nodeattr("w_rounding_mode"),
+        )
+
+        bias_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[6]),
+            zeropt=model.get_initializer(self.onnx_node.input[7]),
+            bitwidth=model.get_initializer(self.onnx_node.input[8]),
+            signed=bool(self.get_nodeattr("b_signed")),
+            narrow=bool(self.get_nodeattr("b_narrow")),
+            rounding_mode=self.get_nodeattr("b_rounding_mode"),
+        )
+
+        # Retrieve parallelization attributes.
+        par_attribute = get_par_attributes(self.onnx_node)
+
+        # Retrieve tensor shape.
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
+        if weights_shape is None:
+            raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
+
+        # Create weights and biases variable declarations if parameters are stored internally.
+        param_storage = self.get_nodeattr("param_storage")
+        if param_storage == "INTERNAL":
+            values = np.random.randint(
+                low=0,
+                high=2**(weights_quant.bitwidth - 1),
+                size=np.prod(weights_shape),
+                dtype=np.int8,
+            )
+            weights_var = cpp_variable(
+                name=f"{self.onnx_node.name}_weights",
+                primitive=get_hls_quant_type(weights_quant),
+                pragma=[
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=3 complete",
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=2 complete",
+                ],
+                value=values.reshape(output_shape[1] // (par_attribute["out_ch_par"]),
+                                        par_attribute["out_ch_par"],
+                                        self.get_nodeattr("kernel_shape")[0] * self.get_nodeattr("kernel_shape")[1])
+            ).generate_declaration_mine()
+
+            values = np.random.randint(
+                low=0,
+                high=2**(bias_quant.bitwidth - 1),
+                size=output_shape[1],
+                dtype=np.int32,
+            )
+
+            bias_var = cpp_variable(
+                name=f"{self.onnx_node.name}_biases",
+                primitive=get_hls_quant_type(bias_quant),
+                pragma=[
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=3 complete",
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=2 complete",
+                ],
+                value=values.reshape(output_shape[1] // par_attribute["out_ch_par"],
+                                      par_attribute["out_ch_par"],
+                                      1),
+            ).generate_declaration_mine()
+
+            return weights_var + "\n" + bias_var
+        else:
+            return ""
 
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingDepthwiseConv node. """
@@ -510,8 +592,8 @@ class StreamingDepthwiseConv(CustomOp):
         return run.generate_call(
             [hls_tag],
             self.__get_stream_name(self.onnx_node.input[0]),
-            self.__get_stream_name(self.onnx_node.input[1]),
-            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.input[1]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_weights",
+            self.__get_stream_name(self.onnx_node.input[5]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_biases",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
@@ -545,8 +627,8 @@ class StreamingDepthwiseConv(CustomOp):
         return step.generate_call(
             [],
             self.__get_stream_name(self.onnx_node.input[0]),
-            self.__get_stream_name(self.onnx_node.input[1]),
-            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.input[1]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_weights",
+            self.__get_stream_name(self.onnx_node.input[5]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_biases",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 

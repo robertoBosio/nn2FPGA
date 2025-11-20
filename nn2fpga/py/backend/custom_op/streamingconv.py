@@ -124,10 +124,11 @@ class StreamingConv(CustomOp):
             b_narrow=b_narrow.value,
             b_rounding_mode=b_rounding_mode.value,
             dilations=dilations,
-            group=group,
+            group=1,
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
+            param_storage="INTERNAL",
             _domain="backend.custom_op",
         )
 
@@ -167,6 +168,12 @@ class StreamingConv(CustomOp):
 
             # Custom attributes for zero point folding into bias
             "asym_folding": ("i", False, 0),  # 0: no folding, 1: fold zeropt into bias
+
+            # Custom attribute for activation function
+            "activation": ("s", False, "NoOp"),  # NoOp, ReLU
+
+            # Custom attribute for internal/external parameters (weights, biases) storage
+            "param_storage": ("s", True, "INTERNAL"),  # INTERNAL, EXTERNAL
         }
 
     def make_shape_compatible_op(self, model):
@@ -263,7 +270,7 @@ class StreamingConv(CustomOp):
 
     def verify_node(self):
         pass
-    
+
     def __get_stream_name(self, name: str) -> str:
         """
         Returns the name of the stream for the tensor.
@@ -287,6 +294,19 @@ class StreamingConv(CustomOp):
         )
 
         return f"{get_hls_quant_type(acc_quant)}"
+
+    def __get_activation(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """ Returns the activation functor for the StreamingConv operation. """
+
+        activation = self.get_nodeattr("activation")
+        if activation == "NoOp":
+            return f"DequantQuantEqual<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
+        elif activation == "ReLU":
+            return f"ReLU<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
+        else:
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingConv."
+            )
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
@@ -315,7 +335,6 @@ class StreamingConv(CustomOp):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            print(f"Activation: {input_quant.scale}, Weights: {weights_scale}, Output: {output_quant.scale}, Shift: {shift}")
             return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
@@ -380,24 +399,27 @@ class StreamingConv(CustomOp):
                     f"{get_struct_type(weights_quant, par_attribute['in_ch_par'] * par_attribute['out_ch_par'])}",
                     "TWeightStruct",
                 ),
+                (f"{get_hls_quant_type(weights_quant)}", "TWeight"),
                 (
                     f"{get_struct_type(bias_quant, par_attribute['out_ch_par'])}",
                     "TBiasStruct",
                 ),
+                (f"{get_hls_quant_type(bias_quant)}", "TBias"),
                 (
                     f"{get_struct_type(output_quant, par_attribute['out_ch_par'])}",
                     "TOutputStruct",
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TAcc"),
+                (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
                 (
                     self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
                     "Quantizer",
                 ),
                 (output_shape[1], "OUT_CH"),
                 (input_shape[1], "IN_CH"),
-                (output_shape[2], "IN_HEIGHT"),
-                (output_shape[3], "IN_WIDTH"),
+                (output_shape[2], "OUT_HEIGHT"),
+                (output_shape[3], "OUT_WIDTH"),
                 (self.get_nodeattr("group"), "GROUP"),
                 (self.get_nodeattr("kernel_shape")[0], "FH"),
                 (self.get_nodeattr("kernel_shape")[1], "FW"),
@@ -418,14 +440,99 @@ class StreamingConv(CustomOp):
         Returns:
             str: A string representing the declaration of internal variables.
         """
-        return ""
+
+        weights_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[2]),
+            zeropt=model.get_initializer(self.onnx_node.input[3]),
+            bitwidth=model.get_initializer(self.onnx_node.input[4]),
+            signed=bool(self.get_nodeattr("w_signed")),
+            narrow=bool(self.get_nodeattr("w_narrow")),
+            rounding_mode=self.get_nodeattr("w_rounding_mode"),
+        )
+
+        bias_quant = TensorQuant(
+            scale=model.get_initializer(self.onnx_node.input[6]),
+            zeropt=model.get_initializer(self.onnx_node.input[7]),
+            bitwidth=model.get_initializer(self.onnx_node.input[8]),
+            signed=bool(self.get_nodeattr("b_signed")),
+            narrow=bool(self.get_nodeattr("b_narrow")),
+            rounding_mode=self.get_nodeattr("b_rounding_mode"),
+        )
+
+        # Retrieve parallelization attributes.
+        par_attribute = get_par_attributes(self.onnx_node)
+
+        # Retrieve tensor shape.
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
+        if weights_shape is None:
+            raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
+
+        # Create weights and biases variable declarations if parameters are stored internally.
+        param_storage = self.get_nodeattr("param_storage")
+        if param_storage == "INTERNAL":
+            values = np.random.randint(
+                low=0,
+                high=2**(weights_quant.bitwidth - 1),
+                size=np.prod(weights_shape),
+                dtype=np.int8,
+            )
+            weights_var = cpp_variable(
+                name=f"{self.onnx_node.name}_weights",
+                primitive=get_hls_quant_type(weights_quant),
+                pragma=[
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=3 complete",
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=2 complete",
+                ],
+                value=values.reshape(output_shape[1] * input_shape[1] // (par_attribute["in_ch_par"] * par_attribute["out_ch_par"]),
+                                        par_attribute["in_ch_par"] * par_attribute["out_ch_par"],
+                                        self.get_nodeattr("kernel_shape")[0] * self.get_nodeattr("kernel_shape")[1])
+            )
+
+            values = np.random.randint(
+                low=0,
+                high=2**(bias_quant.bitwidth - 1),
+                size=output_shape[1],
+                dtype=np.int32,
+            )
+
+            bias_var = cpp_variable(
+                name=f"{self.onnx_node.name}_biases",
+                primitive=get_hls_quant_type(bias_quant),
+                pragma=[
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=3 complete",
+                    f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=2 complete",
+                ],
+                value=values.reshape(output_shape[1] // par_attribute["out_ch_par"],
+                                      par_attribute["out_ch_par"],
+                                      1),
+            )
+
+            return (
+                weights_var.generate_declaration() 
+                + ";\n"
+                + weights_var.generate_pragma()
+                + "\n"
+                + bias_var.generate_declaration()
+                + ";\n"
+                + bias_var.generate_pragma()
+            )
+        else:
+            return ""
 
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
 
+        name = f"{self.onnx_node.name}.run_allpartitioned" if hls_tag == 160 else f"{self.onnx_node.name}.run"
         # Generate the call to the StreamingConv run method.
         run = cpp_function(
-            name=f"{self.onnx_node.name}.run",
+            name=name,
             return_type="void",
             arguments=(
                 (
@@ -450,8 +557,8 @@ class StreamingConv(CustomOp):
         return run.generate_call(
             [hls_tag],
             self.__get_stream_name(self.onnx_node.input[0]),
-            self.__get_stream_name(self.onnx_node.input[1]),
-            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.input[1]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_weights",
+            self.__get_stream_name(self.onnx_node.input[5]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_biases",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
@@ -485,8 +592,8 @@ class StreamingConv(CustomOp):
         return step.generate_call(
             [],
             self.__get_stream_name(self.onnx_node.input[0]),
-            self.__get_stream_name(self.onnx_node.input[1]),
-            self.__get_stream_name(self.onnx_node.input[5]),
+            self.__get_stream_name(self.onnx_node.input[1]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_weights",
+            self.__get_stream_name(self.onnx_node.input[5]) if self.get_nodeattr("param_storage") == "EXTERNAL" else f"{self.onnx_node.name}_biases",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
