@@ -28,12 +28,14 @@ void wrap_run(
     hls::stream<TBiasWord> i_biases[1],
     hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
   // Wrapper for synthesis.
-  StreamingDepthwiseConv<TInputWord, test_config::TInput, TWeightWord, TBiasWord,
-                TOutputWord, test_config::TOutput, test_config::TAcc, test_config::Activation,
-                test_config::Quantizer, test_config::OUT_CH, test_config::IN_CH,
-                test_config::OUT_HEIGHT, test_config::OUT_WIDTH,
-                test_config::FH, test_config::FW, test_config::STRIDE_H,
-                test_config::STRIDE_W, test_config::CH_PAR, test_config::W_PAR>
+  StreamingDepthwiseConv<
+      TInputWord, test_config::TInput, TWeightWord, test_config::TWeight,
+      TBiasWord, test_config::TBias, TOutputWord, test_config::TOutput,
+      test_config::TAcc, test_config::Activation, test_config::Quantizer,
+      test_config::OUT_CH, test_config::IN_CH, test_config::OUT_HEIGHT,
+      test_config::OUT_WIDTH, test_config::FH, test_config::FW,
+      test_config::STRIDE_H, test_config::STRIDE_W, test_config::CH_PAR,
+      test_config::W_PAR>
       conv;
   conv.run<0>(i_data, i_weights, i_biases, o_data);
 }
@@ -187,12 +189,13 @@ bool test_step() {
 
   // Run the convolution
   StreamingDepthwiseConv<
-      TInputWord, test_config::TInput, TWeightWord, TBiasWord, TOutputWord,
-      test_config::TOutput, test_config::TAcc, test_config::Activation,
-      test_config::Quantizer, test_config::OUT_CH, test_config::IN_CH,
-      test_config::OUT_HEIGHT, test_config::OUT_WIDTH, test_config::FH,
-      test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
-      test_config::CH_PAR, test_config::W_PAR>
+      TInputWord, test_config::TInput, TWeightWord, test_config::TWeight,
+      TBiasWord, test_config::TBias, TOutputWord, test_config::TOutput,
+      test_config::TAcc, test_config::Activation, test_config::Quantizer,
+      test_config::OUT_CH, test_config::IN_CH, test_config::OUT_HEIGHT,
+      test_config::OUT_WIDTH, test_config::FH, test_config::FW,
+      test_config::STRIDE_H, test_config::STRIDE_W, test_config::CH_PAR,
+      test_config::W_PAR>
       conv;
   conv.step_init(test_config::PIPELINE_DEPTH);
 
