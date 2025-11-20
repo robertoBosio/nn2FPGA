@@ -10,14 +10,16 @@
 #include <iostream>
 #include <unordered_map>
 
-using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
+using TInputWordA = std::array<test_config::TInputA, test_config::CH_PAR>;
+using TInputWordB = std::array<test_config::TInputB, test_config::CH_PAR>;
 using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
 
-void wrap_run(hls::stream<TInputWord> i_data0[test_config::W_PAR],
-              hls::stream<TInputWord> i_data1[test_config::W_PAR],
+void wrap_run(hls::stream<TInputWordA> i_data0[test_config::W_PAR],
+              hls::stream<TInputWordB> i_data1[test_config::W_PAR],
               hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
-  StreamingAdd<TInputWord, test_config::TInput,
-               TOutputWord, test_config::TOutput, test_config::TAcc,
+  StreamingAdd<TInputWordA, test_config::TInputA, TInputWordB,
+               test_config::TInputB, TOutputWord, test_config::TOutput,
+               test_config::TAcc, test_config::Activation,
                test_config::Quantizer, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
                test_config::CH_PAR>
@@ -26,8 +28,8 @@ void wrap_run(hls::stream<TInputWord> i_data0[test_config::W_PAR],
 }
 
 bool test_run() {
-  hls::stream<TInputWord> i_data0[test_config::W_PAR];
-  hls::stream<TInputWord> i_data1[test_config::W_PAR];
+  hls::stream<TInputWordA> i_data0[test_config::W_PAR];
+  hls::stream<TInputWordB> i_data1[test_config::W_PAR];
   hls::stream<TOutputWord> o_data[test_config::W_PAR];
 
   // Streaming input tensors.
@@ -36,7 +38,8 @@ bool test_run() {
       for (size_t i_ich = 0; i_ich < test_config::IN_CH;
            i_ich += test_config::CH_PAR) {
         for (size_t i_w_par = 0; i_w_par < test_config::W_PAR; i_w_par++) {
-          TInputWord input_data0, input_data1;
+          TInputWordA input_data0;
+          TInputWordB input_data1;
           for (size_t i_ch_par = 0; i_ch_par < test_config::CH_PAR;
                i_ch_par++) {
             input_data0[i_ch_par] =
@@ -104,12 +107,13 @@ bool test_step() {
       (test_config::CH_PAR * test_config::W_PAR);
 
   // Create input and output streams
-  hls::stream<TInputWord> i_data0[test_config::W_PAR];
-  hls::stream<TInputWord> i_data1[test_config::W_PAR];
+  hls::stream<TInputWordA> i_data0[test_config::W_PAR];
+  hls::stream<TInputWordB> i_data1[test_config::W_PAR];
   hls::stream<TOutputWord> o_data[test_config::W_PAR];
-  StreamingAdd<TInputWord, test_config::TInput,
-               TOutputWord, test_config::TOutput,
-               test_config::TAcc, test_config::Quantizer, test_config::IN_HEIGHT,
+  StreamingAdd<TInputWordA, test_config::TInputA, TInputWordB,
+               test_config::TInputB, TOutputWord, test_config::TOutput,
+               test_config::TAcc, test_config::Activation,
+               test_config::Quantizer, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
                test_config::CH_PAR>
       add;
@@ -123,8 +127,8 @@ bool test_step() {
 
     // Dummy input data
     for (size_t i = 0; i < test_config::W_PAR; i++){
-      i_data0[i].write(TInputWord());
-      i_data1[i].write(TInputWord());
+      i_data0[i].write(TInputWordA());
+      i_data1[i].write(TInputWordB());
     }
 
     ActorStatus actor_status =

@@ -48,10 +48,14 @@ class TestStreamingAdd(BaseHLSTest):
             ],
         )
 
-        X_scale = helper.make_tensor(
-            "X_scale", TensorProto.FLOAT, [], [config_dict["X_SCALE"]]
+        A_scale = helper.make_tensor(
+            "A_scale", TensorProto.FLOAT, [], [config_dict["A_SCALE"]]
         )
-        X_zp = helper.make_tensor("X_zp", TensorProto.INT8, [], [config_dict["X_ZP"]])
+        B_scale = helper.make_tensor(
+            "B_scale", TensorProto.FLOAT, [], [config_dict["B_SCALE"]]
+        )
+        A_zp = helper.make_tensor("A_zp", TensorProto.INT8, [], [config_dict["A_ZP"]])
+        B_zp = helper.make_tensor("B_zp", TensorProto.INT8, [], [config_dict["B_ZP"]])
         Y_scale = helper.make_tensor(
             "Y_scale", TensorProto.FLOAT, [], [config_dict["Y_SCALE"]]
         )
@@ -59,12 +63,12 @@ class TestStreamingAdd(BaseHLSTest):
 
         dequant0 = helper.make_node(
             "DequantizeLinear",
-            inputs=["X0", "X_scale", "X_zp"],
+            inputs=["X0", "A_scale", "A_zp"],
             outputs=["X0_dequant"],
         )
         dequant1 = helper.make_node(
             "DequantizeLinear",
-            inputs=["X1", "X_scale", "X_zp"],
+            inputs=["X1", "B_scale", "B_zp"],
             outputs=["X1_dequant"],
         )
         quant = helper.make_node(
@@ -87,7 +91,7 @@ class TestStreamingAdd(BaseHLSTest):
             "add_test",
             [X0, X1],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+            initializer=[A_scale, B_scale, A_zp, B_zp, Y_scale, Y_zp],
         )
         model = helper.make_model(graph, producer_name="qonnx")
         sess = ort.InferenceSession(
@@ -102,14 +106,16 @@ class TestStreamingAdd(BaseHLSTest):
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
-            if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
+            if key in ["A_SCALE", "B_SCALE", "Y_SCALE"]:
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
+        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInputA;")
+        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInputB;")
         cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
         cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(f"typedef DequantQuantPo2<0, TAcc, TOutput> Quantizer;")
+        cwr.add_line("typedef DequantQuantEqual<TAcc> Activation;")
         # cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
         cwr.add_lines(
             csnake.Variable(
@@ -147,9 +153,11 @@ class TestStreamingAdd(BaseHLSTest):
             "IN_CH": 4,
             "CH_PAR": 2,
             "W_PAR": 1,
-            "X_SCALE": 2**-5,
+            "A_SCALE": 2**-5,
+            "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
-            "X_ZP": 0,
+            "A_ZP": 0,
+            "B_ZP": 0,
             "Y_ZP": 0,
             "PIPELINE_DEPTH": 5,
         }

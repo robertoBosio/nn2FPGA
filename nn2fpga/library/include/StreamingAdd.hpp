@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <cassert>
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename TAcc, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t W_PAR, size_t CH_PAR>
+template <typename TInputWordA, typename TInputA, typename TInputWordB,
+          typename TInputB, typename TOutputWord, typename TOutput,
+          typename TAcc, typename Activation, typename Quantizer,
+          size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH, size_t W_PAR,
+          size_t CH_PAR>
 class StreamingAdd {
 
   struct StepState {
@@ -44,19 +46,19 @@ class StreamingAdd {
   StreamingAdd() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data0[W_PAR],
-           hls::stream<TInputWord> i_data1[W_PAR],
+  void run(hls::stream<TInputWordA> i_dataA[W_PAR],
+           hls::stream<TInputWordB> i_dataB[W_PAR],
            hls::stream<TOutputWord> o_data[W_PAR]) {
   STREAMINGADD_RUN_LOOP:
     for (size_t i = 0; i < IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR);
          i++) {
 #pragma HLS PIPELINE II = 1
-      StreamingAdd::pipeline_body(i_data0, i_data1, o_data);
+      StreamingAdd::pipeline_body(i_dataA, i_dataB, o_data);
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_data0[W_PAR],
-                   hls::stream<TInputWord> i_data1[W_PAR],
+  ActorStatus step(hls::stream<TInputWordA> i_dataA[W_PAR],
+                   hls::stream<TInputWordB> i_dataB[W_PAR],
                    hls::stream<TOutputWord> o_data[W_PAR]) {
     // Get the state for this instance.
     auto it = registry().find(this);
@@ -66,7 +68,7 @@ class StreamingAdd {
     // Compute firing condition.
     bool firing_condition = true;
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (i_data0[i_w_par].empty() || i_data1[i_w_par].empty()) {
+      if (i_dataA[i_w_par].empty() || i_dataB[i_w_par].empty()) {
         firing_condition = false;
         break;
       }
@@ -74,7 +76,7 @@ class StreamingAdd {
 
     if (firing_condition) {
       hls::stream<TOutputWord> o_data_instant[W_PAR];
-      StreamingAdd::pipeline_body(i_data0, i_data1, o_data_instant);
+      StreamingAdd::pipeline_body(i_dataA, i_dataB, o_data_instant);
 
       // Update iterators
       st.i = (st.i + 1) % (IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
@@ -110,26 +112,30 @@ class StreamingAdd {
   }
 
 private:
-  static void pipeline_body(hls::stream<TInputWord> i_data0[W_PAR],
-                            hls::stream<TInputWord> i_data1[W_PAR],
+  static void pipeline_body(hls::stream<TInputWordA> i_dataA[W_PAR],
+                            hls::stream<TInputWordB> i_dataB[W_PAR],
                             hls::stream<TOutputWord> o_data[W_PAR]) {
 #pragma HLS inline
-    TInputWord s_input0_struct, s_input1_struct;
+    TInputWordA s_inputA_struct;
+    TInputWordB s_inputB_struct;
     TOutputWord s_output_struct;
     Quantizer quantizer;
+    Activation activation;
 
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       // Read the input data structure from the input streams.
-      s_input0_struct = i_data0[i_w_par].read();
-      s_input1_struct = i_data1[i_w_par].read();
+      s_inputA_struct = i_dataA[i_w_par].read();
+      s_inputB_struct = i_dataB[i_w_par].read();
 
       for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
         // Extract the data for the current pixel channel.
-        TInput s_input0_data = s_input0_struct[i_ch_par];
-        TInput s_input1_data = s_input1_struct[i_ch_par];
+        TInputA s_inputA_data = s_inputA_struct[i_ch_par];
+        TInputB s_inputB_data = s_inputB_struct[i_ch_par];
 
         // Perform the addition.
-        TAcc s_sum = s_input0_data + s_input1_data;
+        TAcc s_sum = s_inputA_data + s_inputB_data;
+        // Apply activation function.
+        s_sum = activation(s_sum);
 
         // Quantize the sum.
         TOutput s_output_data = quantizer(s_sum);
