@@ -148,12 +148,12 @@ class TestStreamingConv(BaseHLSTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_uint<{config_dict['INPUT_DATAWIDTH']}> TInput;")
+        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
         cwr.add_line(f"typedef ap_int<{config_dict['WEIGHT_DATAWIDTH']}> TWeight;")
         cwr.add_line(f"typedef ap_int<{config_dict['BIAS_DATAWIDTH']}> TBias;")
         cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
-        cwr.add_line(f"typedef DequantQuantPo2<8, TAcc, TOutput> Quantizer;")
+        cwr.add_line(f"typedef DequantQuantPo2<5, TAcc, TOutput> Quantizer;")
         cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
         cwr.add_lines(
             csnake.Variable(

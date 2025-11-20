@@ -1,9 +1,9 @@
 #pragma once
-#include "hls_stream.h"
 #include "ap_int.h"
+#include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
 
 /**
  * @brief StreamingMemory implements a memory as a stream of data.
@@ -158,13 +158,16 @@ public:
                    hls::stream<TOutputWord> o_data[FH * FW],
                    hls::stream<TInputWord> o_shift_data[1]) {
     (void)o_shift_data;
-    return step(i_shift_data, o_data);
+    (void)i_shift_data;
+    return step(o_data);
   }
 
   template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> i_shift_data[1],
            hls::stream<TOutputWord> o_data[FH * FW]) {
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
     static bool initialized_flag = false;
 
     // Initialize memory from input stream on first run
@@ -185,6 +188,25 @@ public:
   ActorStatus step(hls::stream<TInputWord> i_shift_data[1],
                    hls::stream<TOutputWord> o_data[FH * FW]) {
     (void)i_shift_data;
+    return step(o_data);
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TOutputWord> o_data[FH * FW]) {
+    static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
+
+    for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
+      for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
+#pragma HLS pipeline II = 1
+        StreamingMemory::pipeline_body(o_data, mem[i_ch_groups]);
+      }
+    }
+  }
+
+  ActorStatus step(hls::stream<TOutputWord> o_data[FH * FW]) {
     static TOutput mem[CH_GROUPS][OUT_CH_PAR * IN_CH_PAR][FH * FW];
 
     // Find the state for this instance.
