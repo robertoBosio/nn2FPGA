@@ -884,7 +884,7 @@ class BalanceComputation(Transformation):
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
         NUM_PORTS = int(NUM_PORTS * 1.2)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.4  # 40% of the DSPs are used for parallelization
+        NUM_DSP = board_res["dsp"] * 0.02  # 40% of the DSPs are used for parallelization
 
         # Extract layers information
         layers_info = layers_extractions(model)
@@ -928,7 +928,6 @@ class BalanceComputation(Transformation):
             generate_report_file,
             prj_root=self.nn2fpga_root,
         )
-        exit(0)
 
         # Update the model with the parallelization chosen for each layer
         model = update_model(model, layer_par)

@@ -260,6 +260,7 @@ class AddStreamingParams(Transformation):
         for node in model.graph.node:
             if node.op_type in NODE_WITH_PARAMS:
                 hoist_params_to_streaming_memory_unpacked(model, node)
+                getCustomOp(node).set_nodeattr("param_storage", "EXTERNAL")
 
         # Find all nodes with parameters that need streaming
         # and collect them in a list.
