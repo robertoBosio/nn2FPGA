@@ -1,12 +1,10 @@
-from dataclasses import dataclass
 import numpy as np
-import onnxruntime as rt
-from onnx import TensorProto, helper
+from dataclasses import dataclass
+from onnx import helper
 from onnxscript.rewriter import pattern
-from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
+from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
-from backend.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
 from backend.custom_op.hlskernel import HLSKernel
 from backend.custom_op.op_base import NN2FPGAOp, DSECapable
 from backend.custom_op.register_rewrite_rule import register_rules
@@ -17,61 +15,106 @@ from backend.util.codegen_utils import (
     get_hls_quant_type,
 )
 
-class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
-    """Node implementing the streaming global average pooling operation."""
-
+class StreamingMaxPool(NN2FPGAOp, DSECapable):
+    """ Node implementing the output-stationary MaxPool operation. """
+    
     @dataclass(frozen=True)
     class DSEPoint:
         channel_unroll: int
+        width_unroll: int
+        filter_width_unroll: int
+        filter_height_unroll: int
 
         def to_dict(self) -> dict:
             return {
                 "channel_unroll": self.channel_unroll,
+                "width_unroll": self.width_unroll,
+                "filter_width_unroll": self.filter_width_unroll,
+                "filter_height_unroll": self.filter_height_unroll,
             }
 
         @staticmethod
-        def from_dict(d: dict) -> "StreamingGlobalAveragePool.DSEPoint":
-            return StreamingGlobalAveragePool.DSEPoint(
+        def from_dict(d: dict) -> "StreamingMaxPool.DSEPoint":
+            return StreamingMaxPool.DSEPoint(
                 channel_unroll=d["channel_unroll"],
+                width_unroll=d["width_unroll"],
+                filter_width_unroll=d["filter_width_unroll"],
+                filter_height_unroll=d["filter_height_unroll"],
             )
 
     @staticmethod
-    def pattern(op, x):
-        return op.GlobalAveragePool(x, _allow_other_attributes=True)
+    def pattern(
+        op,
+        x,
+        dilations,
+        kernel_shape,
+        pads,
+        strides,
+    ):
+        y = op.MaxPool(
+            x,
+            dilations=dilations,
+            kernel_shape=kernel_shape,
+            pads=pads,
+            strides=strides,
+            _allow_other_attributes=True,
+        )
+        return y
 
     @staticmethod
-    def rewrite(op, x):
-        return op.StreamingGlobalAveragePool(
+    def rewrite(
+        op,
+        x,
+        dilations,
+        kernel_shape,
+        pads,
+        strides,
+    ):
+        return op.StreamingMaxPool(
             x,
+            dilations=dilations,
+            kernel_shape=kernel_shape,
+            pads=pads,
+            strides=strides,
             _domain="backend.custom_op",
         )
 
     @register_rules
-    def register_rules():
-        return [
-            pattern.RewriteRule(
-                StreamingGlobalAveragePool.pattern, StreamingGlobalAveragePool.rewrite
-            )
-        ]
+    def _rewriter_rules():
+        return [pattern.RewriteRule(StreamingMaxPool.pattern, StreamingMaxPool.rewrite)]
 
     def get_nodeattr_types(self):
         return {
+            # Standard ONNX attributes for Conv
+            "dilations": ("ints", True, [1, 1]),
+            "kernel_shape": ("ints", True, [1, 1]),
+            "pads": ("ints", True, [0, 0]),
+            "strides": ("ints", True, [1, 1]),
+            "ceil_mode": ("i", False, 0),
+
+            # Custom attributes for parallelization of StreamingMaxPool
             "channel_unroll": ("i", False, 1),
+            "width_unroll": ("i", False, 1),
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
-            "in_word_array": ("i", False, 1),
-            "out_word_array": ("i", False, 1),
+            "in_stream_width": ("i", False, 1),
+            "out_stream_width": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
         node = self.onnx_node
 
         return helper.make_node(
-            "GlobalAveragePool",
+            "MaxPool",
             inputs=node.input,
             outputs=node.output,
             name=f"{node.name}_shape_compatible",
+            dilations=self.get_nodeattr("dilations"),
+            kernel_shape=self.get_nodeattr("kernel_shape"),
+            pads=self.get_nodeattr("pads"),
+            strides=self.get_nodeattr("strides"),
+            ceil_mode=self.get_nodeattr("ceil_mode"),
         )
 
     def infer_node_datatype(self, model):
@@ -80,39 +123,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         model.set_tensor_datatype(node.output[0], dtype)
 
     def execute_node(self, context, graph):
-        # create a standard conv node to compute the result
-        node = self.onnx_node
-        node_conv = helper.make_node(
-            "GlobalAveragePool",
-            inputs=node.input,
-            outputs=node.output,
-            name=f"{node.name}_shape_compatible",
-        )
-
-        # Make single node graph for execution
-        inp_values = context[node.input[0]]
-        oshape = context[node.output[0]].shape
-        ishape = inp_values.shape
-        inp = helper.make_tensor_value_info(node.input[0], TensorProto.FLOAT, ishape)
-        outp = helper.make_tensor_value_info(node.output[0], TensorProto.FLOAT, oshape)
-
-        graph_globaleaveragepool = helper.make_graph(
-            nodes=[node_conv],
-            name="single-conv-exec",
-            inputs=[inp],
-            outputs=[outp],
-        )
-
-        opset_version = self.onnx_opset_version
-        opset_imports = [helper.make_opsetid("", opset_version)]
-        onnx_kwargs = {"opset_imports": opset_imports}
-        model_globalaveragepool = qonnx_make_model(graph_globaleaveragepool, **onnx_kwargs)
-        idict = {node.input[0]: inp_values}
-
-        # Execute the model using ONNX Runtime
-        sess = rt.InferenceSession(model_globalaveragepool.SerializeToString())
-        result = np.array(sess.run(None, idict)[0])
-        context[node.output[0]] = result.astype(np.float32)
+        pass
 
     def verify_node(self):
         pass
@@ -123,58 +134,8 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         """
         return f"{name}_stream"
 
-    def __get_accumulator(self, input_quant, input_shape) -> str:
-        """ Returns the accumulator type for the StreamingGlobalAveragePool operation. """
-
-        add_ops = input_shape[2] * input_shape[3] # H * W
-        acc_bitwidth = input_quant.bitwidth + int(np.ceil(np.log2(add_ops)))
-        acc_quant = TensorQuant(
-            bitwidth=acc_bitwidth,
-            signed=input_quant.signed,
-            scale=input_quant.scale,
-            zeropt=input_quant.zeropt,
-        )
-
-        return f"{get_hls_quant_type(acc_quant)}"
-
-    def __get_divisor(self, input_shape) -> str:
-        """ Returns the divisor type for the StreamingGlobalAveragePool operation. """
-
-        divisor = input_shape[2] * input_shape[3]
-        divisor_quant = TensorQuant(
-            bitwidth=int(np.ceil(np.log2(divisor + 1))),
-            signed=False,
-            scale=1.0,
-            zeropt=0,
-        )
-        return f"{get_hls_quant_type(divisor_quant)}"
-
-    def __is_power_of_two(self, value) -> bool:
-        """Check if a value is a power of two."""
-        return value > 0 and float(np.log2(value)).is_integer()
-
-    def __get_quantizer(self, input_quant, output_quant, input_shape) -> str:
-        """Returns the quantizer type for the StreamingGlobalAveragePool operation."""
-
-        # Check if the scale is a power of two
-        if self.__is_power_of_two(input_quant.scale) and self.__is_power_of_two(
-            output_quant.scale
-        ):
-            shift = int(np.log2(input_quant.scale)) - int(np.log2(output_quant.scale))
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {get_hls_quant_type(output_quant)}>"
-        else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
-            )
-
-    def __current_dse_point(self) -> "StreamingGlobalAveragePool.DSEPoint":
-        """ Retrieve the current DSE point from the ONNX attributes. """
-        return StreamingGlobalAveragePool.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-        )
-
     def __get_object_declaration(self, model) -> cpp_object:
-        """ Generate the cpp_object for the StreamingGlobalAveragePool operation. """
+        """ Generate the cpp_object for the StreamingMaxPool operation. """
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
@@ -194,29 +155,34 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         output_shape = model.get_tensor_shape(self.onnx_node.output[0])
         if output_shape is None:
             raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
 
-        # Create the StreamingGlobalAveragePool object.
-        StreamingGlobalAveragePool = cpp_object(
-            "StreamingGlobalAveragePool",
+        # Create the StreamingMaxPool object.
+        StreamingMaxPool = cpp_object(
+            "StreamingMaxPool",
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputStruct"),
+                (
+                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    "TInputStruct",
+                ),
                 (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}", "TOutputStruct"),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (self.__get_accumulator(input_quant, input_shape), "TAcc"),
-                (self.__get_divisor(input_shape), "TDiv"),
-                (self.__get_quantizer(input_quant, output_quant, input_shape), "Quantizer"),
-                (input_shape[2], "IN_HEIGHT"),
-                (input_shape[3], "IN_WIDTH"),
                 (output_shape[1], "OUT_CH"),
-                (point.channel_unroll, "OUT_CH_PAR"),
-            ])
+                (output_shape[2], "IN_HEIGHT"),
+                (output_shape[3], "IN_WIDTH"),
+                (self.get_nodeattr("kernel_shape")[0], "FH"),
+                (self.get_nodeattr("kernel_shape")[1], "FW"),
+                (self.get_nodeattr("strides")[0], "STRIDE_H"),
+                (self.get_nodeattr("strides")[1], "STRIDE_W"),
+                (point.channel_unroll, "CH_PAR"),
+                (point.width_unroll, "W_PAR"),
+            ],
+        )
 
-        return StreamingGlobalAveragePool.generate_declaration()
+        return StreamingMaxPool.generate_declaration()
 
     def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingGlobalAveragePool node.
+        """ Get the internal cpp variables of the StreamingMaxPool node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -225,19 +191,19 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         return ""
 
     def __get_run_call(self, hls_tag: int) -> str:
-        """ Generates the C++ code necessary to run the StreamingGlobalAveragePool node. """
+        """ Generates the C++ code necessary to run the StreamingMaxPool node. """
 
-        # Generate the call to the StreamingGlobalAveragePool run method.
+        # Generate the call to the StreamingMaxPool run method.
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
             arguments=(
                 (
-                    f"input_data_stream",
+                    f"i_data",
                     f"hls::stream<TInputStruct>",
                 ),
                 (
-                    f"output_data_stream",
+                    f"o_data",
                     f"hls::stream<TOutputStruct>",
                 ),
             ),
@@ -250,19 +216,19 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         )
 
     def __get_step_call(self) -> str:
-        """ Generates the C++ code necessary to step the StreamingGlobalAveragePool node. """
+        """ Generates the C++ code necessary to step the StreamingMaxPool node. """
 
-        # Generate the call to the StreamingGlobalAveragePool step method.
+        # Generate the call to the StreamingMaxPool step method.
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
             return_type="void",
             arguments=(
                 (
-                    f"input_data_stream",
+                    f"i_data",
                     f"hls::stream<TInputStruct>",
                 ),
                 (
-                    f"output_data_stream",
+                    f"o_data",
                     f"hls::stream<TOutputStruct>",
                 ),
             ),
@@ -274,12 +240,17 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
+    def __current_dse_point(self) -> "StreamingMaxPool.DSEPoint":
+        """ Retrieve the current DSE point from the ONNX attributes. """
+        return StreamingMaxPool.DSEPoint(
+            channel_unroll=self.get_nodeattr("channel_unroll"),
+            width_unroll=self.get_nodeattr("width_unroll"),
+            filter_height_unroll=self.get_nodeattr("filter_height_unroll"),
+            filter_width_unroll=self.get_nodeattr("filter_width_unroll"),
+        )
+
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
-        Lowers the StreamingGlobalAveragePool node to HLS code.
-        Args:
-          model (ModelWrapper): The model with quantization information.
-          hls_tag (int): The current HLS tag for unique identification.
         Returns:
           nodes: List[onnx.NodeProto]
           initializers: List[onnx.TensorProto]
@@ -287,18 +258,22 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         """
 
         point = self.__current_dse_point()
+        FH = self.get_nodeattr("kernel_shape")[0]
+        FW = self.get_nodeattr("kernel_shape")[1]
+        STRIDE_W = self.get_nodeattr("strides")[1]
+        FW_EXTENDED = FW + (point.width_unroll - 1) * STRIDE_W
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
-            for i in range(self.get_nodeattr("in_stream_array"))
+            for i in range(FH * FW_EXTENDED)
         ]
 
         output_names = [
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
-            for i in range(self.get_nodeattr("out_stream_array"))
+            for i in range(self.get_nodeattr('out_stream_array'))
         ]
 
         tensors_fifo_metadata = {}
@@ -306,7 +281,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
                 hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
-                n_array=self.get_nodeattr("out_stream_array"),
+                n_array=self.get_nodeattr('out_stream_array'),
             )
 
         hls_kernel = HLSKernel.make_node(
@@ -314,9 +289,9 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
-            original_op_type=self.onnx_node.op_type,
-            hls_object_name=self.onnx_node.name,
+            original_op_type="StreamingMaxPool",
             hls_tag=hls_tag,
+            hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),
             hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),
@@ -327,7 +302,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
 
     def get_latency(self, model: ModelWrapper) -> int:
-        """ Estimate the latency of the StreamingGlobalAveragePool operation.
+        """ Estimate the latency of the StreamingMaxPool operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -336,14 +311,17 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
         if input_shape is None:
             raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
-        return np.prod(input_shape) // point.channel_unroll
+        return np.prod(output_shape) // (point.channel_unroll * point.width_unroll)
 
     def get_brams(self, model: ModelWrapper) -> int:
-        """ Estimate the BRAM usage of the StreamingGlobalAveragePool operation.
+        """ Estimate the BRAM usage of the StreamingMaxPool operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -352,21 +330,26 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         return 0
 
     def get_dsps(self, model: ModelWrapper) -> int:
-        """ Estimate the DSP usage of the StreamingGlobalAveragePool operation.
+        """ Estimate the DSP usage of the StreamingMaxPool operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: Estimated DSP usage.
         """
-        # Retrieve current parallelization attributes if not provided.
-        point = self.__current_dse_point()
+        return 0
 
-        return point.channel_unroll
-
-    def get_dse_points(self, model: ModelWrapper) -> list["StreamingGlobalAveragePool.DSEPoint"]:
-
+    def get_dse_point(self, model: ModelWrapper) -> list["StreamingMaxPool.DSEPoint"]:
+        """ Generate the DSE points for the StreamingMaxPool operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            list[StreamingMaxPool.DSEPoint]: List of DSE points.
+        """
+        
         def divisors(n, clip):
             return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
+
+        kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
@@ -388,39 +371,66 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
                 f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
             )
         input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-
-        DSE_points = []
-        for channel_unroll in divisors(input_shape[1], input_shape[1]):
-            # Check dimension of input streams
-            if (input_bits * channel_unroll) > 4096:
-                continue
-            # Check dimension of output streams
-            if (output_bits * channel_unroll) > 4096:
-                continue
-
-            DSE_points.append(
-                self.DSEPoint(
-                    channel_unroll
-                )
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
             )
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+
+        # As of now, kernel height and width are completely unrolled.
+        DSE_points = []
+        for channel_unroll in divisors(output_shape[1], output_shape[1]):
+            for width_unroll in divisors(output_shape[3], output_shape[3]):
+                # Check dimension of input streams
+                if (input_bits * channel_unroll) > 4096:
+                    continue
+                # Check dimension of output streams
+                if (output_bits * channel_unroll) > 4096:
+                    continue
+
+                DSE_points.append(
+                    self.DSEPoint(
+                        channel_unroll, width_unroll, kernel_height, kernel_width
+                    )
+                )
 
         return DSE_points
 
     def has_linebuffer(self) -> bool:
-        """ Check if the StreamingGlobalAveragePool operation requires a line buffer.
+        """ Check if the StreamingMaxPool operation requires a line buffer.
         Returns:
             bool: True if Line Buffering is required, False otherwise.
         """
-        return False
 
-    def apply_point(self, model: ModelWrapper, point: "StreamingGlobalAveragePool.DSEPoint"):
-        """ Set the parallelization attributes for the StreamingGlobalAveragePool operation.
+        kernel_shape = self.get_nodeattr("kernel_shape")
+        stride = self.get_nodeattr("strides")
+        pads = self.get_nodeattr("pads")
+        point = self.__current_dse_point()
+
+        # The only case in which a StreamingMaxPool does not need a line buffer is when the kernel is 1x1,
+        # there is no stride, and the output width parallelization is 1 with no padding.
+        if (
+            all(k == 1 for k in kernel_shape)
+            and all(s == 1 for s in stride)
+            and point.width_unroll == 1
+            and all(p == 0 for p in pads)
+        ):
+            return False
+        return True
+    
+
+    def apply_point(self, model: ModelWrapper, point: "StreamingMaxPool.DSEPoint"):
+        """ Set the parallelization attributes for the StreamingMaxPool operation.
         Args:
-            point (StreamingGlobalAveragePool.DSEPoint): The DSE point containing the unrolling parameters.
+            point (StreamingMaxPool.DSEPoint): The DSE point containing the unrolling parameters.
         """
         self.set_nodeattr("channel_unroll", point.channel_unroll)
+        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("filter_width_unroll", point.filter_width_unroll)
+        self.set_nodeattr("filter_height_unroll", point.filter_height_unroll)
 
-        self.set_nodeattr("in_stream_array", 1)
-        self.set_nodeattr("out_stream_array", 1)
+        self.set_nodeattr("in_stream_array", point.width_unroll)
+        self.set_nodeattr("out_stream_array", point.width_unroll)
         self.set_nodeattr("in_word_array", point.channel_unroll)
         self.set_nodeattr("out_word_array", point.channel_unroll)

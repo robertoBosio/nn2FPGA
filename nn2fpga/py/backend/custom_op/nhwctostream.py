@@ -1,33 +1,52 @@
+import math
+import numpy as np
+from dataclasses import dataclass
 from onnx import helper
-from qonnx.custom_op.base import CustomOp
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
+from backend.custom_op.op_base import DSECapable, NN2FPGAOp
 from backend.util.codegen_utils import (
     cpp_function,
-    cpp_variable,
     cpp_object,
     get_struct_type,
-    get_stream_type,
     get_hls_quant_type,
-    get_cpp_quant_type
 )
-from backend.util.par_utils import get_par_attributes
-import math
 
-class NHWCToStream(CustomOp):
+class NHWCToStream(DSECapable, NN2FPGAOp):
     """ Node producing a streaming tensor starting from an axi lite interface. """
+    
+    @dataclass(frozen=True)
+    class DSEPoint:
+        """DSE point for StreamToNHWC operator."""
+        channel_unroll: int
+        width_unroll: int
+
+        @staticmethod
+        def from_dict(d: dict) -> "NHWCToStream.DSEPoint":
+            return NHWCToStream.DSEPoint(
+                channel_unroll=d["channel_unroll"],
+                width_unroll=d["width_unroll"],
+            )
+
+        def to_dict(self) -> dict:
+            return {
+                "channel_unroll": self.channel_unroll,
+                "width_unroll": self.width_unroll,
+            }
 
     def get_nodeattr_types(self):
         return {
-            "normalize": ("i", False, 0),  # 0: no normalization, 1: normalize the input tensor
             "axi_bitwidth": ("i", False, 128),  # Bitwidth of the AXI interface
-            "pipeline_depth": ("i", False, 1),  # Depth of the pipeline
-            "in_ch_par": ("i", False, 1),  # Input channel parallelization
-            "out_ch_par": ("i", False, 1),  # Output channel parallelization
-            "in_w_par": ("i", False, 1),  # Input width parallelization
-            "out_w_par": ("i", False, 1),  # Output width parallelization
+            # Custom attributes for unroll factors
+            "channel_unroll": ("i", False, 1),
+            "width_unroll": ("i", False, 1),
+            # Custom attributes for input/output streams
+            "in_stream_array": ("i", False, 1),
+            "out_stream_array": ("i", False, 1),
+            "in_word_array": ("i", False, 1),
+            "out_word_array": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -99,7 +118,7 @@ class NHWCToStream(CustomOp):
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
 
         # Retrieve parallelization attributes.
-        par_attribute = get_par_attributes(self.onnx_node)
+        point = self.__current_dse_point()
 
         # Retrieve tensor shape.
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
@@ -114,7 +133,7 @@ class NHWCToStream(CustomOp):
                 (f"ap_axiu<{input_bitwidth}, 0, 0, 0>", "TInputStruct"),
                 (f"ap_uint<{input_bitwidth}>", "TInput"),
                 (
-                    f"{get_struct_type(output_quant, par_attribute['out_ch_par'])}",
+                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     "TOutputStruct",
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
@@ -126,8 +145,8 @@ class NHWCToStream(CustomOp):
                 (input_shape[2], "HEIGHT"),
                 (input_shape[3], "WIDTH"),
                 (input_shape[1], "CH"),
-                (par_attribute["out_w_par"], "OUT_W_PAR"),
-                (par_attribute["out_ch_par"], "OUT_CH_PAR"),
+                (point.width_unroll, "OUT_W_PAR"),
+                (point.channel_unroll, "OUT_CH_PAR"),
             ]
         )
 
@@ -185,20 +204,19 @@ class NHWCToStream(CustomOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        par = get_par_attributes(self.onnx_node)
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
 
         output_names = [
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
-            for i in range(par["out_w_par"])
+            for i in range(self.get_nodeattr("out_stream_array"))
         ]
 
         tensors_fifo_metadata = {}
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
-                n_array=par["out_w_par"],
+                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                n_array=self.get_nodeattr("out_stream_array"),
             )
 
         hls_kernel = HLSKernel.make_node(
@@ -217,3 +235,112 @@ class NHWCToStream(CustomOp):
         hls_tag += 1
 
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
+    
+    def __current_dse_point(self) -> "NHWCToStream.DSEPoint":
+        """ Retrieve the current DSE point from the node attributes.
+        Returns:
+            NHWCToStream.DSEPoint: The current DSE point.
+        """
+        return NHWCToStream.DSEPoint(
+            channel_unroll=self.get_nodeattr("channel_unroll"),
+            width_unroll=self.get_nodeattr("width_unroll"),
+        )
+    
+    def get_latency(self, model: ModelWrapper) -> int:
+        """ Estimate the latency of the NHWCtoStream operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            int: Estimated latency in clock cycles.
+        """
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+
+        # Retrieve current parallelization attributes if not provided.
+        point = self.__current_dse_point()
+        unroll_factor = point.channel_unroll * point.width_unroll
+
+        latency = np.prod(input_shape) // unroll_factor
+        return latency
+
+    def get_brams(self, model: ModelWrapper) -> int:
+        """ Estimate the BRAM usage of the NHWCtoStream operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            int: Estimated BRAM usage.
+        """
+        return 0
+        
+
+    def get_dsps(self, model: ModelWrapper) -> int:
+        """ Estimate the DSP usage of the NHWCtoStream operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            int: Estimated DSP usage.
+        """
+        return 0
+
+    def get_dse_points(self, model: ModelWrapper) -> list["NHWCToStream.DSEPoint"]:
+        """ Generate all feasible DSE points for the NHWCtoStream operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            list[NHWCToStream.DSEPoint]: A list of feasible DSE points.
+        """
+        def divisors(n, clip):
+            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
+
+        axi_bitwidth = self.get_nodeattr("axi_bitwidth")
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
+        act_bits = output_quant.bitwidth
+
+        DSE_points = []
+        for channel_unroll in divisors(input_shape[1], input_shape[1]):
+            for width_unroll in divisors(input_shape[3], input_shape[3]):
+
+                # Check if the data fits in the AXI bitwidth.
+                if (np.prod([channel_unroll, width_unroll]) * act_bits) > axi_bitwidth:
+                    continue
+
+                # Width parallelization can only be applied if the full channel fits in the AXI word.
+                if width_unroll > 1 and channel_unroll != input_shape[1]:
+                    continue
+
+                DSE_points.append(
+                    NHWCToStream.DSEPoint(
+                        channel_unroll=channel_unroll, width_unroll=width_unroll
+                    )
+                )
+
+        return DSE_points
+    
+    def has_linebuffer(self, par: list = None) -> bool:
+        """ Check if the NHWCtoStream operation requires Line Buffering.
+        Returns:
+            bool: True if a line buffer is required, False otherwise.
+        """
+        return False
+    
+    def apply_point(
+        self, model: ModelWrapper, point: "NHWCToStream.DSEPoint"
+    ) -> None:
+        """Set the unroll factors in the node attributes based on the given DSE point.
+        Args:
+            point (NHWCToStream.DSEPoint): A DSE point containing the parallelization parameters.
+        """
+        self.set_nodeattr("channel_unroll", point.channel_unroll)
+        self.set_nodeattr("width_unroll", point.width_unroll)
+
+        self.set_nodeattr("in_stream_array", point.width_unroll)
+        self.set_nodeattr("out_stream_array", point.width_unroll)
+        self.set_nodeattr("in_word_array", point.channel_unroll)
+        self.set_nodeattr("out_word_array", point.channel_unroll)

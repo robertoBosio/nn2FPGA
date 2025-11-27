@@ -1,35 +1,41 @@
-from onnx import helper
-from qonnx.core.datatype import DataType
-from qonnx.custom_op.base import CustomOp
-from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
+from onnx import helper
+from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
+from backend.custom_op.op_base import NN2FPGAOp
+from backend.util.board_util import bram_usage_evaluator
 from backend.util.codegen_utils import (
     cpp_function,
-    cpp_variable,
     cpp_object,
     get_struct_type,
-    get_stream_type,
     get_hls_quant_type,
 )
-from backend.core.tensor_quant import TensorQuant
-from backend.util.par_utils import get_par_attributes
 
-class StreamingMemory(CustomOp):
-    """ Node storing the parameters of a node."""
+
+class StreamingMemory(NN2FPGAOp):
+    """Node streaming an on-chip memory."""
 
     def get_nodeattr_types(self):
         return {
-            "in_ch_par": ("i", True, 1),
-            "out_ch_par": ("i", True, 1),
-            "in_w_par": ("i", True, 1),
-            "out_w_par": ("i", True, 1),
+            # Custom attributes for unroll factors
+            "in_channel_unroll": ("i", False, 1),
+            "out_channel_unroll": ("i", False, 1),
+            "width_unroll": ("i", False, 1),
+            # Custom attributes for input/output streams
+            "in_stream_array": ("i", False, 1),
+            "out_stream_array": ("i", False, 1),
+            "in_word_array": ("i", False, 1),
+            "out_word_array": ("i", False, 1),
+            # Number of times the memory is streamed
             "times": ("i", True, 1),
+            # Data packed inside a single AXI word
             "data_per_word": ("i", True, 1),
+            # Shape of the memory tensor
             "mem_shape": ("ints", True, [1, 1, 1, 1]),  # N, C, H, W
-            "data_to_shift": ("i", False, 0),  # Number of bits to shift data left
+            # Number of data to shift to next StreamingMemory
+            "data_to_shift": ("i", False, 0),
         }
 
     def make_shape_compatible_op(self, model):
@@ -55,15 +61,15 @@ class StreamingMemory(CustomOp):
 
     def verify_node(self):
         pass
-    
+
     def __get_stream_name(self, name: str) -> str:
         """
         Returns the name of the stream for the tensor.
         """
         return f"{name}_stream"
-    
+
     def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingMemory node.
+        """Get the internal cpp variables of the StreamingMemory node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -72,7 +78,7 @@ class StreamingMemory(CustomOp):
         return ""
 
     def __get_run_call(self, hls_tag: int) -> str:
-        """ Generates the C++ code necessary to run the StreamingMemory node. """
+        """Generates the C++ code necessary to run the StreamingMemory node."""
 
         if self.get_nodeattr("data_to_shift") > 0:
             run = cpp_function(
@@ -107,9 +113,9 @@ class StreamingMemory(CustomOp):
                 self.__get_stream_name(self.onnx_node.input[0]),
                 self.__get_stream_name(self.onnx_node.output[0]),
             )
-    
+
     def __get_step_call(self) -> str:
-        """ Generates the C++ code necessary to run the StreamingMemory node. """
+        """Generates the C++ code necessary to run the StreamingMemory node."""
 
         if self.get_nodeattr("data_to_shift") > 0:
             step = cpp_function(
@@ -143,25 +149,28 @@ class StreamingMemory(CustomOp):
                 self.__get_stream_name(self.onnx_node.input[0]),
                 self.__get_stream_name(self.onnx_node.output[0]),
             )
-    
+
     def __get_object_declaration(self, model) -> cpp_object:
-        """ Generate the cpp_object for the StreamingMemory operation. """
+        """Generate the cpp_object for the StreamingMemory operation."""
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
+            raise ValueError(
+                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
+            )
 
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
-
-        # Retrieve parallelization attributes.
-        par_attribute = get_par_attributes(self.onnx_node)
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
 
         # Retrieve tensor shape.
         output_shape = model.get_tensor_shape(self.onnx_node.output[0])
         if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
+            )
         output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
 
         # Create the StreamingMemory object.
@@ -171,22 +180,27 @@ class StreamingMemory(CustomOp):
             template_args=[
                 (f"{get_struct_type(input_quant, 1)}", "TInput"),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (f"{get_struct_type(output_quant, par_attribute['in_ch_par'] * par_attribute['out_ch_par'])}", "TOutputStruct"),
+                (
+                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    "TOutputStruct",
+                ),
                 (f"{self.get_nodeattr('data_per_word')}", "DATA_PER_WORD"),
                 (f"{self.get_nodeattr('data_to_shift')}", "DATA_TO_SHIFT"),
                 (f"{self.get_nodeattr('times')}", "TIMES"),
-                (output_shape[0], "OUT_CH"),
-                (output_shape[1], "IN_CH"),
-                (output_shape[2], "FH"),
-                (output_shape[3], "FW"),
-                (par_attribute["out_ch_par"], "OUT_CH_PAR"),
-                (par_attribute["in_ch_par"], "IN_CH_PAR"),
-            ])
+                (np.prod(output_shape), "WORDS"),
+                (self.get_nodeattr("width_unroll"), "ARRAY_PAR"),
+                (
+                    self.get_nodeattr("in_channel_unroll")
+                    * self.get_nodeattr("out_channel_unroll"),
+                    "WORD_PAR",
+                ),
+            ],
+        )
 
         return StreamingMemory.generate_declaration()
 
-    def reshape_and_pack_init_to_int32words(self,
-        arr: np.ndarray, data_bitwidth: int, word_bitwidth: int
+    def reshape_and_pack_init_to_int32words(
+        self, arr: np.ndarray, data_bitwidth: int, word_bitwidth: int
     ) -> np.ndarray:
         """
         Packs values from the input array into 32-bit words, ensuring that each value
@@ -203,22 +217,41 @@ class StreamingMemory(CustomOp):
         data_bitwidth = int(data_bitwidth)
         if data_bitwidth > word_bitwidth or data_bitwidth <= 0:
             raise ValueError("data_bitwidth must be between 1 and 32")
-        
+
         # Extend the array shape to 2D if it's 1D
-        in_ch_par = self.get_nodeattr("in_ch_par")
-        out_ch_par = self.get_nodeattr("out_ch_par")
         if arr.ndim == 1:
             arr = arr[:, np.newaxis]
-        
+
         OC, IC, *spatial = arr.shape
         S = int(np.prod(spatial)) if spatial else 1
-        X = arr.reshape(OC // out_ch_par, out_ch_par, IC // in_ch_par, in_ch_par, S)
+        X = arr.reshape(
+            OC // self.get_nodeattr("out_channel_unroll"),
+            self.get_nodeattr("out_channel_unroll"),
+            IC // self.get_nodeattr("in_channel_unroll"),
+            self.get_nodeattr("in_channel_unroll"),
+            S,
+        )
         X = X.transpose(2, 0, 1, 3, 4)
-        B = X.reshape(-1, out_ch_par * in_ch_par, S)
-        arr = B.reshape(B.shape[0], B.shape[1], *spatial) if spatial else B.reshape(-1, out_ch_par * in_ch_par)
+        B = X.reshape(
+            -1,
+            self.get_nodeattr("out_channel_unroll")
+            * self.get_nodeattr("in_channel_unroll"),
+            S,
+        )
+        arr = (
+            B.reshape(B.shape[0], B.shape[1], *spatial)
+            if spatial
+            else B.reshape(
+                -1,
+                self.get_nodeattr("out_channel_unroll")
+                * self.get_nodeattr("in_channel_unroll"),
+            )
+        )
 
         arr = arr.flatten()  # Ensure the input is a 1D array
-        values_per_word = word_bitwidth // data_bitwidth  # Max number of values per word
+        values_per_word = (
+            word_bitwidth // data_bitwidth
+        )  # Max number of values per word
 
         # Pad the array to make its length a multiple of values_per_word
         padded_len = int(
@@ -231,7 +264,9 @@ class StreamingMemory(CustomOp):
         for i in range(0, padded_len, values_per_word):
             word = 0
             for j in range(values_per_word):
-                word |= (padded_arr[i + j] & ((1 << data_bitwidth) - 1)) << (data_bitwidth * j)
+                word |= (padded_arr[i + j] & ((1 << data_bitwidth) - 1)) << (
+                    data_bitwidth * j
+                )
             packed.append(word)
 
         return np.array(packed, dtype=np.uint32)
@@ -244,35 +279,34 @@ class StreamingMemory(CustomOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        par = get_par_attributes(self.onnx_node)
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
 
         if model.get_initializer(self.onnx_node.input[0]) is None:
-            input_names = [
-                f"{self.__get_stream_name(self.onnx_node.input[0])}_0_"
-            ]
+            input_names = [f"{self.__get_stream_name(self.onnx_node.input[0])}_0_"]
         else:
-            input_names = [
-                self.onnx_node.input[0]
-            ]
+            input_names = [self.onnx_node.input[0]]
 
         output_names = [
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
-            for i in range(par["out_w_par"])
+            for i in range(self.get_nodeattr("out_stream_array"))
         ]
 
         tensors_fifo_metadata = {}
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'] * par['in_ch_par'])}",
-                n_array=par["out_w_par"],
+                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                n_array=self.get_nodeattr("out_stream_array"),
             )
 
         if len(self.onnx_node.output) > 1:
-            output_names.append(f"{self.__get_stream_name(self.onnx_node.output[1])}_0_")
+            output_names.append(
+                f"{self.__get_stream_name(self.onnx_node.output[1])}_0_"
+            )
             tensors_fifo_metadata[output_names[-1]] = TensorFifo(
                 depth=0,
                 hls_type=f"{get_struct_type(get_custom_tensor_datatype(model, self.onnx_node.output[1]), 1)}",
@@ -295,3 +329,80 @@ class StreamingMemory(CustomOp):
         hls_tag += 1
 
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
+
+    def get_latency(
+        self, model: ModelWrapper
+    ) -> int:
+        """Estimate the latency of the StreamingMemory operation given a set of parallelization parameters.
+        Args:
+            point (StreamingMemory.DSEPoint): A DSE point containing the parallelization parameters.
+        Returns:
+            int: Estimated latency in clock cycles.
+        """
+
+        # Retrieve tensor shape (which is a memory).
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
+            )
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+
+        # Number of times the memory is streamed.
+        times = self.get_nodeattr("times")
+        latency = (np.prod(output_shape) * times) // (
+            self.get_nodeattr("out_channel_unroll") * self.get_nodeattr("in_channel_unroll") * self.get_nodeattr("width_unroll")
+        )
+        return latency
+
+    def get_brams(
+        self, model: ModelWrapper
+    ) -> int:
+        """Estimate the BRAM usage of the StreamingMemory operation given a set of parallelization parameters.
+        Args:
+            point (StreamingMemory.DSEPoint): A DSE point containing the parallelization parameters.
+        Returns:
+            int: Estimated BRAM usage.
+        """
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
+            )
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
+
+        word_bits = output_quant.bitwidth
+        n_words = np.prod(output_shape)
+
+        # The number of parallel words being read is determined by the unroll factors,
+        # given that the filter window is the minimum data unit being processed.
+        unroll_factor = (
+            self.get_nodeattr("out_channel_unroll")
+            * self.get_nodeattr("in_channel_unroll")
+            * self.get_nodeattr("width_unroll")
+        )
+        return bram_usage_evaluator(word_bits, n_words, unroll_factor)
+
+    def get_dsps(
+        self, model: ModelWrapper
+    ) -> int:
+        """Estimate the DSP usage of the TensorDuplicator operation given a set of parallelization parameters.
+        Args:
+            point (StreamingMemory.DSEPoint): A DSE point containing the parallelization parameters.
+        Returns:
+            int: Estimated DSP usage.
+        """
+        return 0
+
+    def has_linebuffer(self) -> bool:
+        """Check if the TensorDuplicator operation requires a linebuffer.
+        Returns:
+            bool: True if a linebuffer is required, False otherwise.
+        """
+        return False

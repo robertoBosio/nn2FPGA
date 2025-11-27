@@ -1,35 +1,35 @@
 from onnx import helper
-from qonnx.core.datatype import DataType
-from qonnx.custom_op.base import CustomOp
 from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
+from backend.custom_op.op_base import NN2FPGAOp
 from backend.util.codegen_utils import (
     cpp_function,
-    cpp_variable,
     cpp_object,
     get_struct_type,
-    get_stream_type,
-    get_hls_quant_type,
 )
-from backend.core.tensor_quant import TensorQuant
-from backend.util.par_utils import get_par_attributes
 
-class StreamingLineBuffer(CustomOp):
+class StreamingLineBuffer(NN2FPGAOp):
     """ Node producing a streaming window. """
 
     def get_nodeattr_types(self):
         return {
-            "in_ch_par": ("i", True, 1),
-            "out_ch_par": ("i", True, 1),
-            "in_w_par": ("i", True, 1),
-            "out_w_par": ("i", True, 1),
             "kernel_shape": ("ints", True, [1, 1]),
             "strides": ("ints", True, [1, 1]),
             "pads": ("ints", True, [0, 0, 0, 0]),
             "dilation": ("ints", True, [1, 1]),
+            
+            # Custom attributes for unroll factors
+            "channel_unroll": ("i", False, 1),
+            "width_unroll": ("i", False, 1),
+
+            # Custom attributes for input/output streams
+            "in_stream_array": ("i", False, 1),
+            "out_stream_array": ("i", False, 1),
+            "in_word_array": ("i", False, 1),
+            "out_word_array": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -73,6 +73,10 @@ class StreamingLineBuffer(CustomOp):
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
+        Lower the StreamingLineBuffer node to HLS kernels.
+        Args:
+          model: ModelWrapper
+          hls_tag: starting HLS tag integer
         Returns:
           nodes: List[onnx.NodeProto]
           initializers: List[onnx.TensorProto]
@@ -81,7 +85,6 @@ class StreamingLineBuffer(CustomOp):
 
         hls_kernels = []
         fifos = {}
-        par = get_par_attributes(self.onnx_node)
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
@@ -98,7 +101,7 @@ class StreamingLineBuffer(CustomOp):
         PAD_L = self.get_nodeattr("pads")[1]
         STRIDE_H = self.get_nodeattr("strides")[0]
         STRIDE_W = self.get_nodeattr("strides")[1]
-        FW_EXTENDED = FW + (par["in_w_par"] - 1) * STRIDE_W
+        FW_EXTENDED = FW + (self.get_nodeattr("width_unroll") - 1) * STRIDE_W
 
         # Create output fifo streams from the pixelWindowSelector and the
         # Pad if needed.
@@ -107,7 +110,7 @@ class StreamingLineBuffer(CustomOp):
             for i in range(FH * FW_EXTENDED):
                 fifos[f"{output_name}_{i}_"] = TensorFifo(
                     depth=0,
-                    hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
+                    hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     n_array=FH * FW_EXTENDED,
                 )
             output_name = f"{output_name}_prepad"
@@ -115,17 +118,17 @@ class StreamingLineBuffer(CustomOp):
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
+                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=FH * FW_EXTENDED,
             )
 
         # Create the PixelWindowSelector internal streams.
         # The last W_PAR nodes does not streams out anything.
-        for i in range(FH * FW_EXTENDED - par["in_w_par"]):
+        for i in range(FH * FW_EXTENDED - self.get_nodeattr("width_unroll")):
             fifos[f"{self.onnx_node.name}_buffer_stream_{i}_"] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, par['in_ch_par'])}",
-                n_array=FH * FW_EXTENDED - par["in_w_par"],
+                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+                n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
             )
 
         # Shift index pattern, based on which part of the tensor the pixel is
@@ -135,7 +138,8 @@ class StreamingLineBuffer(CustomOp):
             for i_fw in range(FW_EXTENDED):
                 pixel_w = FW_EXTENDED - 1 - i_fw
                 shift_pattern.append(
-                    (pixel_w + PAD_L * (par["in_w_par"] - 1)) % par["in_w_par"]
+                    (pixel_w + PAD_L * (self.get_nodeattr("width_unroll") - 1))
+                    % self.get_nodeattr("width_unroll")
                 )
 
         for i_fh in range(FH):
@@ -150,14 +154,14 @@ class StreamingLineBuffer(CustomOp):
 
                 # Determine the input stream for this pixel.
                 pixel_input_name = []
-                if pixel_index < par["in_w_par"]:
+                if pixel_index < self.get_nodeattr("width_unroll"):
                     # Directly from input stream.
                     pixel_input_name.append(
                         f"{self.__get_stream_name(self.onnx_node.input[0])}_{w_stream}_"
                     )
                 else:
                     # From the internal buffer.
-                    buffer_index = pixel_index - par["in_w_par"]
+                    buffer_index = pixel_index - self.get_nodeattr("width_unroll")
                     pixel_input_name.append(f"{self.onnx_node.name}_buffer_stream_{buffer_index}_")
                 function_args.add((
                     "i_data",
@@ -172,14 +176,14 @@ class StreamingLineBuffer(CustomOp):
                 ))
 
                 # Determine the output shift stream for this pixel.
-                if pixel_index < FH * FW_EXTENDED - par["in_w_par"]:
+                if pixel_index < FH * FW_EXTENDED - self.get_nodeattr("width_unroll"):
                     # Search the next pixel with the same w_stream.
                     next_pixel_index = None
                     for search_pixel_index in range(pixel_index + 1, FH * FW_EXTENDED):
                         if shift_pattern[search_pixel_index] == w_stream:
                             next_pixel_index = search_pixel_index
                             break
-                    next_pixel_index = next_pixel_index - par["in_w_par"]
+                    next_pixel_index = next_pixel_index - self.get_nodeattr("width_unroll")
                     pixel_output_name.append(f"{self.onnx_node.name}_buffer_stream_{next_pixel_index}_")
                     function_args.add((
                         "o_shift_data",
@@ -209,7 +213,7 @@ class StreamingLineBuffer(CustomOp):
                     f"StreamingWindowSelector",
                     f"{self.onnx_node.name}_pixel_{pixel_index}",
                     template_args=[
-                        (f"{get_struct_type(output_quant, par['in_ch_par'])}", "TWord"),
+                        (f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}", "TWord"),
                         (output_shape[2], "IN_HEIGHT"),
                         (output_shape[3], "IN_WIDTH"),
                         (output_shape[1], "IN_CH"),
@@ -225,8 +229,8 @@ class StreamingLineBuffer(CustomOp):
                         (self.get_nodeattr("pads")[3], "PAD_R"),
                         (pixel_h, "POS_H"),
                         (pixel_w, "POS_W"),
-                        (par["in_w_par"], "W_PAR"),
-                        (par["in_ch_par"], "CH_PAR"),
+                        (self.get_nodeattr("width_unroll"), "W_PAR"),
+                        (self.get_nodeattr("channel_unroll"), "CH_PAR"),
                     ],
                 )
 
@@ -290,7 +294,7 @@ class StreamingLineBuffer(CustomOp):
                 f"StreamingPad",
                 f"{self.onnx_node.name}_pad",
                 template_args=[
-                    (f"{get_struct_type(output_quant, par['in_ch_par'])}", "TWord"),
+                    (f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}", "TWord"),
                     (output_shape[2], "IN_HEIGHT"),
                     (output_shape[3], "IN_WIDTH"),
                     (output_shape[1], "IN_CH"),
@@ -304,8 +308,8 @@ class StreamingLineBuffer(CustomOp):
                     (self.get_nodeattr("pads")[1], "PAD_L"),
                     (self.get_nodeattr("pads")[2], "PAD_B"),
                     (self.get_nodeattr("pads")[3], "PAD_R"),
-                    (par["in_w_par"], "W_PAR"),
-                    (par["in_ch_par"], "CH_PAR"),
+                    (self.get_nodeattr("width_unroll"), "W_PAR"),
+                    (self.get_nodeattr("channel_unroll"), "CH_PAR"),
                 ])
 
             hls_kernels.append(
@@ -326,3 +330,51 @@ class StreamingLineBuffer(CustomOp):
             hls_tag += 1
 
         return hls_kernels, [], fifos, hls_tag
+
+    def get_latency(self, model: ModelWrapper) -> int:
+        """ Estimate the latency of the StreamingLineBuffer.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            int: Estimated latency in clock cycles.
+        """
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+
+        # Retrieve current parallelization attributes if not provided.
+        unroll_factor = np.prod([
+            self.get_nodeattr("channel_unroll"),
+            self.get_nodeattr("width_unroll"),
+        ])
+
+        return np.prod(output_shape) // unroll_factor
+
+    def get_brams(self, model: ModelWrapper) -> int:
+        """ Estimate the BRAM usage of the StreamingLineBuffer.
+
+        Args:
+            model (ModelWrapper): The model with quantization information.
+
+        Returns:
+            int: Estimated BRAM usage.
+        """
+        return 0
+
+    def get_dsps(self, model: ModelWrapper) -> int:
+        """ Estimate the DSP usage of the StreamingLineBuffer.
+
+        Args:
+            model (ModelWrapper): The model with quantization information.
+
+        Returns:
+            int: Estimated DSP usage.
+        """
+        return 0
+
+    def has_linebuffer(self) -> bool:
+        """ Check if the StreamingLineBuffer operation requires a line buffer.
+        Returns:
+            bool: True if a line buffer is required, False otherwise.
+        """
+        return False

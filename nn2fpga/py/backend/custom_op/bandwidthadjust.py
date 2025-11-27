@@ -1,28 +1,33 @@
 from onnx import helper
-from qonnx.custom_op.base import CustomOp
+import numpy as np
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
+from backend.custom_op.op_base import NN2FPGAOp
 from backend.util.codegen_utils import (
     cpp_function,
-    cpp_variable,
     cpp_object,
     get_struct_type,
-    get_stream_type,
     get_hls_quant_type,
 )
-from backend.util.par_utils import get_par_attributes
 
-class BandwidthAdjust(CustomOp):
+class BandwidthAdjust(NN2FPGAOp):
     """ Node adjusting a streaming tensor to match the bandwidth requirements."""
 
     def get_nodeattr_types(self):
         return {
-            "in_ch_par": ("i", False, 1),  # Input channel parallelization
-            "out_ch_par": ("i", False, 1),  # Output channel parallelization
-            "in_w_par": ("i", False, 1),  # Input width parallelization
-            "out_w_par": ("i", False, 1),  # Output width parallelization
+            # Custom attributes for unroll factors
+            "in_channel_unroll": ("i", False, 1),
+            "in_width_unroll": ("i", False, 1),
+            "out_channel_unroll": ("i", False, 1),
+            "out_width_unroll": ("i", False, 1),
+
+            # Custom attributes for input/output streams
+            "in_stream_array": ("i", False, 1),
+            "out_stream_array": ("i", False, 1),
+            "in_word_array": ("i", False, 1),
+            "out_word_array": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -63,7 +68,7 @@ class BandwidthAdjust(CustomOp):
             str: A string representing the declaration of internal variables.
         """
         return ""
-
+    
     def __get_object_declaration(self, model, name) -> str:
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
@@ -72,9 +77,6 @@ class BandwidthAdjust(CustomOp):
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
             raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
-
-        # Retrieve parallelization attributes.
-        par_attribute = get_par_attributes(self.onnx_node)
 
         # Retrieve tensor shape.
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
@@ -90,9 +92,9 @@ class BandwidthAdjust(CustomOp):
             name,
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_struct_type(input_quant, par_attribute['in_ch_par'])}", "TInputStruct"),
+                (f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputStruct"),
                 (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"{get_struct_type(output_quant, par_attribute['out_ch_par'])}", "TOutputStruct"),
+                (f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}", "TOutputStruct"),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (
                     f"DequantQuantEqual<{get_hls_quant_type(output_quant)}>",
@@ -101,10 +103,10 @@ class BandwidthAdjust(CustomOp):
                 (input_shape[2], "IN_HEIGHT"),
                 (input_shape[3], "IN_WIDTH"),
                 (input_shape[1], "IN_CH"),
-                (par_attribute["in_w_par"], "IN_W_PAR"),
-                (par_attribute["out_w_par"], "OUT_W_PAR"),
-                (par_attribute["in_ch_par"], "IN_CH_PAR"),
-                (par_attribute["out_ch_par"], "OUT_CH_PAR"),
+                (self.get_nodeattr("in_width_unroll"), "IN_W_PAR"),
+                (self.get_nodeattr("out_width_unroll"), "OUT_W_PAR"),
+                (self.get_nodeattr("in_channel_unroll"), "IN_CH_PAR"),
+                (self.get_nodeattr("out_channel_unroll"), "OUT_CH_PAR"),
             ],
         )
         return BandwidthAdjust.generate_declaration()
@@ -160,13 +162,17 @@ class BandwidthAdjust(CustomOp):
 
     def lower_to_hls(self, model: ModelWrapper, name: str, hls_tag: int) -> tuple[list, list, dict]:
         """
+        Lowers the BandwidthAdjust node to an HLSKernel node.
+        Args:
+          model: ModelWrapper
+          name: Name of the HLS kernel
+          hls_tag: Current HLS tag
         Returns:
           nodes: List[onnx.NodeProto]
           initializers: List[onnx.TensorProto]
           fifo: Dict[str, TensorFifo]
         """
 
-        par = get_par_attributes(self.onnx_node)
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
             raise ValueError(
@@ -175,20 +181,20 @@ class BandwidthAdjust(CustomOp):
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
-            for i in range(par["in_w_par"])
+            for i in range(self.get_nodeattr("in_stream_array"))
         ]
 
         output_names = [
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
-            for i in range(par["out_w_par"])
+            for i in range(self.get_nodeattr("out_stream_array"))
         ]
 
         tensors_fifo_metadata = {}
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, par['out_ch_par'])}",
-                n_array=par["out_w_par"],
+                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                n_array=self.get_nodeattr("out_stream_array"),
             )
 
         hls_kernel = HLSKernel.make_node(
@@ -208,6 +214,53 @@ class BandwidthAdjust(CustomOp):
 
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
 
+    def get_latency(self, model: ModelWrapper) -> int:
+        """ Estimate the latency of the BandwidthAdjust operation.
+        Args:
+            model: ModelWrapper
+        Returns:
+            int: Estimated latency in clock cycles.
+        """
+
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+
+        unroll_factor = np.prod(
+            [
+                min(self.get_nodeattr("in_channel_unroll"), self.get_nodeattr("out_channel_unroll")),
+                min(self.get_nodeattr("in_width_unroll"), self.get_nodeattr("out_width_unroll")),
+            ]
+        )
+        latency = np.prod(input_shape) // unroll_factor
+        return latency
+    
+    def get_brams(self, model: ModelWrapper) -> int:
+        """ Estimate the BRAM usage of the BandwidthAdjust operation.
+        Args:
+            model: ModelWrapper
+        Returns:
+            int: Estimated BRAM usage in number of BRAMs.
+        """
+        return 0
+    
+    def get_dsps(self, model: ModelWrapper) -> int:
+        """ Estimate the DSP usage of the BandwidthAdjust operation.
+        Args:
+            model: ModelWrapper
+        Returns:
+            int: Estimated DSP usage in number of DSPs.
+        """
+        return 0
+    
+    def has_linebuffer(self) -> bool:
+        """ Check if the BandwidthAdjust operation requires a line buffer.
+        Args:
+            model: ModelWrapper
+        Returns:
+            bool: True if a line buffer is required, False otherwise.
+        """
+        return False
 
 class BandwidthAdjustIncreaseStreams(BandwidthAdjust):
     """ Node increasing the number of streams in a tensor to match the bandwidth requirements."""
@@ -217,7 +270,7 @@ class BandwidthAdjustIncreaseStreams(BandwidthAdjust):
 
     def lower_to_hls(self, model, hls_tag: int):
         return super().lower_to_hls(model, "BandwidthAdjustIncreaseStreams", hls_tag=hls_tag)
-
+    
 class BandwidthAdjustDecreaseStreams(BandwidthAdjust):
     """ Node decreasing the number of streams in a tensor to match the bandwidth requirements."""
 
@@ -226,7 +279,7 @@ class BandwidthAdjustDecreaseStreams(BandwidthAdjust):
     
     def lower_to_hls(self, model, hls_tag: int):
         return super().lower_to_hls(model, "BandwidthAdjustDecreaseStreams", hls_tag=hls_tag)
-
+    
 class BandwidthAdjustIncreaseChannels(BandwidthAdjust):
     """ Node increasing the number of channels in a tensor to match the bandwidth requirements."""
 
@@ -235,7 +288,7 @@ class BandwidthAdjustIncreaseChannels(BandwidthAdjust):
 
     def lower_to_hls(self, model, hls_tag: int):
         return super().lower_to_hls(model, "BandwidthAdjustIncreaseChannels", hls_tag=hls_tag)
-
+    
 class BandwidthAdjustDecreaseChannels(BandwidthAdjust):
     """ Node decreasing the number of channels in a tensor to match the bandwidth requirements."""
 
@@ -244,3 +297,4 @@ class BandwidthAdjustDecreaseChannels(BandwidthAdjust):
 
     def lower_to_hls(self, model, hls_tag: int):
         return super().lower_to_hls(model, "BandwidthAdjustDecreaseChannels", hls_tag=hls_tag)
+    
