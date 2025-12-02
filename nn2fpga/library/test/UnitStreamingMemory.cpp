@@ -16,17 +16,19 @@ static constexpr size_t TIMES =
 static constexpr size_t CH_GROUPS =
     test_config::OUT_CH * test_config::IN_CH /
     (test_config::OUT_CH_PAR * test_config::IN_CH_PAR);
-static constexpr size_t FHW = test_config::FH * test_config::FW;
-static constexpr size_t PAR = test_config::IN_CH_PAR * test_config::OUT_CH_PAR;
+static constexpr size_t ARRAY_PAR = test_config::FH * test_config::FW;
+static constexpr size_t WORD_PAR =
+    test_config::IN_CH_PAR * test_config::OUT_CH_PAR;
+static constexpr size_t WORDS = test_config::OUT_CH * test_config::IN_CH *
+                                test_config::FH * test_config::FW;
 
 void wrap_run(hls::stream<TInputWord> i_shift_data[1],
-              hls::stream<TOutputWord> o_data[FHW],
+              hls::stream<TOutputWord> o_data[ARRAY_PAR],
               hls::stream<TInputWord> o_shift_data[1]) {
   StreamingMemory<TInputWord, test_config::TOutput, TOutputWord,
                   test_config::DATA_PER_WORD, test_config::DATA_TO_SHIFT, TIMES,
-                  test_config::OUT_CH, test_config::IN_CH, test_config::FW,
-                  test_config::FH, test_config::OUT_CH_PAR,
-                  test_config::IN_CH_PAR>
+                  WORDS, ARRAY_PAR,
+                  WORD_PAR>
       mem;
   if (test_config::DATA_TO_SHIFT > 0) {
     mem.run<0>(i_shift_data, o_data, o_shift_data);
@@ -40,7 +42,7 @@ bool test_run() {
   // Create input and output streams
   hls::stream<TInputWord> i_shift_data[1];
   hls::stream<TInputWord> o_shift_data[1];
-  hls::stream<TOutputWord> o_data[FHW];
+  hls::stream<TOutputWord> o_data[ARRAY_PAR];
 
   for (const auto &word : test_config::packed_weights) {
     TInputWord word_array;
@@ -59,9 +61,9 @@ bool test_run() {
   bool flag = true;
   for (size_t i_times = 0; i_times < TIMES; i_times++) {
     for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
-      for (size_t i_fhw = 0; i_fhw < FHW; i_fhw++) {
+      for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; i_fhw++) {
         TOutputWord actual_word = o_data[i_fhw].read();
-        for (size_t i_par = 0; i_par < PAR; i_par++) {
+        for (size_t i_par = 0; i_par < WORD_PAR; i_par++) {
           test_config::TOutput actual_data = actual_word[i_par];
           test_config::TOutput expected_data =
               test_config::weight_tensor[i_ch_groups][i_par][i_fhw];
@@ -78,7 +80,7 @@ bool test_run() {
   }
 
   // Ensure all output streams are empty
-  for (size_t i_fhw = 0; i_fhw < FHW; i_fhw++) {
+  for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; i_fhw++) {
     if (!o_data[i_fhw].empty()) {
       flag = false;
       std::cout << "Output stream " << i_fhw
@@ -109,14 +111,13 @@ bool test_step(){
   // Create input and output streams
   hls::stream<TInputWord> i_shift_data[1];
   hls::stream<TInputWord> o_shift_data[1];
-  hls::stream<TOutputWord> o_data[FHW];
+  hls::stream<TOutputWord> o_data[ARRAY_PAR];
 
   // Instantiate the operator
   StreamingMemory<TInputWord, test_config::TOutput, TOutputWord,
                   test_config::DATA_PER_WORD, test_config::DATA_TO_SHIFT, TIMES,
-                  test_config::OUT_CH, test_config::IN_CH, test_config::FW,
-                  test_config::FH, test_config::OUT_CH_PAR,
-                  test_config::IN_CH_PAR>
+                  WORDS, ARRAY_PAR,
+                  WORD_PAR>
       mem;
   mem.step_init(test_config::PIPELINE_DEPTH);
 
@@ -148,7 +149,7 @@ bool test_step(){
   }
 
   // Flush the output stream.
-  for (size_t i_fhw = 0; i_fhw < FHW; ++i_fhw) {
+  for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; ++i_fhw) {
     while (!o_data[i_fhw].empty()) {
       TOutputWord output_word = o_data[i_fhw].read();
       (void)output_word; // Suppress unused variable warning
