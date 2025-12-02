@@ -17,7 +17,8 @@
  * @tparam TBias           Data type for individual bias elements.
  * @tparam TOutputWord     Data type for output word (packed output channels).
  * @tparam TOutput         Data type for individual output elements.
- * @tparam TAcc            Data type for accumulator (intermediate sum).
+ * @tparam TSum            Data type for accumulator considered the bias.
+ * @tparam TPartialSum     Data type for partial sum accumulator.
  * @tparam Quantizer       Quantizer functor type for output quantization.
  * @tparam Activation      Activation functor type for output activation.
  * @tparam OUT_CH          Number of output channels.
@@ -62,11 +63,11 @@
 
 template <typename TInputWord, typename TInput, typename TWeightWord,
           typename TWeight, typename TBiasWord, typename TBias,
-          typename TOutputWord, typename TOutput, typename TAcc,
-          typename Activation, typename Quantizer, size_t OUT_CH, size_t IN_CH,
-          size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t GROUP, size_t FH,
-          size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t IN_CH_PAR,
-          size_t OUT_CH_PAR, size_t W_PAR>
+          typename TOutputWord, typename TOutput, typename TSum,
+          typename TPartialSum, typename Activation, typename Quantizer,
+          size_t OUT_CH, size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH,
+          size_t GROUP, size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
+          size_t IN_CH_PAR, size_t OUT_CH_PAR, size_t W_PAR>
 class StreamingConv {
   static constexpr size_t FW_EXPAND = FW + (W_PAR - 1) * STRIDE_W;
   static constexpr size_t CH_GROUPS = IN_CH * OUT_CH / (IN_CH_PAR * OUT_CH_PAR);
@@ -100,7 +101,7 @@ public:
     size_t i_hw = 0, i_ich = 0, i_och = 0;
 
     // Accumulator buffers.
-    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+    TPartialSum acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 
     // Input buffer to hold the input data.
     TInputWord input_data[FH][FW_EXPAND];
@@ -147,7 +148,7 @@ public:
     // memory) are determined by OUT_CH_PAR and W_PAR. This means that at each
     // clock cycle, the convolution will process OUT_CH_PAR output channels and
     // W_PAR input windows.
-    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+    TPartialSum acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 #pragma HLS ARRAY_PARTITION variable = acc_buff dim = 2 complete
 
     // Input structure to hold the input data.
@@ -181,7 +182,7 @@ public:
     // memory) are determined by OUT_CH_PAR and W_PAR. This means that at each
     // clock cycle, the convolution will process OUT_CH_PAR output channels and
     // W_PAR input windows.
-    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+    TPartialSum acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 #pragma HLS ARRAY_PARTITION variable = acc_buff dim = 2 complete
 
     // Input structure to hold the input data.
@@ -215,7 +216,7 @@ public:
     // memory) are determined by OUT_CH_PAR and W_PAR. This means that at each
     // clock cycle, the convolution will process OUT_CH_PAR output channels and
     // W_PAR input windows.
-    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+    TPartialSum acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 #pragma HLS ARRAY_PARTITION variable = acc_buff dim = 0 complete
 
     // Input structure to hold the input data.
@@ -249,7 +250,7 @@ public:
     // memory) are determined by OUT_CH_PAR and W_PAR. This means that at each
     // clock cycle, the convolution will process OUT_CH_PAR output channels and
     // W_PAR input windows.
-    TAcc acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
+    TPartialSum acc_buff[OUT_CH / OUT_CH_PAR][OUT_CH_PAR * W_PAR];
 #pragma HLS ARRAY_PARTITION variable = acc_buff dim = 0 complete
 
     // Input structure to hold the input data.
@@ -456,7 +457,7 @@ private:
                             hls::stream<TBiasWord> i_biases[1],
                             hls::stream<TOutputWord> o_data[W_PAR],
                             TInputWord input_data[FH][FW_EXPAND],
-                            TAcc acc_buff_par[OUT_CH_PAR * W_PAR], size_t i_ich,
+                            TPartialSum acc_buff_par[OUT_CH_PAR * W_PAR], size_t i_ich,
                             size_t i_och) {
 #pragma HLS inline
 
@@ -523,7 +524,7 @@ private:
         // If we are at the last block of input channels, read the bias and
         // finalize the output.
         if (i_ich == IN_CH - IN_CH_PAR) {
-          ap_int<32> wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
+          TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
           wide_acc = activation(wide_acc);
           TOutput output_value = quantizer(wide_acc);
           output_data[i_och_par] = output_value;
@@ -543,7 +544,7 @@ private:
                             TBias i_biases[OUT_CH_PAR][1],
                             hls::stream<TOutputWord> o_data[W_PAR],
                             TInputWord input_data[FH][FW_EXPAND],
-                            TAcc acc_buff_par[OUT_CH_PAR * W_PAR], size_t i_ich,
+                            TPartialSum acc_buff_par[OUT_CH_PAR * W_PAR], size_t i_ich,
                             size_t i_och) {
 #pragma HLS inline
 
@@ -617,7 +618,7 @@ private:
         // If we are at the last block of input channels, read the bias and
         // finalize the output.
         if (i_ich == IN_CH - IN_CH_PAR) {
-          ap_int<32> wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
+          TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
           wide_acc = activation(wide_acc);
           TOutput output_value = quantizer(wide_acc);
           output_data[i_och_par] = output_value;

@@ -33,7 +33,7 @@ void wrap_run(
   StreamingConv<
       TInputWord, test_config::TInput, TWeightWord, test_config::TWeight,
       TBiasWord, test_config::TBias, TOutputWord, test_config::TOutput,
-      test_config::TAcc, test_config::Activation, test_config::Quantizer,
+      test_config::TAcc,  test_config::TPartialAcc, test_config::Activation, test_config::Quantizer,
       test_config::OUT_CH, test_config::IN_CH, test_config::OUT_HEIGHT,
       test_config::OUT_WIDTH, test_config::GROUP, test_config::FH,
       test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
@@ -202,7 +202,7 @@ bool test_step() {
   StreamingConv<
       TInputWord, test_config::TInput, TWeightWord, test_config::TWeight,
       TBiasWord, test_config::TBias, TOutputWord, test_config::TOutput,
-      test_config::TAcc, test_config::Activation, test_config::Quantizer,
+      test_config::TAcc, test_config::TPartialAcc, test_config::Activation, test_config::Quantizer,
       test_config::OUT_CH, test_config::IN_CH, test_config::OUT_HEIGHT,
       test_config::OUT_WIDTH, test_config::GROUP, test_config::FH,
       test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,

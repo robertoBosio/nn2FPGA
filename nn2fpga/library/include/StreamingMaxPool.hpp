@@ -4,6 +4,7 @@
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
 #include <cassert>
+#include "DequantQuant.hpp"
 
 /**
  * @brief StreamingMaxPool implements a quantized max pooling with only streaming

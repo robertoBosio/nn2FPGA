@@ -17,7 +17,8 @@
  * @tparam TBias          Data type for individual bias elements.
  * @tparam TOutputWord     Data type for output word (packed output channels).
  * @tparam TOutput         Data type for individual output elements.
- * @tparam TAcc            Data type for accumulator (intermediate sum).
+ * @tparam TSum            Data type for accumulator considered the bias.
+ * @tparam TPartialSum     Data type for partial sum accumulator.
  * @tparam Activation      Activation functor type for output activation.
  * @tparam Quantizer       Quantizer functor type for output quantization.
  * @tparam OUT_CH          Number of output channels.
@@ -55,11 +56,12 @@
  *
  */
 
-template <typename TInputWord, typename TInput, typename TWeightWord, typename TWeight,
-          typename TBiasWord, typename TBias, typename TOutputWord, typename TOutput,
-          typename TAcc, typename Activation, typename Quantizer, size_t OUT_CH,
-          size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t FH,
-          size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t CH_PAR,
+template <typename TInputWord, typename TInput, typename TWeightWord,
+          typename TWeight, typename TBiasWord, typename TBias,
+          typename TOutputWord, typename TOutput, typename TSum,
+          typename TPartialSum, typename Activation, typename Quantizer,
+          size_t OUT_CH, size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH,
+          size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t CH_PAR,
           size_t W_PAR>
 class StreamingDepthwiseConv {
   static constexpr size_t FW_EXPAND = FW + (W_PAR - 1) * STRIDE_W;
@@ -323,7 +325,7 @@ private:
     // Input structure to hold the input data.
     TInputWord input_data[FH][FW_EXPAND];
     // Accumulator buffer.
-    TAcc acc_buff_par[CH_PAR * W_PAR];
+    TPartialSum acc_buff_par[CH_PAR * W_PAR];
 
     // Read the input data for the current expanded window.
     for (size_t fh = 0; fh < FH; fh++) {
@@ -367,7 +369,7 @@ private:
         }
 
         // Finalize the output.
-        TAcc wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
+        TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
         wide_acc = activation(wide_acc);
         TOutput output_value = quantizer(wide_acc);
         output_data[i_ch_par] = output_value;
@@ -398,7 +400,7 @@ private:
     // Input structure to hold the input data.
     TInputWord input_data[FH][FW_EXPAND];
     // Accumulator buffer.
-    TAcc acc_buff_par[CH_PAR * W_PAR];
+    TPartialSum acc_buff_par[CH_PAR * W_PAR];
 
     // Read the input data for the current expanded window.
     for (size_t fh = 0; fh < FH; fh++) {
@@ -446,7 +448,7 @@ private:
         }
 
         // Finalize the output.
-        TAcc wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
+        TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
         wide_acc = activation(wide_acc);
         TOutput output_value = quantizer(wide_acc);
         output_data[i_ch_par] = output_value;
