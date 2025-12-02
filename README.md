@@ -14,6 +14,7 @@ To perform the whole flow, it is required to have a Xilinx FPGA board with a Vit
 To install the framework, it is required to clone the repository and run the run.sh script to launch the docker.
 ```bash
 git clone git@github.com:robertoBosio/NN2FPGA.git
+git submodule update --init --recursive
 cd NN2FPGA
 ./run.sh
 ```
