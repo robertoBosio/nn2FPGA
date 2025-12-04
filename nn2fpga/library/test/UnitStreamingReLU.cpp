@@ -8,6 +8,7 @@
 #include <iostream>
 #include <unordered_map>
 #include "utils/CSDFG_utils.hpp"
+#include "DequantQuant.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
 using TOutputWord = TInputWord;
@@ -15,8 +16,8 @@ using TOutputWord = TInputWord;
 void wrap_run(
     hls::stream<TInputWord> i_data[test_config::W_PAR],
     hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
-  StreamingReLU<TInputWord, test_config::TInput,
-                TOutputWord, test_config::TOutput,
+  StreamingReLU<TInputWord, test_config::TInput, TOutputWord,
+                test_config::TOutput, test_config::Quantizer,
                 test_config::IN_HEIGHT, test_config::IN_WIDTH,
                 test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
       streaming_relu;
@@ -82,12 +83,11 @@ bool test_step() {
   hls::stream<TInputWord> in_stream[test_config::W_PAR];
   hls::stream<TOutputWord> out_stream[test_config::W_PAR];
 
-  StreamingReLU<
-      TInputWord, test_config::TInput,
-      TOutputWord, test_config::TOutput,
-      test_config::IN_HEIGHT, test_config::IN_WIDTH,
-      test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
-      streaming_relu; 
+  StreamingReLU<TInputWord, test_config::TInput, TOutputWord,
+                test_config::TOutput, test_config::Quantizer,
+                test_config::IN_HEIGHT, test_config::IN_WIDTH,
+                test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
+      streaming_relu;
   streaming_relu.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;

@@ -103,6 +103,7 @@ class TestStreamingReLU(BaseHLSTest):
                 cwr.add_line(f"const int {key} = {value};")
         cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
         cwr.add_line(f"typedef ap_uint<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+        cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",

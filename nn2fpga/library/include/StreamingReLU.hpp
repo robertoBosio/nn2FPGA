@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <unordered_map>
+#include "DequantQuant.hpp"
 
 template <typename T> struct ReLU {
   T operator()(T acc) const {
@@ -19,8 +20,8 @@ template <typename T> struct ReLU {
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH,
-          size_t CH_PAR, size_t W_PAR>
+          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
+          size_t IN_WIDTH, size_t IN_CH, size_t CH_PAR, size_t W_PAR>
 class StreamingReLU {
 public:
   static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
@@ -143,12 +144,13 @@ private:
                             hls::stream<TOutputWord> o_data[W_PAR]) {
 #pragma HLS inline
     ReLU<TInput> relu;
+    Quantizer quantizer;
     for (size_t w_par = 0; w_par < W_PAR; w_par++) {
       TInputWord in_word = i_data[w_par].read();
       TOutputWord out_word;
       for (size_t ch_par = 0; ch_par < CH_PAR; ch_par++) {
-        TOutput out_value = relu(in_word[ch_par]);
-        out_word[ch_par] = out_value;
+        TInput out_value = relu(in_word[ch_par]);
+        out_word[ch_par] = quantizer(out_value);
       }
       o_data[w_par].write(out_word);
     }
