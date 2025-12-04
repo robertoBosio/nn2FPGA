@@ -211,20 +211,19 @@ private:
 
     const auto &imap = pkg.at("input_map");
 
-    size_t i = 0;
     for (const auto &entry : imap) {
-      if (i >= Spec::Inputs.size())
-        break;
+      size_t i = entry.at("index").get<size_t>();
 
       const auto &pd = Spec::Inputs[i];
       if (pd.mode != PortMode::StaticInit) {
-        ++i;
         continue;
       }
 
       if (!entry.contains("value") || entry.at("value").is_null()) {
         throw std::runtime_error("Static input port " + std::to_string(i) +
-                                 " missing 'value' in package.");
+                                 " with name '" +
+                                 entry.at("new_name").get<std::string>() +
+                                 "' missing 'value' in package.");
       }
 
       const std::string raw =
@@ -246,7 +245,6 @@ private:
         throw std::runtime_error("MM2S timeout during static upload on port " +
                                  std::to_string(i));
       }
-      ++i;
     }
   }
 
