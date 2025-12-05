@@ -137,6 +137,7 @@ class TestStreamingConv(BaseHLSTest):
         )
         y = sess.run(None, {"X": input_tensor})[0]
 
+        shift = int(np.log2(config_dict["Y_SCALE"] / (config_dict["X_SCALE"] * config_dict["W_SCALE"])))
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
@@ -154,7 +155,7 @@ class TestStreamingConv(BaseHLSTest):
         cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
         cwr.add_line(f"typedef ap_int<{config_dict['ACC_DATAWIDTH']}> TPartialAcc;")
-        cwr.add_line(f"typedef DequantQuantPo2<5, TAcc, TOutput> Quantizer;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> Quantizer;")
         cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
         cwr.add_lines(
             csnake.Variable(
