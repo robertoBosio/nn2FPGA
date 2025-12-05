@@ -50,6 +50,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     cwr.include("utils/CSDFG_utils.hpp")
     cwr.include("utils/DMA_utils.hpp")
     cwr.include("<fstream>")
+    cwr.include("<iostream>")
     cwr.include("<unordered_map>")
 
     # Top function definition
@@ -69,7 +70,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
                 array=tensor_fifo.n_array,
             )
             stream_vars.append((var, True))
-        
+
     known_stream_depth = set()
     for node in model.graph.node:
         if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
@@ -148,15 +149,31 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code(actual_II.generate_initialization())
 
     # Declare the CSDFGState and CSDFGStateHasher for the visited states.
-    function.add_code("std::unordered_map<CompactState, size_t, CompactHasher> visited_states;")
+    function.add_code("std::unordered_map<StateSig, std::vector<StateRef>> visited_states;")
     function.add_code("CSDFGState current_state;")
 
-    # Write the while loop to process the data until all the processors are waiting.
+    # Allocating correct size for the actor statuses.
+    num_consumers = len(consumers_step_calls)
+    num_producers = len(producers_step_calls)
+    num_non_streaming_nodes = len([
+        node for node in model.graph.node
+        if getCustomOp(node).get_nodeattr("original_op_type") != "StreamingMemory"
+    ])
+    num_actors = num_consumers + num_producers + num_non_streaming_nodes
+    function.add_code("std::vector<ActorStatus> actor_statuses;")
+    function.add_code(f"actor_statuses.reserve({num_actors});")
+
+    # Allocating correct size for the channel quantities.
+    num_channels = sum([stream.array if stream.array is not None else 1 for stream, _ in stream_vars if stream.name not in known_stream_depth])
+    function.add_code("std::vector<size_t> channel_quantities;")
+    function.add_code(f"channel_quantities.reserve({num_channels});")
+
+    # Start of the simulation loop.
     function.add_code("while (true) {")
     function.codewriter.indent()
-    function.add_code("std::vector<ActorStatus> actor_statuses;")
-    function.add_code("std::vector<size_t> channel_quantities;")
     function.add_code("ActorStatus actor_status;")
+    function.add_code("actor_statuses.clear();")
+    function.add_code("channel_quantities.clear();")
 
     for step_call in consumers_step_calls:
         function.add_code(f"actor_status = {step_call}")
@@ -188,13 +205,20 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
 
     function.add_code("current_state = CSDFGState(actor_statuses, channel_quantities);")
     function.add_code("CompactState compact = make_compact_state(current_state);")
-    function.add_code("if (visited_states.find(compact) != visited_states.end()) {")
+    function.add_code("StateSig sig = make_signature(compact);")
+    function.add_code("auto &bucket = visited_states[sig];")
+    function.add_code("for (const auto &ref : bucket) {")
     function.codewriter.indent()
-    function.add_code("actual_II = clock_cycle - visited_states[compact];")
-    function.add_code("break;")
+    function.add_code("if (states_equal_on_disk(ref.offset, compact.data)) {")
+    function.codewriter.indent()
+    function.add_code("actual_II = clock_cycle - ref.clock;")
+    function.add_code("goto done_simulation;")
     function.codewriter.dedent()
     function.add_code("}")
-    function.add_code("visited_states.emplace(std::move(compact), clock_cycle);")
+    function.codewriter.dedent()
+    function.add_code("}")
+    function.add_code("uint64_t offset = append_state_to_file(compact.data);")
+    function.add_code("bucket.push_back(StateRef{offset, static_cast<uint32_t>(clock_cycle)});")
     function.add_code("clock_cycle++;")
     function.add_code(f"if (clock_cycle > {10 * model_II}) {{")
     function.codewriter.indent()
@@ -212,6 +236,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("};")
 
     # Add the final code to save the json report.
+    function.add_code("done_simulation:")
     function.add_code(f"std::ofstream report_file(\"{work_root}/fifo_depth.json\");")
     function.add_code("report_file << \"{\\n\";")
     function.add_code("report_file << \"\t\\\"fifo_depth\\\": {\\n\";")
@@ -249,6 +274,7 @@ def generate_hls_driver(model: ModelWrapper) -> str:
     cwr.include("hls_stream.h")
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
+    cwr.include("<chrono>")
 
     # Accelerator kernel function definition
     kernel_function = cpp_function(
@@ -266,9 +292,16 @@ def generate_hls_driver(model: ModelWrapper) -> str:
         return_type="int",
         arguments=[cpp_variable("argc", "int"), cpp_variable("argv", "char**")],
     )
+    
+    # Record start time
+    main_function.add_code("auto start_time = std::chrono::high_resolution_clock::now();")
 
     # Add the kernel function call
     main_function.add_code(f"{kernel_function.generate_call()};")
+    main_function.add_code("auto end_time = std::chrono::high_resolution_clock::now();")
+    main_function.add_code("auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();")
+    main_function.add_code('std::cout << "Simulation time: " << duration << " ms" << std::endl;')
+
 
     main_function.add_code("return 0;")
     cwr.add_function_definition(main_function)
@@ -298,7 +331,7 @@ def generate_tcl_script(top_name, part_name, frequency, hls_version):
 
     lines.extend(
         [
-            'add_files fifo_depth.cpp -cflags "-O3 -I/workspace/NN2FPGA/nn2fpga/library/include"',
+            'add_files fifo_depth.cpp -cflags "-O2 -I/workspace/NN2FPGA/nn2fpga/library/include"',
             'add_files -tb testbench.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/library/include"',
             'set_top "{top_name}"',
             'set_part {part_name}',
@@ -440,7 +473,6 @@ def generate_schedule(model: ModelWrapper, work_root: str):
         custom_op.set_nodeattr("read_skew", read_skew)
         custom_op.set_nodeattr("write_skew", write_skew)
         custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
-        logger.info(f"Node {node.name}: read_skew={read_skew}, write_skew={write_skew}, adjusted_pipeline_stages={pipeline_stages}\n")
 
 def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
     """Adjust the FIFO depth based on the scheduling information."""
@@ -477,59 +509,66 @@ def make_build_dir(work_dir: str) -> None:
 class ComputeFifoDepth(Transformation):
     """Compute the FIFO depth for each node in the model."""
     
-    def __init__(self, work_root: str = "/tmp", erase: bool = True):
+    def __init__(self, work_root: str = "/tmp", erase: bool = True, ste_already_done: bool = False):
         """
         Initializes the ComputeFifoDepth transformation.
         Args:
             work_root (str): The root directory of the project.
             erase (bool): If True, the HLS project directory will be erased after the simulation.
+            ste_already_done (bool): If True, skip the synthesis step and the ste simulation.
         """
         super().__init__()
         self.work_root = f"{work_root}/depth-sim"
         self.erase = erase
+        self.ste_already_done = ste_already_done
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Compute the FIFO depth for each node in the model."""
 
-        # Create the working directory for the simulation.
-        make_build_dir(self.work_root)
+        if not self.ste_already_done:
 
-        # Schedule the model to retrieve information about the pipelines.
-        generate_schedule(model, self.work_root)
+            # Create the working directory for the simulation.
+            make_build_dir(self.work_root)
 
-        with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
-            f.write(generate_hls_code(model, self.work_root))
+            # Schedule the model to retrieve information about the pipelines.
+            generate_schedule(model, self.work_root)
 
-        # Write the driver code.
-        with open(os.path.join(self.work_root, "testbench.cpp"), "w") as f:
-            f.write(generate_hls_driver(model))
+            with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
+                f.write(generate_hls_code(model, self.work_root))
 
-        # Generate the TCL script for the HLS project.
-        part_name = read_board_info(
-            board=model.get_metadata_prop("board_name"),
-        )['part']
-        tcl_script = generate_tcl_script(
-            top_name=model.get_metadata_prop("top_name"),
-            part_name=part_name,
-            frequency=model.get_metadata_prop("frequency"),
-            hls_version=model.get_metadata_prop("hls_version"),
-        )
-        with open(os.path.join(self.work_root, "setup.tcl"), "w") as f:
-            f.write(tcl_script)
+            # Write the driver code.
+            with open(os.path.join(self.work_root, "testbench.cpp"), "w") as f:
+                f.write(generate_hls_driver(model))
 
-        # run the simulation
-        if float(model.get_metadata_prop("hls_version")) > 2025:
-            subprocess.run(
-                ["vitis-run", "--mode", "hls", "--tcl", f"{self.work_root}/setup.tcl"],
-                cwd=self.work_root,
-                check=True
+            # Generate the TCL script for the HLS project.
+            part_name = read_board_info(
+                board=model.get_metadata_prop("board_name"),
+            )['part']
+            tcl_script = generate_tcl_script(
+                top_name=model.get_metadata_prop("top_name"),
+                part_name=part_name,
+                frequency=model.get_metadata_prop("frequency"),
+                hls_version=model.get_metadata_prop("hls_version"),
             )
+            with open(os.path.join(self.work_root, "setup.tcl"), "w") as f:
+                f.write(tcl_script)
+
+            # run the simulation
+            if float(model.get_metadata_prop("hls_version")) > 2025:
+                subprocess.run(
+                    ["vitis-run", "--mode", "hls", "--tcl", f"{self.work_root}/setup.tcl"],
+                    cwd=self.work_root,
+                    check=True
+                )
+            else:
+                subprocess.run(
+                    ["vitis_hls", "-f", f"{self.work_root}/setup.tcl"],
+                    cwd=self.work_root,
+                    check=True
+                )
+                
         else:
-            subprocess.run(
-                ["vitis_hls", "-f", f"{self.work_root}/setup.tcl"],
-                cwd=self.work_root,
-                check=True
-            )
+            logger.info("Skipping synthesis and STE simulation as ste_already_done is set to True.")
 
         # Read the fifo depth from the generated json file.
         fifo_depth_file = os.path.join(self.work_root, "fifo_depth.json")
@@ -546,6 +585,12 @@ class ComputeFifoDepth(Transformation):
 
         # Adjust the FIFO depths based on scheduling information.
         fifo_depths = adjust_depth_based_on_scheduling(model, fifo_depths, self.work_root)
+
+        # Dump fifo depths for debugging.
+        with open(os.path.join(self.work_root, "fifo_depths.csv"), "w") as f:
+            f.write("stream_name,depth\n")
+            for stream_name, depth in fifo_depths.items():
+                f.write(f"{stream_name},{depth+1}\n")
         
         # Store the FIFO depth in the model metadata.
         for stream_name, depth in fifo_depths.items():

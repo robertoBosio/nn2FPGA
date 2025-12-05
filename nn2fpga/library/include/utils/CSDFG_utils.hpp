@@ -4,6 +4,8 @@
 #include <tuple>
 #include <unordered_map>
 #include <queue>
+#include <fstream>
+#include <iostream>
 
 class FiringStatus {
 public:
@@ -192,19 +194,75 @@ struct CSDFGStateHasher {
   }
 };
 
+#ifndef __SYNTHESIS__
 struct CompactState {
     std::vector<uint32_t> data;
     bool operator==(const CompactState &o) const { return data == o.data; }
 };
 
-struct CompactHasher {
-    size_t operator()(const CompactState &s) const {
-        size_t h = 0;
-        for (auto v : s.data)
-            h ^= std::hash<uint32_t>()(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        return h;
-    }
+// struct CompactHasher {
+//     size_t operator()(const CompactState &s) const {
+//         size_t h = 0;
+//         for (auto v : s.data)
+//             h ^= std::hash<uint32_t>()(v) + 0x9e3779b9 + (h << 6) + (h >> 2);
+//         return h;
+//     }
+// };
+
+using StateSig = std::uint64_t;
+
+struct StateRef {
+    std::uint64_t offset;  // byte offset in the file
+    std::uint32_t clock;   // enough up to 4e9 cycles
 };
+
+std::unordered_map<StateSig, std::vector<StateRef>> visited;
+std::ofstream states_out("states.bin", std::ios::binary | std::ios::app);
+std::ifstream states_in("states.bin", std::ios::binary);
+
+uint64_t append_state_to_file(const std::vector<uint32_t> &data) {
+    states_out.seekp(0, std::ios::end);
+    uint64_t offset = static_cast<uint64_t>(states_out.tellp());
+
+    uint32_t len = static_cast<uint32_t>(data.size());
+    states_out.write(reinterpret_cast<const char*>(&len), sizeof(len));
+    states_out.write(reinterpret_cast<const char*>(data.data()),
+                     len * sizeof(uint32_t));
+    // no flush per write; let OS buffer
+
+    return offset;
+}
+
+bool states_equal_on_disk(uint64_t offset,
+                          const std::vector<uint32_t> &data) {
+    static thread_local std::vector<uint32_t> buf;
+
+    states_in.seekg(offset, std::ios::beg);
+
+    uint32_t len = 0;
+    states_in.read(reinterpret_cast<char*>(&len), sizeof(len));
+    if (len != data.size()) return false;
+
+    buf.resize(len);
+    states_in.read(reinterpret_cast<char*>(buf.data()),
+                   len * sizeof(uint32_t));
+
+    return std::equal(buf.begin(), buf.end(), data.begin());
+}
+
+
+StateSig make_signature(const CompactState &c) {
+    // Example: 64-bit splitmix-style mixer
+    uint64_t h = 0x9e3779b97f4a7c15ULL;
+    for (auto v : c.data) {
+        uint64_t x = v;
+        x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
+        x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+        x ^= x >> 31;
+        h ^= x + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    }
+    return h;
+}
 
 CompactState make_compact_state(const CSDFGState &s) {
     CompactState c;
@@ -226,7 +284,6 @@ CompactState make_compact_state(const CSDFGState &s) {
     return c;
 }
 
-#ifndef __SYNTHESIS__
 template <typename T> class PipelineDelayBuffer {
 public:
   PipelineDelayBuffer(size_t depth) : pipeline_depth(depth) {
