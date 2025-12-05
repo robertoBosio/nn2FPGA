@@ -41,10 +41,6 @@ class InsertAXIConverters(Transformation):
                 normalize=0,
                 axi_bitwidth=board_res["axi_bitwidth"],
                 name=f"NHWCToStream_{i}",
-                in_ch_par=1,
-                out_ch_par=1,
-                in_w_par=1,
-                out_w_par=1,
             )
 
             model.set_tensor_shape(
@@ -86,10 +82,6 @@ class InsertAXIConverters(Transformation):
                 outputs=[orig_output_name],
                 axi_bitwidth=board_res["axi_bitwidth"],
                 name=f"StreamToNHWC_{i}",
-                in_ch_par=1,
-                out_ch_par=1,
-                in_w_par=1,
-                out_w_par=1,
             )
 
             # Rewire all the producers of orig_output_name to produce to consume_stream_output

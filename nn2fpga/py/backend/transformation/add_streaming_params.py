@@ -4,7 +4,6 @@ from qonnx.transformation.general import SortGraph, GiveUniqueNodeNames, GiveRea
 from qonnx.core.modelwrapper import ModelWrapper
 import qonnx.custom_op.general.quant as qonnx_quant
 from onnx import NodeProto, TensorProto, helper
-from backend.util.par_utils import get_par_attributes
 from backend.core.tensor_quant import (
     TensorQuant,
     set_custom_tensor_datatype,
@@ -13,13 +12,8 @@ from backend.core.tensor_quant import (
 import numpy as np
 from qonnx.custom_op.registry import getCustomOp
 from backend.core.acceleratorpackage import AcceleratorPackage
-
-NODE_WITH_PARAMS = [
-    "StreamingConv",
-    "StreamingDepthwiseConv",
-    "Gemm",
-    "MatMul",
-]
+from backend.custom_op.op_base import NodeInterface, HasParameters
+from backend.util.board_util import read_board_info
 
 # Save original references before monkey-patching
 _original_min_int = qonnx_quant.min_int
@@ -69,165 +63,230 @@ def quant_array(inp_tensor, scale, zeropt, bitwidth, signed, narrow, rounding_mo
     inp_tensor = inp_tensor + zeropt
     return inp_tensor.astype(np.int32)  # Convert to uint32 for packing
 
-def _make_streaming_memory_node_unpacked(
-    model: ModelWrapper,
-    quant_arr: np.ndarray,
-    tensor_quant: TensorQuant,
-    par: dict,
-    out_tensor_shape: list,
-    base_name: str,
-) -> tuple[str, str]:
-    """
-    Create:
-      - a new initializer with the quantized (unpacked) tensor, same shape
-      - a StreamingMemory node that consumes that initializer
-      - a fresh output value name whose type/shape mirror the initializer
+# def _make_streaming_memory_node_unpacked(
+#     model: ModelWrapper,
+#     quant_arr: np.ndarray,
+#     tensor_quant: TensorQuant,
+#     iface: NodeInterface,
+#     out_tensor_shape: list,
+#     base_name: str,
+# ) -> tuple[str, str]:
+#     """
+#     Create:
+#       - a new initializer with the quantized (unpacked) tensor, same shape
+#       - a StreamingMemory node that consumes that initializer
+#       - a fresh output value name whose type/shape mirror the initializer
 
-    Returns (init_name, out_name).
-    """
-    init_name = model.make_new_valueinfo_name()
-    out_name  = model.make_new_valueinfo_name()
+#     Returns (init_name, out_name).
+#     """
+#     init_name = model.make_new_valueinfo_name()
+#     out_name  = model.make_new_valueinfo_name()
 
-    model.set_initializer(init_name, quant_arr)
-    model.set_tensor_shape(init_name, list(quant_arr.shape))
-    model.set_tensor_shape(out_name, list(quant_arr.shape))
-    set_custom_tensor_datatype(model, out_name, tensor_quant)
+#     model.set_initializer(init_name, quant_arr)
+#     model.set_tensor_shape(init_name, list(quant_arr.shape))
+#     model.set_tensor_shape(out_name, list(quant_arr.shape))
+#     set_custom_tensor_datatype(model, out_name, tensor_quant)
 
-    data_per_word = 32 // tensor_quant.bitwidth
+#     data_per_word = 32 // tensor_quant.bitwidth
 
-    # Expand shapes to 4D if needed
-    if len(out_tensor_shape) < 4:
-        out_tensor_shape = out_tensor_shape + [1] * (4 - len(out_tensor_shape))
-    mem_shape = list(quant_arr.shape)
-    if len(mem_shape) < 4:
-        mem_shape = mem_shape + [1] * (4 - len(mem_shape))
-    in_ch_par = min(par.get("in_ch_par", 1), mem_shape[1])
-    out_ch_par = min(par.get("out_ch_par", 1), mem_shape[0])
-    in_w_par = 1
-    out_w_par = np.prod(mem_shape[2:])
-    times = out_tensor_shape[2] * out_tensor_shape[3] // par.get("out_w_par", 1)
+#     # Expand shapes to 4D if needed
+#     if len(out_tensor_shape) < 4:
+#         out_tensor_shape = out_tensor_shape + [1] * (4 - len(out_tensor_shape))
+#     mem_shape = list(quant_arr.shape)
+#     if len(mem_shape) < 4:
+#         mem_shape = mem_shape + [1] * (4 - len(mem_shape))
+#     in_ch_par = min(par.get("in_ch_par", 1), mem_shape[1])
+#     out_ch_par = min(par.get("out_ch_par", 1), mem_shape[0])
+#     out_w_par = np.prod(mem_shape[2:])
+#     times = out_tensor_shape[2] * out_tensor_shape[3] // par.get("out_w_par", 1)
 
-    sm_node = helper.make_node(
-        "StreamingMemory",
-        inputs=[init_name],
-        outputs=[out_name],
-        name=f"StreamingMemory_{base_name}",
-        in_ch_par=in_ch_par,
-        out_ch_par=out_ch_par,
-        in_w_par=in_w_par,
-        out_w_par=out_w_par,
-        data_per_word=data_per_word,
-        mem_shape=quant_arr.shape,
-        times=times,
-        domain="backend.custom_op",
-    )
-    model.graph.node.extend([sm_node])
-    return init_name, out_name
+#     sm_node = helper.make_node(
+#         "StreamingMemory",
+#         inputs=[init_name],
+#         outputs=[out_name],
+#         name=f"StreamingMemory_{base_name}",
+#         in_channel_unroll=in_ch_par,
+#         out_channel_unroll=out_ch_par,
+#         in_word_array=1,
+#         out_word_array=out_ch_par,
+#         in_stream_array=1,
+#         out_stream_array=out_w_par,
+#         data_per_word=data_per_word,
+#         mem_shape=quant_arr.shape,
+#         times=times,
+#         domain="backend.custom_op",
+#     )
+#     model.graph.node.extend([sm_node])
+#     return init_name, out_name
 
 
-def hoist_params_to_streaming_memory_unpacked(model: ModelWrapper, node: NodeProto) -> None:
-    """
-    For a StreamingConv node:
-      - Quantize weights (and biases, if present) WITHOUT packing
-      - Insert a StreamingMemory node per parameter (weights and optionally biases)
-      - Replace the corresponding StreamingConv inputs with the new SM outputs
-      - Remove only the original weight/bias initializers (keep scale/zeropt/bitwidth)
+# def hoist_params_to_streaming_memory_unpacked(model: ModelWrapper, node: NodeProto) -> None:
+#     """
+#     For a StreamingConv node:
+#       - Quantize weights (and biases, if present) WITHOUT packing
+#       - Insert a StreamingMemory node per parameter (weights and optionally biases)
+#       - Replace the corresponding StreamingConv inputs with the new SM outputs
+#       - Remove only the original weight/bias initializers (keep scale/zeropt/bitwidth)
 
-    Mutates `model` in-place.
-    """
-    custom_node = getCustomOp(node)
-    par = get_par_attributes(node)
-    out_tensor_shape = model.get_tensor_shape(node.output[0])
+#     Mutates `model` in-place.
+#     """
+#     custom_node = getCustomOp(node)
+#     iface = custom_node.get_port_interface()
+#     out_tensor_shape = model.get_tensor_shape(node.output[0])
 
-    def _get_init(name: str) -> np.ndarray:
-        arr = model.get_initializer(name)
-        if arr is None:
-            raise ValueError(f"Expected initializer '{name}' not found.")
-        return arr
+#     def _get_init(name: str) -> np.ndarray:
+#         arr = model.get_initializer(name)
+#         if arr is None:
+#             raise ValueError(f"Expected initializer '{name}' not found.")
+#         return arr
 
-    # -------- Weights: inputs [1]=W, [2]=scale, [3]=zeropt, [4]=bitwidth --------
-    w_name   = node.input[1]
-    w_scale  = _get_init(node.input[2])
-    w_zeropt = _get_init(node.input[3])
-    w_bw     = _get_init(node.input[4])
+#     # -------- Weights: inputs [1]=W, [2]=scale, [3]=zeropt, [4]=bitwidth --------
+#     w_name   = node.input[1]
+#     w_scale  = _get_init(node.input[2])
+#     w_zeropt = _get_init(node.input[3])
+#     w_bw     = _get_init(node.input[4])
 
-    # Quantize to integer array (same shape as original weights)
-    quant_w = quant_array(
-        _get_init(w_name),
-        scale=w_scale,
-        zeropt=w_zeropt,
-        bitwidth=w_bw,
-        signed=custom_node.get_nodeattr("w_signed"),
-        narrow=custom_node.get_nodeattr("w_narrow"),
-        rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
-    )
-    tensor_quant = TensorQuant(
-        scale=1.0,
-        zeropt=0,
-        bitwidth=w_bw,
-        signed=custom_node.get_nodeattr("w_signed"),
-        narrow=custom_node.get_nodeattr("w_narrow"),
-        rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
-    )
+#     # Quantize to integer array (same shape as original weights)
+#     quant_w = quant_array(
+#         _get_init(w_name),
+#         scale=w_scale,
+#         zeropt=w_zeropt,
+#         bitwidth=w_bw,
+#         signed=custom_node.get_nodeattr("w_signed"),
+#         narrow=custom_node.get_nodeattr("w_narrow"),
+#         rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
+#     )
+#     tensor_quant = TensorQuant(
+#         scale=1.0,
+#         zeropt=0,
+#         bitwidth=w_bw,
+#         signed=custom_node.get_nodeattr("w_signed"),
+#         narrow=custom_node.get_nodeattr("w_narrow"),
+#         rounding_mode=custom_node.get_nodeattr("w_rounding_mode"),
+#     )
 
-    # Ensure a container dtype consistent with bitwidth/sign
-    # (keep shape intact; we don't pack)
-    quant_w = quant_w.astype(tensor_quant.get_numpy_dtype(),  copy=False)
+#     # Ensure a container dtype consistent with bitwidth/sign
+#     # (keep shape intact; we don't pack)
+#     quant_w = quant_w.astype(tensor_quant.get_numpy_dtype(),  copy=False)
 
-    # Insert StreamingMemory that produces the same shape/type
-    _, w_out = _make_streaming_memory_node_unpacked(
-        model,
-        quant_w,
-        tensor_quant,
-        par,
-        out_tensor_shape,
-        base_name=f"{node.name}_weights",
-    )
-    # Wire into the conv
-    node.input[1] = w_out
-    # Drop the original weight initializer (keep metadata in [2],[3],[4])
-    if model.get_initializer(w_name) is not None:
-        model.del_initializer(w_name)
+#     # Insert StreamingMemory that produces the same shape/type
+#     _, w_out = _make_streaming_memory_node_unpacked(
+#         model,
+#         quant_w,
+#         tensor_quant,
+#         par,
+#         out_tensor_shape,
+#         base_name=f"{node.name}_weights",
+#     )
+#     # Wire into the conv
+#     node.input[1] = w_out
+#     # Drop the original weight initializer (keep metadata in [2],[3],[4])
+#     if model.get_initializer(w_name) is not None:
+#         model.del_initializer(w_name)
 
-    # -------- Biases (optional): inputs [5]=B, [6]=scale, [7]=zeropt, [8]=bitwidth --------
-    if len(node.input) > 5 and node.input[5] != "":
-        b_name   = node.input[5]
-        b_scale  = _get_init(node.input[6])
-        b_zeropt = _get_init(node.input[7])
-        b_bw     = _get_init(node.input[8])
+#     # -------- Biases (optional): inputs [5]=B, [6]=scale, [7]=zeropt, [8]=bitwidth --------
+#     if len(node.input) > 5 and node.input[5] != "":
+#         b_name   = node.input[5]
+#         b_scale  = _get_init(node.input[6])
+#         b_zeropt = _get_init(node.input[7])
+#         b_bw     = _get_init(node.input[8])
 
-        quant_b = quant_array(
-            _get_init(b_name),
-            scale=b_scale,
-            zeropt=b_zeropt,
-            bitwidth=b_bw,
-            signed=custom_node.get_nodeattr("b_signed"),
-            narrow=custom_node.get_nodeattr("b_narrow"),
-            rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
+#         quant_b = quant_array(
+#             _get_init(b_name),
+#             scale=b_scale,
+#             zeropt=b_zeropt,
+#             bitwidth=b_bw,
+#             signed=custom_node.get_nodeattr("b_signed"),
+#             narrow=custom_node.get_nodeattr("b_narrow"),
+#             rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
+#         )
+#         tensor_quant = TensorQuant(
+#             scale=1.0,
+#             zeropt=0,
+#             bitwidth=b_bw,
+#             signed=custom_node.get_nodeattr("b_signed"),
+#             narrow=custom_node.get_nodeattr("b_narrow"),
+#             rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
+#         )
+
+#         # Container dtype for biases as above; keep original bias shape
+#         quant_b = quant_b.astype(tensor_quant.get_numpy_dtype(),  copy=False)
+
+#         _, b_out = _make_streaming_memory_node_unpacked(
+#             model,
+#             quant_b,
+#             tensor_quant,
+#             par,
+#             out_tensor_shape,
+#             base_name=f"{node.name}_biases"
+#         )
+#         node.input[5] = b_out
+#         if model.get_initializer(b_name) is not None:
+#             model.del_initializer(b_name)
+
+def hoist_param(model: ModelWrapper, node: NodeProto) -> None:
+    op = getCustomOp(node)
+    if not isinstance(op, HasParameters):
+        return
+
+    mapping = {}  # old_init_name -> new_stream_output
+    counter = 0
+    for p in op.list_parameters(model):
+        raw = model.get_initializer(p.name)
+        if raw is None:
+            continue
+
+        # Quantize to integer array (same shape as original weights)
+        q_arr = quant_array(
+            raw,
+            scale=p.tensor_quant.scale,
+            zeropt=p.tensor_quant.zeropt,
+            bitwidth=p.tensor_quant.bitwidth,
+            signed=p.tensor_quant.signed,
+            narrow=p.tensor_quant.narrow,
+            rounding_mode=p.tensor_quant.rounding_mode,
         )
-        tensor_quant = TensorQuant(
-            scale=1.0,
-            zeropt=0,
-            bitwidth=b_bw,
-            signed=custom_node.get_nodeattr("b_signed"),
-            narrow=custom_node.get_nodeattr("b_narrow"),
-            rounding_mode=custom_node.get_nodeattr("b_rounding_mode"),
-        )
 
-        # Container dtype for biases as above; keep original bias shape
-        quant_b = quant_b.astype(tensor_quant.get_numpy_dtype(),  copy=False)
+        # Ensure a container dtype consistent with bitwidth/sign
+        # (keep shape intact; we don't pack)
+        q_arr = q_arr.astype(p.tensor_quant.get_numpy_dtype(),  copy=False)
+        # create initializer for the unpacked int array
+        init_name = model.make_new_valueinfo_name()
+        model.set_initializer(init_name, q_arr)
+        model.set_tensor_shape(init_name, list(q_arr.shape))
 
-        _, b_out = _make_streaming_memory_node_unpacked(
-            model,
-            quant_b,
-            tensor_quant,
-            par,
-            out_tensor_shape,
-            base_name=f"{node.name}_biases"
+        # Build StreamingMemory node from spec
+        out_name = model.make_new_valueinfo_name()
+        model.set_tensor_shape(out_name, list(q_arr.shape))
+        set_custom_tensor_datatype(model, out_name, p.tensor_quant)
+        sm = helper.make_node(
+            "StreamingMemory",
+            inputs=[init_name],
+            outputs=[out_name],
+            name=f"StreamingMemory_{node.name}_{counter}",
+            in_channel_unroll=p.in_channel_unroll,
+            out_channel_unroll=p.out_channel_unroll,
+            width_unroll=p.width_unroll,
+            in_word_array=1,
+            out_word_array=p.in_channel_unroll * p.out_channel_unroll,
+            in_stream_array=1,
+            out_stream_array=p.width_unroll,
+            data_per_word=p.data_per_word,
+            mem_shape=p.shape,
+            times=p.times,
+            domain="backend.custom_op",
         )
-        node.input[5] = b_out
-        if model.get_initializer(b_name) is not None:
-            model.del_initializer(b_name)
+        model.graph.node.extend([sm])
+
+        # Rewire the op’s input at the original index
+        node.input[p.input_index] = out_name
+        # Remove original initializer
+        model.del_initializer(p.name)
+
+        mapping[p.name] = out_name
+        counter = counter + 1
+    
+    op.set_external_storage()
 
 class AddStreamingParams(Transformation):
     """A transformation pass that adds the logic to handle streaming parameters at startup.
@@ -246,6 +305,9 @@ class AddStreamingParams(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
+        board_res = read_board_info(
+            board=model.get_metadata_prop("board_name"),
+        )
         sequential_streaming = list()
         grouped_initializer = np.array([], dtype=np.uint32)
         params_quant = TensorQuant(
@@ -258,8 +320,7 @@ class AddStreamingParams(Transformation):
         )
 
         for node in model.graph.node:
-            if node.op_type in NODE_WITH_PARAMS:
-                hoist_params_to_streaming_memory_unpacked(model, node)
+            hoist_param(model, node)
 
         # Find all nodes with parameters that need streaming
         # and collect them in a list.
@@ -284,12 +345,15 @@ class AddStreamingParams(Transformation):
         ap = AcceleratorPackage.from_json(
             model.get_metadata_prop("accelerator_package")
         )
+
         # Add an input to the model for the streaming parameters.
         # Add also an initializer since it's constant.
         # The 'const_' string in the name is mandatory to recognize the initializer
         # as a special in the simulation flow.
+        index = len(ap.input_map)
         ap.input_map["const_param_stream"] = {
             "new_name": "const_param_stream",
+            "index": index,
             "shape": grouped_initializer.shape,
             "quant": params_quant.get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
@@ -298,9 +362,32 @@ class AddStreamingParams(Transformation):
             "const_param_stream", TensorProto.INT32, grouped_initializer.shape
         )
         model.graph.input.extend([param_stream_input])
+        input_stream = [f"{param_stream_input.name}_streamed"]
+        model.set_tensor_shape(
+            input_stream[0], model.get_tensor_shape(param_stream_input.name)
+        )
+        set_custom_tensor_datatype(model, param_stream_input.name, params_quant)
+
+        # Create the NHWCToStream node
+        produce_node = helper.make_node(
+            op_type="NHWCToStream",
+            domain="backend.custom_op",
+            inputs=[param_stream_input.name],
+            outputs=input_stream,
+            normalize=0,
+            channel_unroll=1,
+            width_unroll=1,
+            in_stream_array=1,
+            out_stream_array=1,
+            in_word_array=1,
+            out_word_array=1,
+            axi_bitwidth=board_res["axi_bitwidth"],
+            name=f"NHWCToStream_const_param_stream",
+        )
+
+        model.graph.node.append(produce_node)
 
         # Create a ParamStream node for each node with parameters.
-        input_stream = [param_stream_input.name]
         params_to_shift = grouped_initializer.shape[1]
         for node, params_size in sequential_streaming[:-1]:
             custom_op = getCustomOp(node)

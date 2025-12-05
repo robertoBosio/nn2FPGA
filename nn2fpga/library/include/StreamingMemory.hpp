@@ -126,7 +126,6 @@ public:
     static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
 #pragma HLS array_reshape variable = mem dim = 3 complete
 #pragma HLS array_reshape variable = mem dim = 2 complete
-#pragma HLS bind_storage variable = mem impl = bram
     static bool initialized_flag = false;
     if (!initialized_flag) {
       initialize_memory(i_shift_data, mem);

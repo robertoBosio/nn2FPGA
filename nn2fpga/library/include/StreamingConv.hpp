@@ -471,6 +471,7 @@ private:
     TWeightWord weight_data[FH][FW];
     // Bias structure to hold the biases.
     TBiasWord bias_data;
+#pragma HLS ARRAY_PARTITION variable = bias_data dim = 0
 
     // Read the input data for the current expanded window.
     if (i_och == 0) {

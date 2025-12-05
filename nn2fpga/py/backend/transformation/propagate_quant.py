@@ -28,6 +28,7 @@ QUANT_INVARIANT_NODES = [
     "Reshape",
     "Split",
     "StreamingLineBuffer",  # nn2FPGA
+    "StreamingMaxPool",  # nn2FPGA
     "StreamToNHWC",  # nn2FPGA
     "TensorDuplicator",  # nn2FPGA
     "Transpose",

@@ -3,11 +3,10 @@ from qonnx.transformation.general import SortGraph
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import helper
 from collections import deque
-from backend.util.par_utils import get_par_attributes, check_par_attributes
-import backend.transformation as transformation
 import math
 import logging
 import numpy as np
+from qonnx.custom_op.registry import getCustomOp
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +29,14 @@ def insert_comm_node(
         outputs=[output_name],
         name=name,
         domain="backend.custom_op",
-        in_ch_par=ch_par_in,
-        out_ch_par=ch_par_out,
-        in_w_par=w_par_in,
-        out_w_par=w_par_out,
+        in_channel_unroll=ch_par_in,
+        out_channel_unroll=ch_par_out,
+        in_width_unroll=w_par_in,
+        out_width_unroll=w_par_out,
+        in_stream_array=w_par_in,
+        out_stream_array=w_par_out,
+        in_word_array=ch_par_in,
+        out_word_array=ch_par_out,
     )
 
     model.set_tensor_shape(output_name, tensor_shape)
@@ -68,7 +71,8 @@ def adjust_bandwidth(
         )
 
         if middle is not None:
-            node_II = np.prod(tensor_shape) // (middle * last_w_par)
+            divisor = middle * last_w_par if axis == "ch" else middle * last_ch_par
+            node_II = np.prod(tensor_shape) // divisor
             if node_II > model_II:
                 logger.info(
                     f"Bandwidth adjustment computed based on GCD may not meet the throughput requirement of the model. Switching to LCM."
@@ -184,31 +188,30 @@ class AdjustStreamingCommunication(Transformation):
         while queue:
             node = queue.popleft()
             mark_visited.add(node.name)
-            par = get_par_attributes(node)
+            iface = getCustomOp(node).get_port_interface()
 
             consumers = model.find_direct_successors(node)
             if consumers is not None:
                 for consumer in consumers:
-                    if check_par_attributes(consumer):
-                        consumer_par = get_par_attributes(consumer)
+                    consumer_iface = getCustomOp(consumer).get_port_interface()
 
-                        # Need to balance node.och_par -> consumer.ich_par if ich_par is present,
-                        # This represents the number of channels packed in a single packet.
-                        if (
-                            par["out_ch_par"] != consumer_par["in_ch_par"]
-                            or par["out_w_par"] != consumer_par["in_w_par"]
-                        ):
-                            # Insert a communication node.
-                            communication_nodes.append(
-                                (
-                                    node,
-                                    consumer,
-                                    par["out_ch_par"],
-                                    consumer_par["in_ch_par"],
-                                    par["out_w_par"],
-                                    consumer_par["in_w_par"],
-                                )
+                    # Need to balance node.och_par -> consumer.ich_par if ich_par is present,
+                    # This represents the number of channels packed in a single packet.
+                    if (
+                        iface.out_word_array != consumer_iface.in_word_array
+                        or iface.out_stream_array != consumer_iface.in_stream_array
+                    ):
+                        # Insert a communication node.
+                        communication_nodes.append(
+                            (
+                                node,
+                                consumer,
+                                iface.out_word_array,
+                                consumer_iface.in_word_array,
+                                iface.out_stream_array,
+                                consumer_iface.in_stream_array,
                             )
+                        )
 
                     if consumer.name not in mark_visited:
                         # If the consumer is not already visited, add it to the queue.

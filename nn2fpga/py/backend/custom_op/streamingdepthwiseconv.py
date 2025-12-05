@@ -355,8 +355,8 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         """
         return f"{name}_stream"
 
-    def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
-        """ Returns the accumulator type for the StreamingDepthwiseConv operation. """
+    def __get_partial_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """ Returns the partial accumulator type for the StreamingDepthwiseConv operation. """
 
         # Number of additions to be performed
         add_ops = np.prod(weights_shape[1:])
@@ -365,9 +365,38 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         acc_bitwidth = (
             input_quant.bitwidth
             + weights_quant.bitwidth
-            + int(np.ceil(np.log2(add_ops)))
+            + int(np.ceil(np.log2(add_ops + 1)))
         )
-        acc_bitwidth = max(acc_bitwidth, bias_quant.bitwidth) + 1
+
+        # Determine if accumulator is signed
+        signed = input_quant.signed or weights_quant.signed or bias_quant.signed
+
+        # Create accumulator quantization
+        acc_quant = TensorQuant(
+            bitwidth=acc_bitwidth,
+            signed=signed,
+            scale=input_quant.scale,
+            zeropt=input_quant.zeropt,
+        )
+
+        return f"{get_hls_quant_type(acc_quant)}"
+
+    def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """Returns the accumulator type, considering the sum with the bias, for the StreamingDepthwiseConv operation."""
+
+        # Number of additions to be performed
+        add_ops = np.prod(weights_shape[1:])
+
+        # Calculate accumulator bitwidth based on input, weights, bias bitwidths and number of additions
+        acc_bitwidth = (
+            input_quant.bitwidth
+            + weights_quant.bitwidth
+            + int(np.ceil(np.log2(add_ops + 1)))
+        )
+
+        acc_bitwidth = (
+            max(acc_bitwidth, bias_quant.bitwidth) + 1
+        )  # +1 for potential overflow in addition with bias
 
         # Determine if accumulator is signed
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
@@ -388,6 +417,7 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         """Returns the activation functor for the StreamingDepthwiseConv operation."""
 
         activation = self.get_nodeattr("activation")
+
         if activation == "NoOp":
             return f"DequantQuantEqual<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
         elif activation == "ReLU":
@@ -510,7 +540,8 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                     "TOutputStruct",
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TAcc"),
+                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TSum"),
+                (self.__get_partial_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TPartialSum"),
                 (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
                 (
                     self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
@@ -873,7 +904,33 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 * point.filter_height_unroll
             )
 
-            return bram_usage_evaluator(weight_bits, n_weights, unroll_factor)
+            brams = bram_usage_evaluator(weight_bits, n_weights, unroll_factor)
+
+            if len(self.onnx_node.input) > 5:
+                bias_shape = model.get_tensor_shape(self.onnx_node.input[5])
+                if bias_shape is None:
+                    raise ValueError(f"Tensor shape for bias '{self.onnx_node.input[5]}' not found in model.")
+
+                bias_quant = TensorQuant(
+                    scale=model.get_initializer(self.onnx_node.input[6]),
+                    zeropt=model.get_initializer(self.onnx_node.input[7]),
+                    bitwidth=model.get_initializer(self.onnx_node.input[8]),
+                    signed=bool(self.get_nodeattr("b_signed")),
+                    narrow=bool(self.get_nodeattr("b_narrow")),
+                    rounding_mode=self.get_nodeattr("b_rounding_mode"),
+                )
+
+                bias_bits = bias_quant.bitwidth
+                n_biases = np.prod(bias_shape)
+
+                bias_bram = bram_usage_evaluator(
+                    bias_bits,
+                    n_biases,
+                    point.channel_unroll,
+                )
+
+                brams += bias_bram
+            return brams
         else:
             return 0
 
@@ -934,6 +991,19 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=self.get_nodeattr("w_rounding_mode"),
         )
         weight_bits = weight_quant.bitwidth
+        
+        if len(self.onnx_node.input) > 5:
+            bias_quant = TensorQuant(
+                scale=model.get_initializer(self.onnx_node.input[6]),
+                zeropt=model.get_initializer(self.onnx_node.input[7]),
+                bitwidth=model.get_initializer(self.onnx_node.input[8]),
+                signed=bool(self.get_nodeattr("b_signed")),
+                narrow=bool(self.get_nodeattr("b_narrow")),
+                rounding_mode=self.get_nodeattr("b_rounding_mode"),
+            )
+            bias_bits = bias_quant.bitwidth
+        else:
+            bias_bits = 0
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
@@ -968,6 +1038,9 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             for width_unroll in divisors(output_shape[3], output_shape[3]):
                 # Check dimension of weight streams
                 if (weight_bits * channel_unroll) > 4096:
+                    continue
+                # Check dimension of bias streams
+                if (bias_bits * channel_unroll) > 4096:
                     continue
                 # Check dimension of input streams
                 if (input_bits * channel_unroll) > 4096:

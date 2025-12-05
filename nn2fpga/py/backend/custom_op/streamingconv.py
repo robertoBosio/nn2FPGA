@@ -20,6 +20,9 @@ from onnxscript.rewriter import pattern
 from backend.util.board_util import bram_usage_evaluator, packing_feature
 from dataclasses import dataclass
 from typing import Iterable
+from logging import getLogger
+
+logger = getLogger(__name__)
 
 class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
 
@@ -312,12 +315,33 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         """
         return f"{name}_stream"
 
+    def __get_partial_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+        """ Returns the accumulator type for the StreamingConv operation. """
+
+        add_ops = np.prod(weights_shape[1:])
+        acc_bitwidth = (
+            input_quant.bitwidth
+            + weights_quant.bitwidth
+            + int(np.ceil(np.log2(add_ops + 1)))
+        )
+        signed = input_quant.signed or weights_quant.signed or bias_quant.signed
+        acc_quant = TensorQuant(
+            bitwidth=acc_bitwidth,
+            signed=signed,
+            scale=input_quant.scale,
+            zeropt=input_quant.zeropt,
+        )
+
+        return f"{get_hls_quant_type(acc_quant)}"
+
     def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
         """ Returns the accumulator type for the StreamingConv operation. """
 
         add_ops = np.prod(weights_shape[1:])
-        acc_bitwidth = input_quant.bitwidth + weights_quant.bitwidth + int(
-            np.ceil(np.log2(add_ops))
+        acc_bitwidth = (
+            input_quant.bitwidth
+            + weights_quant.bitwidth
+            + int(np.ceil(np.log2(add_ops + 1)))
         )
         acc_bitwidth = max(acc_bitwidth, bias_quant.bitwidth) + 1
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
@@ -444,7 +468,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                     "TOutputWord",
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TAcc"),
+                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TSum"),
+                (self.__get_partial_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TPartialSum"),
                 (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
                 (
                     self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
@@ -813,7 +838,32 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 * point.filter_height_unroll
             )
 
-            return bram_usage_evaluator(weight_bits, n_weights, unroll_factor)
+            brams = bram_usage_evaluator(weight_bits, n_weights, unroll_factor)
+
+            if len(self.onnx_node.input) > 5:
+                bias_shape = model.get_tensor_shape(self.onnx_node.input[5])
+                if bias_shape is None:
+                    raise ValueError(f"Tensor shape for bias '{self.onnx_node.input[5]}' not found in model.")
+
+                bias_quant = TensorQuant(
+                    scale=model.get_initializer(self.onnx_node.input[6]),
+                    zeropt=model.get_initializer(self.onnx_node.input[7]),
+                    bitwidth=model.get_initializer(self.onnx_node.input[8]),
+                    signed=bool(self.get_nodeattr("b_signed")),
+                    narrow=bool(self.get_nodeattr("b_narrow")),
+                    rounding_mode=self.get_nodeattr("b_rounding_mode"),
+                )
+
+                bias_bits = bias_quant.bitwidth
+                n_biases = np.prod(bias_shape)
+
+                bias_bram = bram_usage_evaluator(
+                    bias_bits,
+                    n_biases,
+                    point.out_channel_unroll,
+                )
+                brams += bias_bram
+            return brams
         else:
             return 0
 
@@ -879,6 +929,19 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         )
         weight_bits = weight_quant.bitwidth
 
+        if len(self.onnx_node.input) > 5:
+            bias_quant = TensorQuant(
+                scale=model.get_initializer(self.onnx_node.input[6]),
+                zeropt=model.get_initializer(self.onnx_node.input[7]),
+                bitwidth=model.get_initializer(self.onnx_node.input[8]),
+                signed=bool(self.get_nodeattr("b_signed")),
+                narrow=bool(self.get_nodeattr("b_narrow")),
+                rounding_mode=self.get_nodeattr("b_rounding_mode"),
+            )
+            bias_bits = bias_quant.bitwidth
+        else:
+            bias_bits = 0
+
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
         if input_quant is None:
             raise ValueError(
@@ -914,11 +977,18 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                     # Check dimension of weight streams
                     if (weight_bits * in_channel_unroll * out_channel_unroll) > 4096:
                         continue
+                    # Check dimension of bias streams
+                    if (bias_bits * out_channel_unroll) > 4096:
+                        continue
                     # Check dimension of input streams
                     if (input_bits * in_channel_unroll) > 4096:
                         continue
                     # Check dimension of output streams
                     if (output_bits * out_channel_unroll) > 4096:
+                        continue
+
+                    # Heuristic to spread unrolling across dimensions
+                    if (in_channel_unroll * out_channel_unroll) > 100:
                         continue
 
                     DSE_points.append(

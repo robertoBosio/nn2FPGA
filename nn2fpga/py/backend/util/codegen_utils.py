@@ -98,6 +98,23 @@ class cpp_variable(Variable):
     def __init__(self, name: str, primitive: str, pragma = [], *args, **kwargs):
         self.pragma = pragma
         super().__init__(name, primitive, *args, **kwargs)
+    
+    def generate_pragma(self) -> str:
+        return "\n".join([f"#pragma {p}" for p in self.pragma])
+    
+    def generate_declaration_mine(self) -> str:
+        cwr = CodeWriter()
+        cwr.add_line(f"{self.generate_declaration()};")
+        for pragma in self.pragma:
+            cwr.add_line(f"#pragma {pragma}")
+        return cwr.code
+    
+    def generate_initialization_mine(self) -> str:
+        cwr = CodeWriter()
+        cwr.add_line(f"{self.generate_initialization()};")
+        for pragma in self.pragma:
+            cwr.add_line(f"#pragma {pragma}")
+        return cwr.code
 
 class cpp_object:
 

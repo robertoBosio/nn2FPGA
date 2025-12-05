@@ -11,7 +11,55 @@ from onnxscript import ir
 from onnx import TensorProto, helper, StringStringEntryProto
 import numpy as np
 import logging
+from tabulate import tabulate
 logger = logging.getLogger(__name__)
+
+def print_report(generate_report_file: str, lines):
+    with open(generate_report_file, "w+") as f:
+        table_data = []
+
+        # header row
+        header = [
+            "Layer name",
+            "HLS Tag",
+            "Latency (cc)",
+            "DSPs",
+            "BRAMs",
+            "In word",
+            "In stream",
+            "Out word",
+            "Out stream"
+        ]
+        table_data.append(header)
+
+        DSPs = 0
+        BRAMs = 0
+        for layer in lines:
+            port = layer[3]
+            dsp = layer[4]
+            BRAMs += port
+            DSPs += dsp
+
+            row_data = [
+                layer[0],
+                f"{layer[1]}",
+                f"{layer[2]}",
+                f"{dsp}",
+                f"{port}",
+                f"{layer[5]}",
+                f"{layer[6]}",
+                f"{layer[7]}",
+                f"{layer[8]}",
+            ]
+
+            table_data.append(row_data)
+
+        footer = ["Totals", "", "", DSPs, BRAMs, "", "", "", ""]
+        table_data.append(footer)
+
+        # Print the tabulated data to the file
+        f.write(tabulate(table_data, headers="firstrow", tablefmt="grid"))
+        print("\n", file=f)
 
 class LowerToHLS(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
@@ -21,18 +69,36 @@ class LowerToHLS(Transformation):
         tensors = []
         ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
         hls_tag = 0
+        report_lines = []
 
         # iterate in topological order
         for node in model.graph.node:
             custom_op = getCustomOp(node)
+            interface = custom_op.get_port_interface()
 
             # ask the op to expand into multiple kernels
+            report_lines.append(
+                [
+                    node.name,
+                    hls_tag,
+                    getCustomOp(node).get_latency(model),
+                    getCustomOp(node).get_brams(model),
+                    getCustomOp(node).get_dsps(model),
+                    interface.in_word_array,
+                    interface.in_stream_array,
+                    interface.out_word_array,
+                    interface.out_stream_array,
+                ]
+            )
             sub_nodes, sub_inits, sub_fifo, hls_tag = custom_op.lower_to_hls(model, hls_tag)
 
             # stitch in
             nodes.extend(sub_nodes)
             fifo.update(sub_fifo)
             inits.extend(sub_inits)
+        
+        # Print report
+        print_report("hls_report.txt", report_lines)
 
         for key in fifo.keys():
             tensors.append(
@@ -89,6 +155,8 @@ class LowerToHLS(Transformation):
                 raise ValueError(f"Input {input.name} consumer is not NHWCToStream.")
             axi_word = getCustomOp(consumer).get_nodeattr("axi_bitwidth")
             tensor_quant = get_custom_tensor_datatype(model, input.name)
+            if tensor_quant is None:
+                raise ValueError(f"Tensor quantization for input '{input.name}' not found in model.")
             data_per_word = axi_word // int(tensor_quant.bitwidth)
             input_shape = model.get_tensor_shape(input.name)
             word_per_tensor = int(np.ceil(np.prod(input_shape) / data_per_word))
@@ -118,5 +186,5 @@ class LowerToHLS(Transformation):
                     depth=0, hls_type=f"ap_axiu<{axi_word}, 0, 0, 0>", n_array=word_per_tensor
                 ),
             )
-        
+
         return (hls_model, False)

@@ -1,32 +1,41 @@
 import numpy as np
 import onnxruntime as rt
-from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
+from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
 from backend.custom_op.op_base import NN2FPGAOp, NodeInterface
-from backend.custom_op.register_rewrite_rule import register_rules
 from backend.util.codegen_utils import (
     cpp_function,
+    cpp_variable,
     cpp_object,
     get_struct_type,
+    get_stream_type,
     get_hls_quant_type,
 )
+from backend.core.tensor_quant import TensorQuant
+from backend.util.par_utils import get_par_attributes
+from backend.custom_op.register_rewrite_rule import register_rules
+from onnxscript.rewriter import pattern
+import logging
 
-class StreamingReLU(NN2FPGAOp):
-    """ Node implementing the ReLU operation. """
+logger = logging.getLogger(__name__)
+
+class StreamingLeakyReLU(NN2FPGAOp):
+    """ Node implementing the LeakyReLU operation. """
 
     @staticmethod
-    def pattern(op, x):
-        return op.Relu(x, _allow_other_attributes=True)
+    def pattern(op, x, alpha):
+        return op.LeakyRelu(x, alpha=alpha, _allow_other_attributes=True)
 
     @staticmethod
-    def rewrite(op, x):
-        return op.StreamingReLU(
+    def rewrite(op, x, alpha):
+        return op.StreamingLeakyReLU(
             x,
+            alpha=alpha,
             _domain="backend.custom_op",
         )
 
@@ -34,12 +43,14 @@ class StreamingReLU(NN2FPGAOp):
     def register_rules():
         return [
             pattern.RewriteRule(
-                StreamingReLU.pattern, StreamingReLU.rewrite
+                StreamingLeakyReLU.pattern, StreamingLeakyReLU.rewrite
             )
         ]
 
     def get_nodeattr_types(self):
         return {
+            "alpha": ("f", False, 0.01),  # Slope for negative inputs
+
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
@@ -108,28 +119,117 @@ class StreamingReLU(NN2FPGAOp):
         """
         return f"{name}_stream"
 
-    def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingReLU node.
+    def __get_variable_declaration(self, model, input_quant, output_quant) -> str:
+        """ Get the internal cpp variables of the StreamingLeakyReLU node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             str: A string representing the declaration of internal variables.
         """
-        return ""
-    
-    def __get_quantizer(self, input_quant, output_quant) -> str:
-        """ Returns the quantizer type for the Add operation. """
 
-        if (
-            self.__is_power_of_two(input_quant.scale)
-            and self.__is_power_of_two(output_quant.scale)
-        ):
-            return f"DequantQuantPo2<0, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
+        nbits = input_quant.bitwidth
+        LUT_entries = 1 << nbits
+
+        # 1) Choose container dtype for ONNX and NumPy
+        if nbits <= 8:
+            onnx_int_type = TensorProto.INT8
+            np_int_type = np.int8
+        elif nbits <= 16:
+            onnx_int_type = TensorProto.INT16
+            np_int_type = np.int16
+        elif nbits <= 32:
+            onnx_int_type = TensorProto.INT32
+            np_int_type = np.int32
         else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingReLU."
-            )
-    
+            raise ValueError(f"Unsupported bitwidth {nbits} (> 32).")
+
+        # 2) Raw code values: 0 .. 2^nbits - 1
+        raw_codes = np.arange(LUT_entries, dtype=np.int64)
+
+        # 3) Sign-extend from nbits to container width
+        sign_bit = 1 << (nbits - 1)
+        full_range = 1 << nbits
+
+        signed_values = raw_codes.copy()
+        signed_values[signed_values >= sign_bit] -= full_range
+        # At this point, signed_values holds the *mathematical* two's complement values
+        # corresponding to each n-bit code.
+
+        # 4) Cast to container dtype expected by ONNX and shape it
+        input_tensor = signed_values.astype(np_int_type).reshape((1, LUT_entries, 1, 1))
+
+        # Define the input tensor to accomodate enough values to fill the LUT
+        X = helper.make_tensor_value_info(
+            "X",
+            TensorProto.INT8,
+            [
+                1,
+                LUT_entries,
+                1,
+                1,
+            ],
+        )
+        Y = helper.make_tensor_value_info(
+            "Y",
+            TensorProto.INT8,
+            [
+                1,
+                LUT_entries,
+                1,
+                1,
+            ],
+        )
+
+        X_scale = helper.make_tensor(
+            "X_scale", TensorProto.FLOAT, [], [input_quant.scale]
+        )
+        X_zp = helper.make_tensor("X_zp", TensorProto.INT8, [], [input_quant.zeropt])
+        Y_scale = helper.make_tensor(
+            "Y_scale", TensorProto.FLOAT, [], [output_quant.scale]
+        )
+        Y_zp = helper.make_tensor("Y_zp", TensorProto.INT8, [], [output_quant.zeropt])
+
+        dqlinear = helper.make_node(
+            "DequantizeLinear",
+            inputs=["X", "X_scale", "X_zp"],
+            outputs=["X_dq"],
+        )
+
+        LeakyReLU = helper.make_node(
+            "LeakyRelu",
+            alpha=self.get_nodeattr("alpha"),
+            inputs=["X_dq"],
+            outputs=["Y_dq"],
+        )
+
+        qlinear = helper.make_node(
+            "QuantizeLinear",
+            inputs=["Y_dq", "Y_scale", "Y_zp"],
+            outputs=["Y"],
+        )
+
+        graph = helper.make_graph(
+            [dqlinear, LeakyReLU, qlinear],
+            "qleakyrelu_test",
+            [X],
+            [Y],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+        )
+        model_qonnx = helper.make_model(graph, producer_name="qonnx")
+        sess = rt.InferenceSession(
+            model_qonnx.SerializeToString(), providers=["CPUExecutionProvider"]
+        )
+        y = sess.run(None, {"X": input_tensor})[0]
+        lut_values = y.flatten().tolist()
+
+        lut_variable = cpp_variable(
+            name=f"{self.onnx_node.name}_lut",
+            primitive=f"{get_hls_quant_type(output_quant)}",
+            value=lut_values,
+        )
+
+        return lut_variable.generate_initialization().code
+
     def __get_object_declaration(self, model) -> cpp_object:
 
         input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
@@ -146,8 +246,9 @@ class StreamingReLU(NN2FPGAOp):
         if output_shape is None:
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
 
-        StreamingReLU = cpp_object(
-            "StreamingReLU",
+        lut_size = 1 << input_quant.bitwidth
+        StreamingLeakyReLU = cpp_object(
+            "StreamingLeakyReLU",
             f"{self.onnx_node.name}",
             template_args=[
                 (
@@ -166,19 +267,16 @@ class StreamingReLU(NN2FPGAOp):
                     f"{get_hls_quant_type(output_quant)}",
                     f"TOutput",
                 ),
-                (
-                    f"{self.__get_quantizer(input_quant, output_quant)}",
-                    f"Quantizer",
-                ),
+                (f"{lut_size}", "LUT_SIZE"),
                 (f"{input_shape[2]}", "IN_HEIGHT"),
                 (f"{input_shape[3]}", "IN_WIDTH"),
                 (f"{input_shape[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
                 (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
+                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
             ]
         )
 
-        return StreamingReLU.generate_declaration()
+        return StreamingLeakyReLU.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
 
@@ -191,6 +289,10 @@ class StreamingReLU(NN2FPGAOp):
                     f"hls::stream<TInputWord>", 
                 ),
                 (
+                    f"LUTmem",
+                    f"TOutput"
+                ),
+                (
                     f"o_data",
                     f"hls::stream<TOutputWord>", 
                 ),
@@ -200,10 +302,11 @@ class StreamingReLU(NN2FPGAOp):
         return run.generate_call(
             [hls_tag],
             self.__get_stream_name(self.onnx_node.input[0]),
+            f"{self.onnx_node.name}_lut",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
-    def __get_step_call(self, hls_tag: int) -> str:
+
+    def __get_step_call(self) -> str:
 
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
@@ -214,6 +317,10 @@ class StreamingReLU(NN2FPGAOp):
                     f"hls::stream<TInputWord>", 
                 ),
                 (
+                    f"LUTmem",
+                    f"TOutput"
+                ),
+                (
                     f"o_data",
                     f"hls::stream<TOutputWord>", 
                 ),
@@ -221,13 +328,19 @@ class StreamingReLU(NN2FPGAOp):
         )
 
         return step.generate_call(
-            [hls_tag],
+            [],
             self.__get_stream_name(self.onnx_node.input[0]),
+            f"{self.onnx_node.name}_lut",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
+
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
+        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
+        if input_quant is None:
+            raise ValueError(
+                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
+            )
 
         output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
         if output_quant is None:
@@ -258,10 +371,12 @@ class StreamingReLU(NN2FPGAOp):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
-            original_op_type="StreamingReLU",
+            original_op_type="StreamingLeakyReLU",
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
-            hls_variable_declarations=self.__get_variable_declaration(model),
+            hls_variable_declarations=self.__get_variable_declaration(
+                model, input_quant, output_quant
+            ),
             hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),
             hls_object_declaration=self.__get_object_declaration(model),
@@ -301,17 +416,17 @@ class StreamingReLU(NN2FPGAOp):
             int: Estimated DSP usage.
         """
         return 0
-    
+
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingAdd operation requires a line buffer.
         Returns:
             bool: True if Line Buffering is required, False otherwise.
         """
         return False
-    
+
     def can_inherit_interface(self):
         return True
-    
+
     def inherit_interface(self, model: ModelWrapper, upstream: NodeInterface) -> None:
         """ Inherit the interface from the upstream node."""
         self.set_nodeattr("in_stream_array", upstream.out_stream_array)
