@@ -88,7 +88,7 @@ def generate_spec(
 
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.input_map)}> Inputs{{{{")
     cwr.indent()
-    for name, value in ap.input_map.items():
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
@@ -105,7 +105,7 @@ def generate_spec(
 
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.output_map)}> Outputs{{{{")
     cwr.indent()
-    for name, value in ap.output_map.items():
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))

@@ -132,6 +132,7 @@ def patch_qonnx_ops():
             # It is fundamental to maintain consistency between the maps and the inputs/outputs names
             # in the partition model. We use the same name convention as qonnx's GiveReadableTensorNames
             # transformation, i.e. global_in and global_out.
+            index = 0
             ap_input_map = {}
             for i, input in enumerate(p_model.graph.input):
                 first_node = p_model.find_consumer(input.name)
@@ -142,6 +143,7 @@ def patch_qonnx_ops():
                 new_name = f"global_in" if i == 0 else f"global_in_{i}"
                 ap_input_map[input.name] = {
                     "new_name": new_name,
+                    "index": index,
                     "shape": p_model.get_tensor_shape(input.name),
                     "quant": None,
                     "value": None,
@@ -155,7 +157,9 @@ def patch_qonnx_ops():
                     raise ValueError(
                         f"Partition input {input.name} is not quantized."
                     )
+                index += 1
 
+            index = 0 
             ap_output_map = {}
             for i, output in enumerate(p_model.graph.output):
                 last_node = p_model.find_producer(output.name)
@@ -166,6 +170,7 @@ def patch_qonnx_ops():
                 new_name = f"global_out" if i == 0 else f"global_out_{i}"
                 ap_output_map[output.name] = {
                     "new_name": new_name,
+                    "index": index,
                     "shape": p_model.get_tensor_shape(output.name),
                     "quant": None,
                     "value": None,
@@ -179,6 +184,7 @@ def patch_qonnx_ops():
                     raise ValueError(
                         f"Partition output {output.name} is not quantized."
                     )
+                index += 1
 
             # Create the accelerator package
             ap = AcceleratorPackage(
