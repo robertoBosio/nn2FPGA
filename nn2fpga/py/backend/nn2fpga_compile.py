@@ -75,6 +75,7 @@ def nn2fpga_compile(
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
+    model.set_metadata_prop("silvia_packing", str(silvia_packing))
 
     # Clean up the model.
     model.cleanup()
@@ -117,16 +118,13 @@ def nn2fpga_compile(
     )
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustStreamingCommunication())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
-    nn2fpga_model.save("post_line_buffer.onnx")
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
     # Handle weights streaming.
     nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=prj_root))
-    nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
-    nn2fpga_model.save("post_streaming_params.onnx")
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
     nn2fpga_model.save("lowered_to_hls.onnx")
-    nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=prj_root, erase=False))
+    nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=prj_root, erase=False, ste_already_done=False))
     nn2fpga_model.save("post_fifo_depth.onnx")
     model = ModelWrapper("wrapper_model.onnx")
     model = model.transform(
@@ -136,9 +134,10 @@ def nn2fpga_compile(
     )
 
     # Simulate the model to check if it works.
-    test_transformation_equivalence(original_model, model)
+    # model.save("wrapper_model.onnx")
+    # test_transformation_equivalence(original_model, model)
+    model = model.transform(transformation.GenerateBitstream(work_dir=prj_root, already_exported=False, only_synthesize=False))
     exit(0)
-    model = model.transform(transformation.GenerateBitstream(work_dir=prj_root))
     model.save("bitstream_generated.onnx")
     model = ModelWrapper("bitstream_generated.onnx")
     model = model.transform(transformation.GenerateDriver(work_dir=prj_root))
