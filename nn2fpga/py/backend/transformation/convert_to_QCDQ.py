@@ -91,15 +91,16 @@ def is_quant_with_constant_input(
 def quant_constant_to_dequant(
     op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode
 ):
+    # Extract numpy values
     x_np = x.const_value.numpy()
     scale_np = scale.const_value.numpy().squeeze()
     zero_point_np = zero_point.const_value.numpy().squeeze()
     bitwidth_np = bitwidth.const_value.numpy().squeeze()
     signed_val = signed.value
     narrow_val = narrow.value
-
     rounding_mode_val = rounding_mode.value if rounding_mode else "ROUND"
 
+    # Quantize original constant
     c_x = quant_array(
         x_np,
         scale_np,
@@ -110,24 +111,44 @@ def quant_constant_to_dequant(
         rounding_mode=rounding_mode_val,
     )
 
+    # Get ONNX dtype for quantized tensor (e.g. UINT8 / INT8 / INT16)
     data_type = get_tensorproto_dtype(bitwidth_np, signed_val)
 
-    # Create the new quantized constant
+    # New quantized constant tensor
     quantized_tensor = helper.make_tensor(
-        name=f"quantized_{x.name}", # Use a unique name to avoid conflicts
+        name=f"quantized_{x.name}",
         data_type=data_type,
         dims=c_x.shape,
         vals=c_x.flatten().tolist(),
     )
 
-    # Create the new Constant node
+    # Constant node for the quantized data
     quantized_const_node = op.Constant(value=quantized_tensor)
 
-    # The scale and zero_point are the same as in the original Quant node
-    # so we just reuse the original ValueInfo objects
+    # ----- zero_point handling -----
+    # Default: reuse original zero_point
+    zp_input = zero_point
 
-    # Create the DequantizeLinear node
-    return op.DequantizeLinear(quantized_const_node, scale, zero_point)
+    # If zero_point is float, create a new initializer with SAME type as c_x
+    if np.issubdtype(zero_point_np.dtype, np.floating):
+        # Round to nearest integer, cast to the same numpy dtype as c_x
+        zp_int_np = np.rint(zero_point_np).astype(c_x.dtype)
+
+        # Preserve original shape (for broadcasting semantics)
+        zp_shape = list(zero_point.const_value.shape)
+
+        zp_tensor = helper.make_tensor(
+            name=f"{zero_point.name}_cast",
+            data_type=data_type,          # same ONNX dtype as quantized tensor
+            dims=zp_shape,
+            vals=zp_int_np.flatten().tolist(),
+        )
+
+        # New Constant node that outputs zero-point with matching integer type
+        zp_input = op.Constant(value=zp_tensor)
+
+    # DequantizeLinear(quantized_x, scale, zero_point_int)
+    return op.DequantizeLinear(quantized_const_node, scale, zp_input)
 
 def create_const_initializer(model, value, dtype):
     init_name = model.make_new_valueinfo_name()
