@@ -1,30 +1,30 @@
-#include "StreamingReLU.hpp"
+#include "DequantQuant.hpp"
+#include "StreamingLeakyReLU.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "test_config.hpp"
+#include "utils/CSDFG_utils.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
-#include "utils/CSDFG_utils.hpp"
-#include "DequantQuant.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
-using TOutputWord = TInputWord;
+using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
 
-void wrap_run(
-    hls::stream<TInputWord> i_data[test_config::W_PAR],
-    hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
-  StreamingReLU<TInputWord, test_config::TInput, TOutputWord,
-                test_config::TOutput, test_config::Quantizer,
-                test_config::IN_HEIGHT, test_config::IN_WIDTH,
-                test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
-      streaming_relu;
-  streaming_relu.run<0>(i_data, o_data);
+void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
+              const test_config::TOutput LUTmem[test_config::LUT_SIZE],
+              hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
+  StreamingLeakyReLU<
+      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
+      test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
+      test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
+      streaming_leakyrelu;
+  streaming_leakyrelu.run<0>(i_data, LUTmem, o_data);
 }
 
-bool test_run(){
+bool test_run() {
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::W_PAR];
@@ -45,7 +45,7 @@ bool test_run(){
   }
 
   // Run the operator
-  wrap_run(in_stream, out_stream);
+  wrap_run(in_stream, test_config::LUTmem, out_stream);
 
   // Check output
   bool flag = true;
@@ -83,12 +83,12 @@ bool test_step() {
   hls::stream<TInputWord> in_stream[test_config::W_PAR];
   hls::stream<TOutputWord> out_stream[test_config::W_PAR];
 
-  StreamingReLU<TInputWord, test_config::TInput, TOutputWord,
-                test_config::TOutput, test_config::Quantizer,
-                test_config::IN_HEIGHT, test_config::IN_WIDTH,
-                test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
-      streaming_relu;
-  streaming_relu.step_init(test_config::PIPELINE_DEPTH);
+  StreamingLeakyReLU<
+      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
+      test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
+      test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
+      streaming_leakyrelu;
+  streaming_leakyrelu.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;
   size_t clock_cycles = 0;
@@ -100,7 +100,8 @@ bool test_step() {
       in_stream[i_w_par].write(input_struct);
     }
 
-    ActorStatus actor_status = streaming_relu.step(in_stream, out_stream);
+    ActorStatus actor_status =
+        streaming_leakyrelu.step(in_stream, test_config::LUTmem, out_stream);
     std::vector<ActorStatus> actor_statuses;
     std::vector<size_t> channel_quantities;
     actor_statuses.push_back(actor_status);
