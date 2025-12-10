@@ -21,6 +21,8 @@
  * @tparam TOutput        The data type of the output elements.
  * @tparam Quantizer      The quantizer functor/class used to quantize input
  * data.
+ * @tparam ITER           Number of input data elements to process, rounded up to
+ * the nearest multiple of DATA_PER_WORD.
  * @tparam DATA_PER_WORD  Number of data elements packed into a single output
  * word.
  * @tparam BITS_PER_DATA  Number of bits used to represent each data element.
@@ -52,11 +54,11 @@
  */
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t DATA_PER_WORD,
-          size_t HEIGHT, size_t WIDTH, size_t CH, size_t IN_W_PAR,
-          size_t IN_CH_PAR>
+          typename TOutput, typename Quantizer, size_t ITER,
+          size_t DATA_PER_WORD, size_t HEIGHT, size_t WIDTH, size_t CH,
+          size_t IN_W_PAR, size_t IN_CH_PAR>
 class StreamToNHWC {
-  static constexpr size_t ITER = HEIGHT * WIDTH * CH;
+  static constexpr size_t READS = HEIGHT * WIDTH * CH / (IN_W_PAR * IN_CH_PAR);
 
 public:
   static_assert(
@@ -78,9 +80,8 @@ public:
     char size = 0;
 
     // Loop through the input height and width.
-STREAM_TO_NHWC_MAINLOOP:
-    for (size_t i_input_word = 0; i_input_word < ITER;
-         i_input_word += IN_CH_PAR * IN_W_PAR) {
+  STREAM_TO_NHWC_MAINLOOP:
+    for (size_t i_input_word = 0; i_input_word < ITER; i_input_word++) {
 #pragma HLS pipeline II = 1
       StreamToNHWC::pipeline_body(input_data_stream, output_data_stream,
                                   circular_buffer, head, size, tail,
@@ -105,7 +106,7 @@ STREAM_TO_NHWC_MAINLOOP:
       if (initialized)
         return;
       delayed_output = PipelineDelayBuffer<TOutputWord>(depth);
-      actor_status = ActorStatus(depth, ITER / (IN_W_PAR * IN_CH_PAR));
+      actor_status = ActorStatus(depth, ITER);
       initialized = true;
     }
   };
@@ -132,9 +133,11 @@ STREAM_TO_NHWC_MAINLOOP:
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-      if (input_data_stream[i_w_par].empty()) {
-        firing_condition = false;
+    if (st.i_input_word < READS) {
+      for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
+        if (input_data_stream[i_w_par].empty()) {
+          firing_condition = false;
+        }
       }
     }
 
@@ -143,7 +146,7 @@ STREAM_TO_NHWC_MAINLOOP:
       StreamToNHWC::pipeline_body(input_data_stream, instant_output_stream,
                                   st.circular_buffer, st.head, st.size, st.tail,
                                   st.i_input_word);
-      st.i_input_word += IN_CH_PAR * IN_W_PAR;
+      st.i_input_word++;
       if (st.i_input_word >= ITER) {
         st.i_input_word = 0;
       }
@@ -186,18 +189,20 @@ private:
     Quantizer quantizer; // Quantizer instance for quantization.
 
     // Loop through the pixels processed in parallel.
-    for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-      TInputWord s_input_struct = input_data_stream[i_w_par].read();
-      for (size_t i_och_par = 0; i_och_par < IN_CH_PAR; i_och_par++) {
-        circular_buffer[head] = s_input_struct[i_och_par];
-        head = (head + 1) % (DATA_PER_WORD * 2);
+    const bool end_of_tensor = (i_input_word >= READS);
+    if (!end_of_tensor) {
+      for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
+        TInputWord s_input_struct = input_data_stream[i_w_par].read();
+        for (size_t i_och_par = 0; i_och_par < IN_CH_PAR; i_och_par++) {
+          circular_buffer[head] = s_input_struct[i_och_par];
+          head = (head + 1) % (DATA_PER_WORD * 2);
+        }
       }
+      size += IN_W_PAR * IN_CH_PAR;
     }
-    size += IN_W_PAR * IN_CH_PAR;
 
     // Check if we have enough data to form an output word or if we are at the
     // end of the tensor.
-    const bool end_of_tensor = (i_input_word == ITER - (IN_W_PAR * IN_CH_PAR));
     if (size >= DATA_PER_WORD || end_of_tensor) {
 
       // If we have enough data to form an output word, proceed with packing.

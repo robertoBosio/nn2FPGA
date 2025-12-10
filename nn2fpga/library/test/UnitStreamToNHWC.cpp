@@ -16,7 +16,7 @@ void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::IN_W_PAR],
 #pragma HLS INTERFACE axis port = output_data_stream
   // Wrapper function to call the run() method of StreamToNHWC, for synthesis.
   StreamToNHWC<TInputWord, test_config::TInput, test_config::TOutputWord,
-               test_config::TOutput, test_config::Quantizer,
+               test_config::TOutput, test_config::Quantizer, test_config::ITER,
                test_config::DATA_PER_WORD, test_config::HEIGHT,
                test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
                test_config::IN_CH_PAR>
@@ -85,13 +85,18 @@ bool test_run() {
 bool test_step() {
   // This function tests the step() method of StreamToNHWC
 
-  static constexpr size_t expectedII =
-      test_config::HEIGHT * test_config::WIDTH * test_config::CH /
-      (test_config::IN_CH_PAR * test_config::IN_W_PAR);
+  size_t expectedII = test_config::HEIGHT * test_config::WIDTH *
+                      test_config::CH /
+                      (test_config::IN_CH_PAR * test_config::IN_W_PAR);
+  if ((test_config::HEIGHT * test_config::WIDTH * test_config::CH) %
+          (test_config::DATA_PER_WORD) !=
+      0) {
+    expectedII += 1;
+  }
 
   // Instantiate the operator
   StreamToNHWC<TInputWord, test_config::TInput, test_config::TOutputWord,
-               test_config::TOutput, test_config::Quantizer,
+               test_config::TOutput, test_config::Quantizer, test_config::ITER,
                test_config::DATA_PER_WORD, test_config::HEIGHT,
                test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
                test_config::IN_CH_PAR>
@@ -144,7 +149,7 @@ int main(int argc, char **argv) {
   bool all_passed = true;
 
   all_passed &= test_run();
-
+  
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
   // estimations
   if (argc > 1 && std::string(argv[1]) == "csim") {

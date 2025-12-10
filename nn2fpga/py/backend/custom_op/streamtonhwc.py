@@ -129,6 +129,12 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
         input_shape = model.get_tensor_shape(self.onnx_node.input[0])
         input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
 
+        # Adjust the number of iterations to be multiple of data per word.
+        # If not, an extra iteration is needed to flush the remaining data.
+        iter = np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        if np.prod(input_shape) % self.__get_data_per_word(model) != 0:
+            iter += 1
+
         # Create the StreamToNHWC object.
         StreamToNHWC = cpp_object(
             "StreamToNHWC",
@@ -145,6 +151,7 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
                     f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>",
                     "Quantizer",
                 ),
+                (int(iter), "ITER"),
                 (self.__get_data_per_word(model), "DATA_PER_WORD"),
                 (input_shape[2], "HEIGHT"),
                 (input_shape[3], "WIDTH"),

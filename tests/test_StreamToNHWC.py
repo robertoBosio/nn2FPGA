@@ -47,6 +47,7 @@ class TestStreamToNHWC(BaseHLSTest):
             "IN_W_PAR": 1,
             "IN_CH_PAR": 2,
             "DATA_PER_WORD": 16,
+            "ITER": 32,
             "PIPELINE_DEPTH": 4,
         }
         self.run(config_dict, hls_steps)
@@ -61,6 +62,7 @@ class TestStreamToNHWC(BaseHLSTest):
             "IN_W_PAR": 2,
             "IN_CH_PAR": 3,
             "DATA_PER_WORD": 8,
+            "ITER": 8,
             "PIPELINE_DEPTH": 1,
         }
         self.run(config_dict, hls_steps)
@@ -75,6 +77,7 @@ class TestStreamToNHWC(BaseHLSTest):
             "IN_W_PAR": 1,
             "IN_CH_PAR": 3,
             "DATA_PER_WORD": 8,
+            "ITER": 16,
             "PIPELINE_DEPTH": 2,
         }
         self.run(config_dict, hls_steps)
@@ -87,8 +90,9 @@ class TestStreamToNHWC(BaseHLSTest):
             "HEIGHT": 1,
             "CH": 1000,
             "IN_W_PAR": 1,
-            "IN_CH_PAR": 2,
+            "IN_CH_PAR": 10,
             "DATA_PER_WORD": 16,
+            "ITER": 101,
             "PIPELINE_DEPTH": 4,
         }
         self.run(config_dict, hls_steps)
