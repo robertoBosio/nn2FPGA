@@ -961,9 +961,11 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
 
         point = self.__current_dse_point()
 
+        # In depthwise convolution, it is not possible to pack two weights against one activation
+        # because each channel has its own filter.
         mac_per_dsp, _ = packing_feature(
             (act_bits, weight_bits),
-            [point.width_unroll, point.channel_unroll],
+            [point.width_unroll, 1],
             silvia_packing,
         )
         MACs = (
@@ -1049,12 +1051,17 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 if (output_bits * channel_unroll) > 4096:
                     continue
 
+                # Heuristic to limit the resource usage
+                if width_unroll > 4:
+                    continue
+
                 DSE_points.append(
                     self.DSEPoint(
                         channel_unroll, width_unroll, kernel_height, kernel_width
                     )
                 )
 
+        # DSE_points = [self.DSEPoint(16, 1, 3, 3)]
         return DSE_points
 
     def apply_point(self, model: ModelWrapper, point: "StreamingDepthwiseConv.DSEPoint"):
