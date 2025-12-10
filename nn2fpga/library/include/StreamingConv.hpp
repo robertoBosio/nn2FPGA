@@ -489,11 +489,6 @@ private:
       }
     }
 
-    // Read the bias data only at the end of the computation of the output.
-    if (i_ich == IN_CH - IN_CH_PAR) {
-      bias_data = i_biases[0].read();
-    }
-
     // Initialize the accumulator buffer for the current block of output
     // channels and pixels.
     if (i_ich == 0) {
@@ -521,6 +516,19 @@ private:
             }
           }
         }
+      }
+    }
+
+    // Read the bias data only at the end of the computation of the output.
+    if (i_ich == IN_CH - IN_CH_PAR) {
+      bias_data = i_biases[0].read();
+    }
+    
+    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
+      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
+
+        // Compute the index of the accumulator.
+        size_t acc_index = i_w_par * OUT_CH_PAR + i_och_par;
 
         // If we are at the last block of input channels, read the bias and
         // finalize the output.
@@ -581,13 +589,6 @@ private:
       }
     }
 
-    // Read the bias data only at the end of the computation of the output.
-    if (i_ich == IN_CH - IN_CH_PAR) {
-      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
-        bias_data[i_och_par] = i_biases[i_och_par][0];
-      }
-    }
-
     // Initialize the accumulator buffer for the current block of output
     // channels and pixels.
     if (i_ich == 0) {
@@ -615,6 +616,21 @@ private:
             }
           }
         }
+      }
+    }
+    
+    // Read the bias data only at the end of the computation of the output.
+    if (i_ich == IN_CH - IN_CH_PAR) {
+      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
+        bias_data[i_och_par] = i_biases[i_och_par][0];
+      }
+    }
+
+    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
+      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
+
+        // Compute the index of the accumulator.
+        size_t acc_index = i_w_par * OUT_CH_PAR + i_och_par;
 
         // If we are at the last block of input channels, read the bias and
         // finalize the output.

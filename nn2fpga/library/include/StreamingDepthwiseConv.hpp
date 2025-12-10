@@ -341,9 +341,6 @@ private:
       }
     }
 
-    // Read the bias data.
-    bias_data = i_biases[0].read();
-
     // Initialize the accumulator buffer for the current block of output
     // channels and pixels.
     for (size_t i = 0; i < CH_PAR * W_PAR; i++) {
@@ -367,6 +364,17 @@ private:
                 weight_data[i_fh][i_fw][i_ch_par];
           }
         }
+      }
+    }
+    
+    // Read the bias data.
+    bias_data = i_biases[0].read();
+    
+    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
+      for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
+
+        // Compute the index of the accumulator.
+        size_t acc_index = i_w_par * CH_PAR + i_ch_par;
 
         // Finalize the output.
         TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
@@ -418,11 +426,6 @@ private:
       }
     }
 
-    // Read the bias data.
-    for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-      bias_data[i_ch_par] = i_biases[i_ch_par][0];
-    }
-
     // Initialize the accumulator buffer for the current block of output
     // channels and pixels.
     for (size_t i = 0; i < CH_PAR * W_PAR; i++) {
@@ -446,8 +449,19 @@ private:
                 weight_data[i_fh][i_fw][i_ch_par];
           }
         }
+      }
+    }
+
+    // Read the bias data.
+    for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
+      bias_data[i_ch_par] = i_biases[i_ch_par][0];
+    }
+    
+    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
+      for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
 
         // Finalize the output.
+        size_t acc_index = i_w_par * CH_PAR + i_ch_par;
         TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
         wide_acc = activation(wide_acc);
         TOutput output_value = quantizer(wide_acc);
