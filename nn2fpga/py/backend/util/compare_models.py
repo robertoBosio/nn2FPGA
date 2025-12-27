@@ -61,8 +61,8 @@ def report_error_stats(output_name: str, expected_output: np.ndarray, produced_o
 
     print("=" * 50)
     print(f"Output: {output_name}")
-    print(f"Expected Output (first 10 elements): {expected_output.flatten()[-10:]}")
-    print(f"Produced Output (first 10 elements): {produced_output.flatten()[-10:]}")
+    print(f"Expected Output (first 10 elements): {expected_output.flatten()[:10]}")
+    print(f"Produced Output (first 10 elements): {produced_output.flatten()[:10]}")
     print(f"Max Error: {max_error}")
     print(f"Min Error: {min_error}")
     print(f"Mean Error: {mean_error}")
