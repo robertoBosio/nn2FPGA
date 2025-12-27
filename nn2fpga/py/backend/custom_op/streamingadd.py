@@ -127,6 +127,11 @@ class StreamingAdd(NN2FPGAOp):
         # Determine signedness and bitwidth
         signed = input_quantA.signed or input_quantB.signed
         acc_bits = max(input_quantA.bitwidth, input_quantB.bitwidth) + 1
+
+        # In case the input signedness is different, we need an extra bit, as the accumulator will be signed.
+        if (input_quantA.signed != input_quantB.signed):
+            acc_bits += 1
+
         acc_quant = TensorQuant(
             bitwidth=acc_bits,
             signed=signed,
