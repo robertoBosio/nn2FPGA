@@ -27,9 +27,7 @@
        STEP_fixed_counter -= STEP_nnII;
 
        // Write a token.
-       TOutputWord output_data;
-       output_data.data = 0;
-       output_data_stream.write(output_data);
+       output_data_stream.write(TOutputWord());
      }
      STEP_actor_status.fire();
      STEP_actor_status.advance();
