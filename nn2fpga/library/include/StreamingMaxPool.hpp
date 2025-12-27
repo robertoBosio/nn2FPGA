@@ -1,14 +1,14 @@
 #pragma once
-#include "hls_stream.h"
-#include "ap_int.h"
-#include "utils/CSDFG_utils.hpp"
-#include <cstddef>
-#include <cassert>
 #include "DequantQuant.hpp"
+#include "ap_int.h"
+#include "hls_stream.h"
+#include "utils/CSDFG_utils.hpp"
+#include <cassert>
+#include <cstddef>
 
 /**
- * @brief StreamingMaxPool implements a quantized max pooling with only streaming
- * in input and output. Works only with NHWC data layout.
+ * @brief StreamingMaxPool implements a quantized max pooling with only
+ * streaming in input and output. Works only with NHWC data layout.
  *
  * @tparam TInputWord      Data type for input word (packed input channels).
  * @tparam TInput          Data type for individual input elements.
@@ -46,7 +46,8 @@
  *
  */
 
-template <typename TInputWord, typename TInput, size_t OUT_CH,
+template <typename TInputWord, typename TInput, typename TOutputWord,
+          typename TOutput, typename Quantizer, size_t OUT_CH,
           size_t OUT_HEIGHT, size_t OUT_WIDTH, size_t FH, size_t FW,
           size_t STRIDE_H, size_t STRIDE_W, size_t CH_PAR, size_t W_PAR>
 class StreamingMaxPool {
@@ -61,8 +62,7 @@ public:
   static_assert(STRIDE_H > 0 && STRIDE_W > 0, "STRIDE must be greater than 0");
   static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
   static_assert(W_PAR > 0, "W_PAR must be greater than 0");
-  static_assert(OUT_CH % CH_PAR == 0,
-                "OUT_CH must be a multiple of CH_PAR");
+  static_assert(OUT_CH % CH_PAR == 0, "OUT_CH must be a multiple of CH_PAR");
   static_assert(OUT_WIDTH % W_PAR == 0,
                 "OUT_WIDTH must be a multiple of W_PAR");
 
@@ -72,7 +72,7 @@ public:
     // Loop iteration indexes.
     size_t i_hw = 0, i_ch = 0;
 
-    PipelineDelayBuffer<TInputWord> delayed_output[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
@@ -80,7 +80,7 @@ public:
       if (initialized)
         return;
       for (size_t i = 0; i < W_PAR; i++) {
-        delayed_output[i] = PipelineDelayBuffer<TInputWord>(depth);
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status = ActorStatus(depth, OUT_HEIGHT * (OUT_WIDTH / W_PAR) *
                                             (OUT_CH / CH_PAR));
@@ -101,7 +101,7 @@ public:
 
   template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
-           hls::stream<TInputWord> o_data[W_PAR]) {
+           hls::stream<TOutputWord> o_data[W_PAR]) {
 
     for (size_t i_hw = 0; i_hw < OUT_HEIGHT * OUT_WIDTH / W_PAR; i_hw++) {
     MAXPOOL_RUN_LOOP:
@@ -113,7 +113,7 @@ public:
   }
 
   ActorStatus step(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
-                   hls::stream<TInputWord> o_data[W_PAR]) {
+                   hls::stream<TOutputWord> o_data[W_PAR]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -132,9 +132,8 @@ public:
 
     if (firing_condition) {
 
-      hls::stream<TInputWord> instant_output_stream[W_PAR];
-      StreamingMaxPool::pipeline_body(
-          i_data, instant_output_stream);
+      hls::stream<TOutputWord> instant_output_stream[W_PAR];
+      StreamingMaxPool::pipeline_body(i_data, instant_output_stream);
 
       st.i_ch += CH_PAR;
       if (st.i_ch >= OUT_CH) {
@@ -157,13 +156,13 @@ public:
                                           true);
         } else {
           // If the output stream is empty, push a placeholder.
-          st.delayed_output[i_w_par].push(TInputWord(), false);
+          st.delayed_output[i_w_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
       for (size_t i_w_par = 0; i_w_par < W_PAR; ++i_w_par) {
-        st.delayed_output[i_w_par].push(TInputWord(), false);
+        st.delayed_output[i_w_par].push(TOutputWord(), false);
       }
     }
 
@@ -171,7 +170,7 @@ public:
     st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TInputWord out;
+    TOutputWord out;
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       if (st.delayed_output[i_w_par].pop(out)) {
         o_data[i_w_par].write(out);
@@ -184,13 +183,17 @@ public:
 
 private:
   static void pipeline_body(hls::stream<TInputWord> i_data[FH * FW_EXPAND],
-                            hls::stream<TInputWord> o_data[W_PAR]) {
+                            hls::stream<TOutputWord> o_data[W_PAR]) {
 #pragma HLS inline
 
     // Input structure to hold the results.
-    TInputWord output_data[W_PAR];
+    TInputWord output_buffer[W_PAR];
     // Input structure to hold the input data.
     TInputWord input_data[FH][FW_EXPAND];
+    // Output structure to hold the output data.
+    TOutputWord output_data[W_PAR];
+    // Quantizer instance.
+    Quantizer quantizer;
 
     // Read the input data for the current expanded window.
     for (size_t fh = 0; fh < FH; fh++) {
@@ -202,7 +205,7 @@ private:
     // Initialize the output data to the minimum value.
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-        output_data[i_w_par][i_ch_par] = LimitsImpl<TInput>::min();
+        output_buffer[i_w_par][i_ch_par] = LimitsImpl<TInput>::min();
       }
     }
 
@@ -214,13 +217,17 @@ private:
             // Compute the filter width index inside the expanded input window.
             size_t i_fw_expanded = i_fw + i_w_par * STRIDE_W;
 
-            output_data[i_w_par][i_ch_par] =
-                (input_data[i_fh][i_fw_expanded][i_ch_par] > output_data[i_w_par][i_ch_par]) ?
-                input_data[i_fh][i_fw_expanded][i_ch_par] :
-                output_data[i_w_par][i_ch_par];
+            output_buffer[i_w_par][i_ch_par] =
+                (input_data[i_fh][i_fw_expanded][i_ch_par] >
+                 output_buffer[i_w_par][i_ch_par])
+                    ? input_data[i_fh][i_fw_expanded][i_ch_par]
+                    : output_buffer[i_w_par][i_ch_par];
           }
         }
 
+        TOutput out_data = quantizer(output_buffer[i_w_par][i_ch_par]);
+        output_data[i_w_par][i_ch_par] = out_data;
+            
         // Write the output data only after the computation of all
         // output channels for the current pixels.
         if (i_ch_par == CH_PAR - 1) {

@@ -4,6 +4,7 @@ import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
 
+
 class TestStreamingMaxPool(BaseHLSTest):
 
     @property
@@ -15,17 +16,29 @@ class TestStreamingMaxPool(BaseHLSTest):
         return "StreamingMaxPool"
 
     def generate_config_file(self, config_dict):
-        
+
         # random tensors
         input_tensor = np.random.randint(
             -128,
             127,
-            size=(1, config_dict["OUT_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]),
+            size=(
+                1,
+                config_dict["OUT_CH"],
+                config_dict["IN_HEIGHT"],
+                config_dict["IN_WIDTH"],
+            ),
             dtype=np.int8,
         )
 
         X = helper.make_tensor_value_info(
-            "X", TensorProto.INT8, [1, config_dict["OUT_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]]
+            "X",
+            TensorProto.INT8,
+            [
+                1,
+                config_dict["OUT_CH"],
+                config_dict["IN_HEIGHT"],
+                config_dict["IN_WIDTH"],
+            ],
         )
         Y = helper.make_tensor_value_info(
             "Y",
@@ -59,7 +72,12 @@ class TestStreamingMaxPool(BaseHLSTest):
             outputs=["Y_dq"],
             kernel_shape=[config_dict["FH"], config_dict["FW"]],
             strides=[config_dict["STRIDE_H"], config_dict["STRIDE_W"]],
-            pads=[config_dict["PAD_T"], config_dict["PAD_L"], config_dict["PAD_B"], config_dict["PAD_R"]],
+            pads=[
+                config_dict["PAD_T"],
+                config_dict["PAD_L"],
+                config_dict["PAD_B"],
+                config_dict["PAD_R"],
+            ],
             dilations=[config_dict["DIL_H"], config_dict["DIL_W"]],
             ceil_mode=config_dict["CEIL_MODE"],
         )
@@ -95,7 +113,8 @@ class TestStreamingMaxPool(BaseHLSTest):
             else:
                 cwr.add_line(f"const int {key} = {value};")
         cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
-        cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TInput> Quantizer;")
+        cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+        cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
@@ -106,18 +125,19 @@ class TestStreamingMaxPool(BaseHLSTest):
         cwr.add_lines(
             csnake.Variable(
                 "output_tensor",
-                primitive=f"ap_int<{config_dict['INPUT_DATAWIDTH']}>",
+                primitive=f"ap_int<{config_dict['OUTPUT_DATAWIDTH']}>",
                 value=y,
             ).generate_initialization()
         )
         cwr.dedent()
         cwr.add_line("}")
         return cwr.code
-    
+
     def test_7x7_po2(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
             "IN_HEIGHT": 20,
             "IN_WIDTH": 20,
             "OUT_CH": 20,

@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
+using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
 static constexpr size_t FW_EXPAND =
     test_config::FW + (test_config::W_PAR - 1) * test_config::STRIDE_W;
 static constexpr size_t OUT_HEIGHT =
@@ -20,16 +21,15 @@ static constexpr size_t OUT_WIDTH =
     1 + (test_config::IN_WIDTH + test_config::PAD_L + test_config::PAD_R -
          test_config::DIL_W * (test_config::FW - 1) - 1) /
             test_config::STRIDE_W;
-using TOutputWord = TInputWord;
 
 void wrap_run(hls::stream<TInputWord> i_data[test_config::FH * FW_EXPAND],
               hls::stream<TInputWord> o_data[test_config::W_PAR]) {
   // Wrapper for synthesis.
-  StreamingMaxPool<TInputWord, test_config::TInput, test_config::OUT_CH,
-                   OUT_HEIGHT, OUT_WIDTH,
-                   test_config::FH, test_config::FW, test_config::STRIDE_H,
-                   test_config::STRIDE_W, test_config::CH_PAR,
-                   test_config::W_PAR>
+  StreamingMaxPool<
+      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
+      test_config::Quantizer, test_config::OUT_CH, OUT_HEIGHT, OUT_WIDTH,
+      test_config::FH, test_config::FW, test_config::STRIDE_H,
+      test_config::STRIDE_W, test_config::CH_PAR, test_config::W_PAR>
       pool;
   pool.run<0>(i_data, o_data);
 }
@@ -134,11 +134,11 @@ bool test_step() {
   hls::stream<TOutputWord> o_data[test_config::W_PAR];
 
   // Run the global average pooling
-  StreamingMaxPool<TInputWord, test_config::TInput,
-                   test_config::OUT_CH, OUT_HEIGHT,
-                   OUT_WIDTH, test_config::FH, test_config::FW,
-                   test_config::STRIDE_H, test_config::STRIDE_W,
-                   test_config::CH_PAR, test_config::W_PAR>
+  StreamingMaxPool<
+      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
+      test_config::Quantizer, test_config::OUT_CH, OUT_HEIGHT, OUT_WIDTH,
+      test_config::FH, test_config::FW, test_config::STRIDE_H,
+      test_config::STRIDE_W, test_config::CH_PAR, test_config::W_PAR>
       pool;
   pool.step_init(test_config::PIPELINE_DEPTH);
 
