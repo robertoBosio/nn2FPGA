@@ -76,6 +76,9 @@ public:
     return firings == other.firings && current_index == other.current_index;
   }
 
+  bool operator!=(const ActorStatus &other) const {
+    return !(*this == other);
+  }
   // Define a string representation for debugging
   std::string to_string() const {
     std::string result = "ActorStatus:\n";
@@ -316,6 +319,13 @@ public:
     return valid;
   }
 
+  bool peek() const {
+    if (valid_flags.empty()) {
+      return false;
+    }
+    return valid_flags.front();
+  }
+
   std::string to_string() const {
     std::string result = "PipelineDelayBuffer:\n";
     result += "Depth: " + std::to_string(pipeline_depth) + "\n";
@@ -350,6 +360,8 @@ public:
     (void)out_value; // Avoid unused parameter warning
     return false;    // Always return false in synthesis mode
   }
+
+  bool peek() const { return false; }
 
   std::string to_string() const { return ""; }
 };
