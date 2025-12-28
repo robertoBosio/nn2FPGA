@@ -972,7 +972,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
         for in_channel_unroll in divisors(input_shape[1], input_shape[1]):
-            for out_channel_unroll in divisors(output_shape[1], output_shape[1]):
+            # Clipping out channel unrolling factor to avoid collapsing the loop, due to a bug which forces Vitis to generate a stp pipeline.
+            for out_channel_unroll in divisors(output_shape[1], output_shape[1] - 1):
                 for width_unroll in divisors(output_shape[3], output_shape[3]):
                     # Check dimension of weight streams
                     if (weight_bits * in_channel_unroll * out_channel_unroll) > 4096:
@@ -988,7 +989,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                         continue
 
                     # Heuristic to spread unrolling across dimensions
-                    if (in_channel_unroll * out_channel_unroll) > 100:
+                    if (width_unroll > 4 or out_channel_unroll > 20 or in_channel_unroll > 20):
                         continue
 
                     DSE_points.append(
