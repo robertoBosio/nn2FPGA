@@ -36,6 +36,23 @@ class StreamingMemory {
 private:
   static constexpr size_t CH_GROUPS = WORDS / (ARRAY_PAR * WORD_PAR);
 
+  // Depth of the streams in output of the node.
+  // Those are not really streams, as memory should have been instantiated
+  // directly inside the convolution node, so a depth of 2 is enough to avoid
+  // stalls.
+  static constexpr size_t STREAM_DEPTH = 2;
+
+  static constexpr int bits_for(size_t n) {
+    // bits to represent values [0 .. n-1]
+    int b = 0;
+    size_t v = (n > 0) ? (n - 1) : 0;
+    while (v) {
+      v >>= 1;
+      ++b;
+    }
+    return (b == 0) ? 1 : b; // at least 1 bit
+  }
+
   static void pipeline_body(hls::stream<TOutputWord> o_data[ARRAY_PAR],
                             TOutput mem[WORD_PAR][ARRAY_PAR]) {
 #pragma HLS inline
@@ -51,9 +68,9 @@ private:
   void initialize_memory(hls::stream<TInputWord> i_shift_data[1],
                          TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR]) {
 #pragma HLS inline
-    auto i_array_par = 0;
-    auto i_ch_groups = 0;
-    auto i_word_par = 0;
+    ap_uint<bits_for(ARRAY_PAR)> i_array_par = 0;
+    ap_uint<bits_for(CH_GROUPS)> i_ch_groups = 0;
+    ap_uint<bits_for(WORD_PAR)> i_word_par = 0;
     TOutput word[WORD_PAR][ARRAY_PAR];
   MEMORY_INIT_LOOP:
     for (size_t i_word = 0; i_word < WORDS; i_word += DATA_PER_WORD) {
@@ -66,27 +83,33 @@ private:
         TOutput in_data = in_word[0].range(TOutput::width - 1, 0);
         in_word[0] >>= TOutput::width;
         word[i_word_par][i_array_par] = in_data;
-        i_array_par++;
-        if (i_array_par == ARRAY_PAR) {
+        if (i_array_par == ARRAY_PAR - 1) {
           i_array_par = 0;
-          i_word_par++;
-        }
-        if (i_word_par == WORD_PAR) {
-          for (size_t i = 0; i < WORD_PAR; i++) {
-            #pragma HLS unroll
-            for (size_t j = 0; j < ARRAY_PAR; j++) {
-              mem[i_ch_groups][i][j] = word[i][j];
+
+          if (i_word_par == WORD_PAR - 1) {
+            i_word_par = 0;
+
+            // write out one complete block
+            for (size_t i = 0; i < WORD_PAR; i++) {
+#pragma HLS unroll
+              for (size_t j = 0; j < ARRAY_PAR; j++) {
+                mem[i_ch_groups][i][j] = word[i][j];
+              }
             }
+
+            i_ch_groups++;
+          } else {
+            i_word_par++;
           }
-          i_word_par = 0;
-          i_ch_groups++;
+
+        } else {
+          i_array_par++;
         }
       }
     }
   }
 
-public:
-  StreamingMemory() = default;
+public : StreamingMemory() = default;
 
   struct StepState {
     // Loop iteration indexes.
@@ -94,6 +117,7 @@ public:
     PipelineDelayBuffer<TOutputWord> delayed_output[ARRAY_PAR];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
+    size_t depth = 1;
 
     void init(size_t depth) {
       if (initialized)
@@ -101,6 +125,7 @@ public:
       for (size_t i = 0; i < ARRAY_PAR; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
+      depth = depth;
       actor_status = ActorStatus(depth, CH_GROUPS * TIMES);
       initialized = true;
     }
@@ -208,33 +233,58 @@ public:
     assert(it != registry().end() && "Instance not initialized");
     auto &st = it->second;
 
-    hls::stream<TOutputWord> instant_output_stream[ARRAY_PAR];
-    StreamingMemory::pipeline_body(instant_output_stream, mem[st.i_ch_groups]);
-    st.i_ch_groups++;
-    if (st.i_ch_groups >= CH_GROUPS) {
-      st.i_ch_groups = 0;
-      st.i_hw++;
-    }
-    if (st.i_hw >= TIMES) {
-      st.i_hw = 0;
-    }
-    st.actor_status.fire();
-    st.actor_status.advance();
-    for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; ++i_fhw) {
-      if (!instant_output_stream[i_fhw].empty()) {
-        st.delayed_output[i_fhw].push(instant_output_stream[i_fhw].read(),
-                                      true);
-      } else {
-        // If the output stream is empty, push a placeholder.
-        st.delayed_output[i_fhw].push(TOutputWord(), false);
+    bool firing_condition = true;
+    if (st.depth == 1) {
+      // if the pipeline depth is 1, since we write at each step, we just need
+      // to check that there is space in all output streams.
+      for (size_t i_array_par = 0; i_array_par < ARRAY_PAR; ++i_array_par) {
+        if (o_data[i_array_par].size() >= STREAM_DEPTH) {
+          firing_condition = false;
+        }
+      }
+    } else {
+      // if the pipeline depth is >1, at the start we don't write directly to
+      // the output streams. We need to check the delayed output buffers
+      // instead.
+      for (size_t i_array_par = 0; i_array_par < ARRAY_PAR; ++i_array_par) {
+        if (st.delayed_output[i_array_par].peek() &&
+            o_data[i_array_par].size() >= STREAM_DEPTH) {
+          firing_condition = false;
+        }
       }
     }
-    for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; i_fhw++) {
-      TOutputWord out;
-      if (st.delayed_output[i_fhw].pop(out)) {
-        o_data[i_fhw].write(out);
+
+    if (firing_condition) {
+      hls::stream<TOutputWord> instant_output_stream[ARRAY_PAR];
+      StreamingMemory::pipeline_body(instant_output_stream,
+                                     mem[st.i_ch_groups]);
+      st.i_ch_groups++;
+      if (st.i_ch_groups >= CH_GROUPS) {
+        st.i_ch_groups = 0;
+        st.i_hw++;
+      }
+      if (st.i_hw >= TIMES) {
+        st.i_hw = 0;
+      }
+      st.actor_status.fire();
+      st.actor_status.advance();
+      for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; ++i_fhw) {
+        if (!instant_output_stream[i_fhw].empty()) {
+          st.delayed_output[i_fhw].push(instant_output_stream[i_fhw].read(),
+                                        true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output[i_fhw].push(TOutputWord(), false);
+        }
+      }
+      for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; i_fhw++) {
+        TOutputWord out;
+        if (st.delayed_output[i_fhw].pop(out)) {
+          o_data[i_fhw].write(out);
+        }
       }
     }
+
     return st.actor_status;
   }
 };

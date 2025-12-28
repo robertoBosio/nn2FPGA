@@ -71,15 +71,6 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
             )
             stream_vars.append((var, True))
 
-    known_stream_depth = set()
-    for node in model.graph.node:
-        if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
-            for stream in list(node.input) + list(node.output):
-                m = re.match(r"(.*)_(\d+)_$", stream)
-                if m:
-                    known_stream_depth.add(m.group(1))
-    logger.info(f"Known stream depth for: {known_stream_depth}")
-
     for node in model.graph.node:
         custom_op = getCustomOp(node)
 
@@ -155,16 +146,12 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # Allocating correct size for the actor statuses.
     num_consumers = len(consumers_step_calls)
     num_producers = len(producers_step_calls)
-    num_non_streaming_nodes = len([
-        node for node in model.graph.node
-        if getCustomOp(node).get_nodeattr("original_op_type") != "StreamingMemory"
-    ])
-    num_actors = num_consumers + num_producers + num_non_streaming_nodes
+    num_actors = num_consumers + num_producers
     function.add_code("std::vector<ActorStatus> actor_statuses;")
     function.add_code(f"actor_statuses.reserve({num_actors});")
 
     # Allocating correct size for the channel quantities.
-    num_channels = sum([stream.array if stream.array is not None else 1 for stream, _ in stream_vars if stream.name not in known_stream_depth])
+    num_channels = sum([stream.array if stream.array is not None else 1 for stream, _ in stream_vars])
     function.add_code("std::vector<size_t> channel_quantities;")
     function.add_code(f"channel_quantities.reserve({num_channels});")
 
@@ -183,8 +170,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # It must be done in reverse order to ensure that nodes cannot immediately consume the data produced by the previous node.
     for node in reversed(model.graph.node):
         function.add_code(f"actor_status = {getCustomOp(node).get_nodeattr('hls_step_call')};")
-        if getCustomOp(node).get_nodeattr('original_op_type') != "StreamingMemory":
-            function.add_code("actor_statuses.push_back(actor_status);")
+        function.add_code("actor_statuses.push_back(actor_status);")
 
     # Execute a step for each input producer.
     for step_call in producers_step_calls:
@@ -196,9 +182,8 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     for stream, is_internal in stream_vars:
         if is_internal:
             for s in range(stream.array):
-                if stream.name not in known_stream_depth:
-                    function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[{s}].size(), stream_max_size[{iter}]);")
-                    function.add_code(f"channel_quantities.push_back({stream.name}[{s}].size());")
+                function.add_code(f"stream_max_size[{iter}] = std::max<size_t>({stream.name}[{s}].size(), stream_max_size[{iter}]);")
+                function.add_code(f"channel_quantities.push_back({stream.name}[{s}].size());")
                 iter += 1
         else:
             function.add_code(f"channel_quantities.push_back({stream.name}.size());")
@@ -477,19 +462,7 @@ def generate_schedule(model: ModelWrapper, work_root: str):
 def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
     """Adjust the FIFO depth based on the scheduling information."""
 
-    known_stream_depth = set()
-    for node in model.graph.node:
-        if getCustomOp(node).get_nodeattr("original_op_type") == "StreamingMemory":
-            for stream in list(node.input) + list(node.output):
-                m = re.match(r"(.*)_(\d+)_$", stream)
-                if m:
-                    known_stream_depth.add(m.group(1))
-
     for stream_name in fifo_depths.keys():
-        if stream_name[:-3] in known_stream_depth:
-            logger.info(f"Skipping depth adjustment for stream {stream_name} with known depth.")
-            continue
-
         producer = model.find_producer(stream_name)
         consumer = model.find_consumer(stream_name)
         if producer is None or consumer is None:
@@ -585,18 +558,20 @@ class ComputeFifoDepth(Transformation):
 
         # Adjust the FIFO depths based on scheduling information.
         fifo_depths = adjust_depth_based_on_scheduling(model, fifo_depths, self.work_root)
+        
+        # Store the FIFO depth in the model metadata.
+        for stream_name, depth in fifo_depths.items():
+            current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
+            if current_meta.depth == 0:
+                current_meta.depth = depth + 1
+                set_custom_tensor_fifo_metadata(model, stream_name, current_meta)
 
         # Dump fifo depths for debugging.
         with open(os.path.join(self.work_root, "fifo_depths.csv"), "w") as f:
             f.write("stream_name,depth\n")
             for stream_name, depth in fifo_depths.items():
-                f.write(f"{stream_name},{depth+1}\n")
-        
-        # Store the FIFO depth in the model metadata.
-        for stream_name, depth in fifo_depths.items():
-            current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
-            current_meta.depth = depth + 1
-            set_custom_tensor_fifo_metadata(model, stream_name, current_meta)
+                current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
+                f.write(f"{stream_name},{current_meta.depth}\n")
         
         # Optionally erase the working directory.
         if self.erase:

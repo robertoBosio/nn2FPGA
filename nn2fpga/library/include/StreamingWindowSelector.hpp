@@ -139,6 +139,7 @@ public:
     PipelineDelayBuffer<TWord> delayed_output[2];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
+    size_t depth = 1;
 
     void init(size_t depth) {
       if (initialized)
@@ -148,6 +149,7 @@ public:
       actor_status =
           ActorStatus(depth, IN_HEIGHT * (IN_WIDTH / W_PAR) * (IN_CH / CH_PAR));
       initialized = true;
+      depth = depth;
     }
   };
 
@@ -188,6 +190,21 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
+    if (st.depth == 1){
+      bool is_within_window = true;
+      is_within_window &= (st.i_h >= TOP_BORDER && st.i_h < BOTTOM_BORDER);
+      is_within_window &= (st.i_w >= LEFT_BORDER && st.i_w < RIGHT_BORDER);
+      is_within_window &= ((st.i_h % STRIDE_H) == H_ROW_MOD);
+      is_within_window &= ((st.i_w_stride % STRIDE_W) == W_COL_MOD);
+      if (is_within_window && o_data.size() >= 2) {
+        firing_condition = false;
+      }
+    } else {
+      if (st.delayed_output[0].peek() && o_data.size() >= 2) {
+        firing_condition = false;
+      }
+    }
+
     if (i_data.empty()) {
       firing_condition = false;
     }
@@ -231,22 +248,18 @@ public:
         // If the output stream is empty, push a placeholder.
         st.delayed_output[1].push(TWord(), false);
       }
-    } else {
-      // If no data is available, push empty outputs.
-      st.delayed_output[0].push(TWord(), false);
-      st.delayed_output[1].push(TWord(), false);
-    }
 
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
+      // Advance the state of the actor firings.
+      st.actor_status.advance();
 
-    // Write the output data to the output stream.
-    TWord out;
-    if (st.delayed_output[0].pop(out)) {
-      o_data.write(out);
-    }
-    if (st.delayed_output[1].pop(out)) {
-      o_shift_data.write(out);
+      // Write the output data to the output stream.
+      TWord out;
+      if (st.delayed_output[0].pop(out)) {
+        o_data.write(out);
+      }
+      if (st.delayed_output[1].pop(out)) {
+        o_shift_data.write(out);
+      }
     }
 
     return st.actor_status;
@@ -275,6 +288,21 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
+    if (st.depth == 1){
+      bool is_within_window = true;
+      is_within_window &= (st.i_h >= TOP_BORDER && st.i_h < BOTTOM_BORDER);
+      is_within_window &= (st.i_w >= LEFT_BORDER && st.i_w < RIGHT_BORDER);
+      is_within_window &= ((st.i_h % STRIDE_H) == H_ROW_MOD);
+      is_within_window &= ((st.i_w_stride % STRIDE_W) == W_COL_MOD);
+      if (is_within_window && o_data.size() >= 2) {
+        firing_condition = false;
+      }
+    } else {
+      if (st.delayed_output[0].peek() && o_data.size() >= 2) {
+        firing_condition = false;
+      }
+    }
+
     if (i_data.empty()) {
       firing_condition = false;
     }
@@ -310,18 +338,14 @@ public:
         st.delayed_output[0].push(TWord(), false);
       }
 
-    } else {
-      // If no data is available, push empty outputs.
-      st.delayed_output[0].push(TWord(), false);
-    }
+      // Advance the state of the actor firings.
+      st.actor_status.advance();
 
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
-
-    // Write the output data to the output stream.
-    TWord out;
-    if (st.delayed_output[0].pop(out)) {
-      o_data.write(out);
+      // Write the output data to the output stream.
+      TWord out;
+      if (st.delayed_output[0].pop(out)) {
+        o_data.write(out);
+      }
     }
 
     return st.actor_status;

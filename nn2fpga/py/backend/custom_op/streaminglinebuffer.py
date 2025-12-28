@@ -117,7 +117,7 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
-                depth=0,
+                depth=2,  # Given the design of the LineBuffer, we already know we need a depth of 2 here.
                 hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=FH * FW_EXTENDED,
             )
