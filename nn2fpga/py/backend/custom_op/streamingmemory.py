@@ -298,7 +298,7 @@ class StreamingMemory(NN2FPGAOp):
         tensors_fifo_metadata = {}
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
-                depth=0,
+                depth=2,
                 hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
@@ -308,7 +308,7 @@ class StreamingMemory(NN2FPGAOp):
                 f"{self.__get_stream_name(self.onnx_node.output[1])}_0_"
             )
             tensors_fifo_metadata[output_names[-1]] = TensorFifo(
-                depth=0,
+                depth=2,
                 hls_type=f"{get_struct_type(get_custom_tensor_datatype(model, self.onnx_node.output[1]), 1)}",
                 n_array=1,
             )
