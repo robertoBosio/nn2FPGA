@@ -1,15 +1,15 @@
 import pulp
 import math
 import time
-import numpy as np
 from pulp.apis import PULP_CBC_CMD
 from tabulate import tabulate
 from collections import deque
+from typing import Any, Dict, List, Set, Tuple
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.util.board_util import read_board_info
 from qonnx.custom_op.registry import getCustomOp
-from backend.custom_op.op_base import DSECapable
+from backend.custom_op.op_base import DSECapable, NodeInterface
 import logging
 logger = logging.getLogger(__name__)
 
@@ -244,6 +244,174 @@ def update_model(model: ModelWrapper, parallel_op: dict) -> ModelWrapper:
 
     return model
 
+
+def reduce_mismatches(model: ModelWrapper, parallel_op: Dict[str, Any], model_II: int) -> ModelWrapper:
+    """
+    Evaluate search-space size for reducing mismatches between DSE ops.
+    The objective is to minimize the number of mismatches of words and streams between
+    consecutive DSE-capable nodes, while keeping the same DSP/BRAM/latency usage and throughput. 
+    """
+
+    def is_dse_node(node) -> bool:
+        return isinstance(getCustomOp(node), DSECapable)
+
+    def compute_alternatives(node, model_II) -> Tuple[List[NodeInterface], List[Any]]:
+        """
+        Returns alternative DSE points that do not increase DSP/BRAM/latency
+        relative to the current applied point in `parallel_op`.
+        """
+        node_name = node.name
+        op = getCustomOp(node)
+
+        # Current metrics at the point already applied in the model.
+        cur_dsps = op.get_dsps(model)
+        cur_brams = op.get_brams(model)
+
+        alt: List[NodeInterface] = []
+        points: List[Any] = []
+        try:
+            for point in op.get_dse_points(model):
+                op.apply_point(model, point)
+                new_dsps = op.get_dsps(model)
+                new_brams = op.get_brams(model)
+                new_lat = op.get_latency(model)
+
+                if new_dsps <= cur_dsps and new_brams <= cur_brams and new_lat <= model_II:
+                    alt.append(op.get_port_interface())
+                    points.append(point)
+        finally:
+            # Always restore original point, even if metrics queries fail.
+            op.apply_point(model, parallel_op[node_name])
+
+        return alt, points
+
+    def find_downstream_dse_consumers(start_node) -> List[Any]:
+        """
+        BFS from `start_node` to find all reachable DSECapable nodes,
+        traversing through non-DSE nodes. Does not traverse past a DSE node.
+        """
+        consumers: List[Any] = []
+        visited: Set[str] = set()
+
+        q = deque(model.find_direct_successors(start_node) or [])
+        while q:
+            n = q.popleft()
+            if n.name in visited:
+                continue
+            visited.add(n.name)
+
+            if is_dse_node(n):
+                consumers.append(n)
+                continue  # stop traversal past DSE nodes
+            q.extend(model.find_direct_successors(n) or [])
+
+        return consumers
+    
+    # Collect all DSE-capable nodes once.
+    dse_nodes = [n for n in model.graph.node if is_dse_node(n)]
+    node2i = {n.name: i for i, n in enumerate(dse_nodes)}
+
+    # Cache alternatives per node to avoid recomputation.
+    iface_cache: Dict[str, List[NodeInterface]] = {}
+    points_cache: Dict[str, List[Any]] = {}
+    for n in dse_nodes:
+        if n.name not in iface_cache:
+            iface_cache[n.name], points_cache[n.name] = compute_alternatives(n, model_II)   # list of NodeInterface
+
+    # Build mismatch costs between DSE nodes.
+    edges: List[Tuple[int, int]] = [] # (u_idx, v_idx)
+    mismatch_cost: Dict[Tuple[int, int, int, int], int] = {} # (u_idx, v_idx, p, q)
+    current_mismatch = 0
+    for u_node in dse_nodes:
+        u = node2i[u_node.name]
+        u_iface = getCustomOp(u_node).get_port_interface()
+        consumers = find_downstream_dse_consumers(u_node)
+
+        for v_node in consumers:
+            v = node2i[v_node.name]
+            v_iface = getCustomOp(v_node).get_port_interface()
+            
+            # Current mismatch between u -> v
+            c_mismatch = 0
+            c_mismatch += 1 if u_iface.out_stream_array != v_iface.in_stream_array else 0
+            c_mismatch += 1 if u_iface.out_word_array != v_iface.in_word_array else 0
+            current_mismatch += c_mismatch
+
+            edges.append((u, v))
+
+            u_alts = iface_cache[u_node.name]
+            v_alts = iface_cache[v_node.name]
+
+            for p, p_alt in enumerate(u_alts):
+                for q, c_alt in enumerate(v_alts):
+                    c = 0
+                    c += 1 if p_alt.out_stream_array != c_alt.in_stream_array else 0
+                    c += 1 if p_alt.out_word_array != c_alt.in_word_array else 0
+                    mismatch_cost[(u, v, p, q)] = c
+    
+    # One-hot variables for alternative choices.
+    x = []
+    for i, node in enumerate(dse_nodes):
+        n_alts = len(iface_cache[node.name])
+        x.append(pulp.LpVariable.dicts(f"Choice_{i}", range(n_alts), cat="Binary"))
+    
+    # One-hot variables for coupled alternative choices.
+    y = {}  # (u,v,p,q) -> pulp var
+    for (u, v) in edges:
+        n_u = len(iface_cache[dse_nodes[u].name])
+        n_v = len(iface_cache[dse_nodes[v].name])
+
+        for p in range(n_u):
+            for q in range(n_v):
+                var = pulp.LpVariable(f"Y_{u}_{p}_{v}_{q}", cat="Binary")
+                y[(u, v, p, q)] = var
+
+    # --- Problem ---
+    prob = pulp.LpProblem("Minimize_Mismatches", pulp.LpMinimize)
+
+    # --- Constraints: one-hot per node (exactly one alternative chosen) ---
+    for i, node in enumerate(dse_nodes):
+        n_alts = len(iface_cache[node.name])
+        prob += pulp.lpSum(x[i][p] for p in range(n_alts)) == 1, f"OneHot_{i}"
+
+    # --- Constraints: linearize y = x_u AND x_v for each edge (u,v) and choice pair (p,q) ---
+    for (u, v) in edges:
+        n_u = len(iface_cache[dse_nodes[u].name])
+        n_v = len(iface_cache[dse_nodes[v].name])
+
+        for p in range(n_u):
+            for q in range(n_v):
+                y_uvpq = y[(u, v, p, q)]
+
+                # Constrain y_uvpq to be 1 iff both x[u][p] and x[v][q] are 1
+                prob += y_uvpq <= x[u][p], f"Yub_u{u}p{p}_v{v}q{q}_1"
+                prob += y_uvpq <= x[v][q], f"Yub_u{u}p{p}_v{v}q{q}_2"
+                prob += y_uvpq >= x[u][p] + x[v][q] - 1, f"Ylb_u{u}p{p}_v{v}q{q}"
+
+    # --- Objective: minimize total mismatch cost ---
+    prob += pulp.lpSum(
+        mismatch_cost[(u, v, p, q)] * y[(u, v, p, q)]
+        for (u, v) in edges
+        for p in range(len(iface_cache[dse_nodes[u].name]))
+        for q in range(len(iface_cache[dse_nodes[v].name]))
+    ), "TotalMismatchCost"
+
+    prob.solve(pulp.PULP_CBC_CMD(msg=True))
+
+    chosen = {}
+    for i, node in enumerate(dse_nodes):
+        for p in range(len(iface_cache[node.name])):
+            if pulp.value(x[i][p]) > 0.5:
+                chosen[node.name] = p  # index into iface_cache[node.name]
+                getCustomOp(node).apply_point(model, points_cache[node.name][p])
+                break
+
+    if (prob.status == pulp.LpStatusInfeasible):
+        logger.error("Mismatch minimization problem unfeasible")
+    
+    logger.info(f"Starting mismatches: {current_mismatch}, minimized to: {int(pulp.value(prob.objective))}")
+    return model
+        
 def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
     """Propagate the parallelism information through the model."""
     
@@ -271,86 +439,6 @@ def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
                     queue.append(consumer)
             
     return model
-
-def opt_steps(layers_info, parallel_op, valid_par_solutions, prj_root="/tmp"):
-    """ Balancing the mismatches between the parallelization of consecutive layers."""
-
-    # Retriving only the parallelism combinations with same throughput.
-    clamped_valid_par_solutions = []
-    for i, solution_set in enumerate(valid_par_solutions):
-        clamped_valid_par_solutions.append([])
-        chosen_par = np.prod(parallel_op[layers_info[i]['name']][0:2])
-        chosen_ow = parallel_op[layers_info[i]['name']][2]
-        
-        # Do not choose combination which remove the packing feature over och.
-        packing_over_och = parallel_op[layers_info[i]
-                                       ['name']][0] % 2 == 0 and chosen_ow % 2 != 0
-        for combination in solution_set:
-            tot_par = np.prod(combination[0:2])
-            ow_par = combination[2]
-
-            if (tot_par == chosen_par and ow_par == chosen_ow):
-                if (packing_over_och and combination[0] % 2 != 0):
-                    continue
-                clamped_valid_par_solutions[i].append(combination)
-    
-    # Computing a value representing the mismatch between the parallelization of
-    # consecutive layers. The mismatch is computed as the difference between the
-    # parallelization of the output channels of the previous layer and the input
-    # channels of the next layer.
-    par_prev = parallel_op[layers_info[0]["name"]]
-    tot_mismatch_before = 0
-    for layer in layers_info[1:]:
-        par = parallel_op[layer["name"]]
-        name = layer["name"]
-
-        # For depth conv the parallelization in output is the one over ich
-        if (layer["depth"]):
-            par_prev_out = par_prev[1]
-        else:
-            par_prev_out = par_prev[0]
-
-        par_in = par[1]
-        if (par_prev_out % par_in != 0 and par_in % par_prev_out != 0):
-            adjust = find_common_mult(par_prev_out, par_in)
-            if adjust > max(par_prev_out, par_in):
-                tot_mismatch_before += adjust - max(par_prev_out, par_in)
-        par_prev = par
-
-    new_parallel_op = parallel_op.copy()
-    # Trying to minimize the mismatch between the parallelization of consecutive
-    # layers, choosing between the valid parallelization combinations. Low effort,
-    # if after the iteration the mismatches are increased, recover previous result.
-    par_prev = new_parallel_op[layers_info[0]["name"]]
-    tot_mismatch_after = 0
-    for layer in layers_info[1:]:
-        par = new_parallel_op[layer["name"]]
-        name = layer["name"]
-        
-        # For depth conv the parallelization in output is the one over ich
-        if (layer["depth"]):
-            par_prev_out = par_prev[1]
-        else:
-            par_prev_out = par_prev[0]
-        
-        par_in = par[1]
-        if (par_prev_out % par_in != 0 and par_in % par_prev_out != 0):
-            logger.error(f"Error: och_ops i -> {par_prev_out} % ich_ops i+1 -> {par_in} != 0, using {find_common_mult(par_prev_out, par_in)}")
-
-            for i, combination in enumerate(clamped_valid_par_solutions[layer['index']]):
-                if (par_prev_out % combination[1] == 0):
-                    logger.info(f"\t\tAssigning {combination} to {name}")
-                    new_parallel_op[name] = combination
-                    break
-            else:
-                tot_mismatch_after += find_common_mult(par_prev_out, par_in) - max(par_prev_out, par_in)
-        par_prev = par
-
-    logger.info(f"Before: {tot_mismatch_before}, After: {tot_mismatch_after}") 
-    if (tot_mismatch_after > tot_mismatch_before):
-        return parallel_op
-    else:
-        return new_parallel_op
 
 def print_report(nodes, layer_par, n_variables, n_constraints, model_II, time_spent, generate_report_file, model):
     with open(generate_report_file, "w+") as f:
@@ -433,8 +521,8 @@ class BalanceComputation(Transformation):
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
         NUM_PORTS = int(NUM_PORTS * 1)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.05  # 50% of the DSPs are used for parallelization
-        NUM_DSP = 2000
+        NUM_DSP = board_res["dsp"] * 0.15  # 50% of the DSPs are used for parallelization
+        NUM_DSP = 1700
 
         # Extract layers information
         DSE_nodes = [node for node in model.graph.node if isinstance(getCustomOp(node), DSECapable)]
@@ -465,14 +553,8 @@ class BalanceComputation(Transformation):
 
         # Update the model with the parallelization chosen for each layer
         model = update_model(model, layer_par)
+        model = reduce_mismatches(model, layer_par, model_II)
         model = propagate_parallelism(model)
-
-        # layer_par = opt_steps(
-        #     layers_info,
-        #     layer_par,
-        #     valid_par_solutions,
-        #     self.nn2fpga_root,
-        # )
 
         # Print the report
         generate_report_file = f"{self.nn2fpga_root}/balance_computation.rpt"
