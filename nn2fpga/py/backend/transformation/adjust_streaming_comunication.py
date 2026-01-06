@@ -10,7 +10,6 @@ from qonnx.custom_op.registry import getCustomOp
 
 logger = logging.getLogger(__name__)
 
-
 def insert_comm_node(
     model,
     name,
@@ -179,11 +178,17 @@ class AdjustStreamingCommunication(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
+        model_II = model.get_metadata_prop("model_II")
+        if model_II is None:
+            raise ValueError("Model II metadata property is not set.")
+        model_II = int(model_II)
+
         # Traversing the graph to find nodes that require adjustment
         communication_nodes = []
-        queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
         mark_visited = set()
-        model_II = int(model.get_metadata_prop("model_II"))
+        queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
+        if not queue:
+            raise ValueError("No NHWCToStream node found in the model. This means the model has not a entry point for streaming.")
 
         while queue:
             node = queue.popleft()
