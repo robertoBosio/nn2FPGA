@@ -2,6 +2,7 @@
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
+#include "utils/HLS_utils.hpp"
 #include <cstddef>
 #include <cassert>
 
@@ -75,9 +76,9 @@ public:
   void run(hls::stream<TInputWord> &input_data_stream,
            hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
     TOutput circular_buffer[DATA_PER_WORD * 2];
-    char head = 0; // Head index for circular buffer
-    char tail = 0; // Tail index for circular buffer
-    char size = 0; // Current size of the circular buffer
+    ap_uint<1> head = 0; // Head index for circular buffer
+    ap_uint<bits_for(DATA_PER_WORD * 2)> tail = 0; // Tail index for circular buffer
+    ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> size = 0; // Current size of the circular buffer
     bool static only_once_flag = false;
     if (!only_once_flag) {
 
@@ -98,7 +99,8 @@ public:
     TOutput circular_buffer[DATA_PER_WORD * 2];
 
     // Indexes and size for the circular buffer.
-    char head = 0, tail = 0, size = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0, tail = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> size = 0;
 
     // Loop iteration index for the output word.
     size_t i_output_word = 0;
@@ -191,8 +193,10 @@ private:
   static void
   pipeline_body(hls::stream<TInputWord> &input_data_stream,
                 hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                TOutput circular_buffer[DATA_PER_WORD * 2], char &head,
-                char &size, char &tail) {
+                TOutput circular_buffer[DATA_PER_WORD * 2],
+                ap_uint<bits_for(DATA_PER_WORD * 2)> &head,
+                ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> &size,
+                ap_uint<bits_for(DATA_PER_WORD * 2)> &tail) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.
 
@@ -205,6 +209,42 @@ private:
             TOutput::width * (i + 1) - 1, TOutput::width * i);
       }
       head = (head + DATA_PER_WORD) % (DATA_PER_WORD * 2);
+      size += DATA_PER_WORD;
+    }
+
+    // Loop through the pixels processed in parallel.
+    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
+      TOutputWord s_output_struct; // Output structure to hold the results.
+      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
+        s_output_struct[i_och_par] = quantizer(circular_buffer[tail]);
+        tail = (tail + 1) % (DATA_PER_WORD * 2);
+      }
+      // Write the output structure to the output stream.
+      output_data_stream[i_w_par].write(s_output_struct);
+    }
+    size -= OUT_CH_PAR * OUT_W_PAR;
+  }
+  
+  static void
+  pipeline_body(hls::stream<TInputWord> &input_data_stream,
+                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
+                TOutput circular_buffer[DATA_PER_WORD * 2],
+                ap_uint<1> &head_bank,
+                ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> &size,
+                ap_uint<bits_for(DATA_PER_WORD * 2)> &tail) {
+#pragma HLS inline
+    Quantizer quantizer; // Quantizer instance for quantization.
+
+    // Read a new input data word if there is not enough data in the circular
+    // buffer to output the required parallel data.
+    if (size < OUT_CH_PAR * OUT_W_PAR) {
+      TInputWord input_data = input_data_stream.read();
+      ap_uint<bits_for(DATA_PER_WORD * 2)> head = head_bank ? DATA_PER_WORD : 0;
+      for (size_t i = 0; i < DATA_PER_WORD; i++) {
+        circular_buffer[head + i] = input_data.data.range(
+            TOutput::width * (i + 1) - 1, TOutput::width * i);
+      }
+      head_bank ^= ap_uint<1>(1);
       size += DATA_PER_WORD;
     }
 

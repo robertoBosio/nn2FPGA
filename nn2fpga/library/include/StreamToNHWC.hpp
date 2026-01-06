@@ -2,6 +2,7 @@
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
+#include "utils/HLS_utils.hpp"
 #include <cstddef>
 #include <cassert>
 
@@ -75,9 +76,9 @@ public:
   void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
            hls::stream<TOutputWord> &output_data_stream) {
     TInput circular_buffer[DATA_PER_WORD * 2];
-    char head = 0;
-    char tail = 0;
-    char size = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
+    ap_uint<1> tail = 0;
+    ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> size = 0;
 
     // Loop through the input height and width.
   STREAM_TO_NHWC_MAINLOOP:
@@ -94,7 +95,9 @@ public:
     TInput circular_buffer[DATA_PER_WORD * 2];
 
     // Indexes and size for the circular buffer.
-    char head = 0, tail = 0, size = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
+    ap_uint<1> tail = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> size = 0;
 
     // Loop iteration index for the input word.
     size_t i_input_word = 0;
@@ -180,10 +183,64 @@ public:
 
 private:
 
+//   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+//                             hls::stream<TOutputWord> &output_data_stream,
+//                             TInput circular_buffer[DATA_PER_WORD * 2],
+//                             char &head, char &size, char &tail,
+//                             size_t i_input_word) {
+// #pragma HLS inline
+//     Quantizer quantizer; // Quantizer instance for quantization.
+
+//     // Loop through the pixels processed in parallel.
+//     const bool end_of_tensor = (i_input_word >= READS);
+//     if (!end_of_tensor) {
+//       for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
+//         TInputWord s_input_struct = input_data_stream[i_w_par].read();
+//         for (size_t i_och_par = 0; i_och_par < IN_CH_PAR; i_och_par++) {
+//           circular_buffer[head] = s_input_struct[i_och_par];
+//           head = (head + 1) % (DATA_PER_WORD * 2);
+//         }
+//       }
+//       size += IN_W_PAR * IN_CH_PAR;
+//     }
+
+//     // Check if we have enough data to form an output word or if we are at the
+//     // end of the tensor.
+//     if (size >= DATA_PER_WORD || end_of_tensor) {
+
+//       // If we have enough data to form an output word, proceed with packing.
+//       TOutputWord output_data;
+//       for (size_t i = 0; i < DATA_PER_WORD; i++) {
+//         output_data.data.range((i + 1) * TInput::width - 1,
+//                                i * TInput::width) =
+//             quantizer(circular_buffer[tail + i]);
+//       }
+
+//       if (end_of_tensor) {
+//         size_t valid_bytes = size * TInput::width / 8;
+//         output_data.keep = (1 << valid_bytes) - 1;
+//         tail = 0; // Reset the tail at the end of the tensor.
+//         size = 0; // Reset the size at the end of the tensor.
+//         head = 0; // Reset the head at the end of the tensor.
+//         output_data.last = true;
+//       } else {
+//         tail = (tail + DATA_PER_WORD) % (DATA_PER_WORD * 2);
+//         size -= DATA_PER_WORD;
+//         output_data.last = false;
+//         output_data.keep = ~0; // Set all bytes as valid.
+//       }
+
+//       output_data.strb = output_data.keep;
+//       output_data_stream.write(output_data);
+//     }
+//   }
+
   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
                             hls::stream<TOutputWord> &output_data_stream,
                             TInput circular_buffer[DATA_PER_WORD * 2],
-                            char &head, char &size, char &tail,
+                            ap_uint<bits_for(DATA_PER_WORD * 2)> &head,
+                            ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> &size,
+                            ap_uint<1> &tail_bank,
                             size_t i_input_word) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.
@@ -204,6 +261,8 @@ private:
     // Check if we have enough data to form an output word or if we are at the
     // end of the tensor.
     if (size >= DATA_PER_WORD || end_of_tensor) {
+      ap_uint<bits_for(DATA_PER_WORD * 2)> tail =
+          tail_bank ? DATA_PER_WORD : 0;
 
       // If we have enough data to form an output word, proceed with packing.
       TOutputWord output_data;
@@ -216,12 +275,12 @@ private:
       if (end_of_tensor) {
         size_t valid_bytes = size * TInput::width / 8;
         output_data.keep = (1 << valid_bytes) - 1;
-        tail = 0; // Reset the tail at the end of the tensor.
-        size = 0; // Reset the size at the end of the tensor.
-        head = 0; // Reset the head at the end of the tensor.
+        // tail_bank = 0; // Reset the tail bank at the end of the tensor.
+        // size = 0; // Reset the size at the end of the tensor.
+        // head = 0; // Reset the head at the end of the tensor.
         output_data.last = true;
       } else {
-        tail = (tail + DATA_PER_WORD) % (DATA_PER_WORD * 2);
+        tail_bank ^= ap_uint<1>(1);
         size -= DATA_PER_WORD;
         output_data.last = false;
         output_data.keep = ~0; // Set all bytes as valid.
