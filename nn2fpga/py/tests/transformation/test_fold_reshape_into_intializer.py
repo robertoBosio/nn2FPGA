@@ -6,7 +6,6 @@ from qonnx.core.modelwrapper import ModelWrapper
 from onnx import TensorProto, helper
 import numpy as np
 
-
 def test_reshape_fold_perchannel_quantization():
 
     output_tensor = helper.make_tensor_value_info(

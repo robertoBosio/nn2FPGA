@@ -140,6 +140,7 @@ public:
            hls::stream<TBiasWord> i_biases[1],
            hls::stream<TOutputWord> o_data[W_PAR]) {
 
+#pragma HLS expression_balance off
     // Accumulator buffer.
     // The order of the loops impose that for each input window, we process
     // all the output channels, thus we need to store an accumulator for
@@ -472,6 +473,8 @@ private:
     // Bias structure to hold the biases.
     TBiasWord bias_data;
 #pragma HLS ARRAY_PARTITION variable = bias_data dim = 0
+    TPartialSum acc_buff_par_local[OUT_CH_PAR * W_PAR];
+#pragma HLS ARRAY_PARTITION variable = acc_buff_par_local dim = 0
 
     // Read the input data for the current expanded window.
     if (i_och == 0) {
@@ -488,13 +491,9 @@ private:
         weight_data[fh][fw] = i_weights[fh * FW + fw].read();
       }
     }
-
-    // Initialize the accumulator buffer for the current block of output
-    // channels and pixels.
-    if (i_ich == 0) {
-      for (size_t i = 0; i < OUT_CH_PAR * W_PAR; i++) {
-        acc_buff_par[i] = 0;
-      }
+    
+    for (size_t i = 0; i < OUT_CH_PAR * W_PAR; i++) {
+      acc_buff_par_local[i] = 0;
     }
 
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
@@ -510,7 +509,7 @@ private:
             size_t i_fw_expanded = i_fw + i_w_par * STRIDE_W;
 
             for (size_t i_ich_par = 0; i_ich_par < IN_CH_PAR; i_ich_par++) {
-              acc_buff_par[acc_index] +=
+              acc_buff_par_local[acc_index] +=
                   input_data[i_fh][i_fw_expanded][i_ich_par] *
                   weight_data[i_fh][i_fw][i_och_par * IN_CH_PAR + i_ich_par];
             }
@@ -523,12 +522,21 @@ private:
     if (i_ich == IN_CH - IN_CH_PAR) {
       bias_data = i_biases[0].read();
     }
+
+    // Initialize the accumulator buffer for the current block of output
+    // channels and pixels.
+    if (i_ich == 0) {
+      for (size_t i = 0; i < OUT_CH_PAR * W_PAR; i++) {
+        acc_buff_par[i] = 0;
+      }
+    }
     
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
 
         // Compute the index of the accumulator.
         size_t acc_index = i_w_par * OUT_CH_PAR + i_och_par;
+        acc_buff_par[acc_index] += acc_buff_par_local[acc_index];
 
         // If we are at the last block of input channels, read the bias and
         // finalize the output.

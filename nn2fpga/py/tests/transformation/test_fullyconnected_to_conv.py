@@ -410,9 +410,7 @@ def test_flatten_pattern():
     model = ModelWrapper(model)
 
     # Apply the FullyConnectedToPointwise transformation
-    model.save("pre_gemm.onnx")
     transformed_model = model.transform(FullyConnectedToPointwise())
-    transformed_model.save("transformed_model.onnx")
 
     assert (
         len(transformed_model.get_nodes_by_op_type("Quant")) == 3

@@ -3,7 +3,7 @@ set -e
 
 # Read project root from environment
 SILVIA_DIR="${NN2FPGA_ROOT_DIR}/deps/SILVIA"
-PASS_LIB_PATH="${SILVIA_DIR}/build/SILVIAMuladd/LLVMSILVIAMuladd.so"
+PASS_LIB_PATH="${SILVIA_DIR}/llvm-project/install/lib/LLVMSILVIAMuladd.so"
 
 if [[ "$(printf '%s\n2025.1' "$XILINX_VERSION" | sort -V | tail -n1)" == "$XILINX_VERSION" ]]; then
     # old structure
@@ -67,7 +67,6 @@ mkdir -p "$HOME/.Xilinx"
 # Set up environment variables
 export XILINX_VIVADO="${VIVADO_PATH}"
 export XILINX_VITIS="${VITIS_PATH}"
-export XILINX_XRT="/opt/xilinx/xrt"
 export SILVIA_ROOT="${SILVIA_DIR}"
 export SILVIA_LLVM_ROOT="${SILVIA_DIR}/llvm-project/install"
 export SYSROOT=${SYSROOT:-/opt/sysroots/board}

@@ -2,6 +2,7 @@
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
+#include "utils/HLS_utils.hpp"
 #include <cassert>
 #include <cstddef>
 
@@ -41,17 +42,6 @@ private:
   // directly inside the convolution node, so a depth of 2 is enough to avoid
   // stalls.
   static constexpr size_t STREAM_DEPTH = 2;
-
-  static constexpr int bits_for(size_t n) {
-    // bits to represent values [0 .. n-1]
-    int b = 0;
-    size_t v = (n > 0) ? (n - 1) : 0;
-    while (v) {
-      v >>= 1;
-      ++b;
-    }
-    return (b == 0) ? 1 : b; // at least 1 bit
-  }
 
   static void pipeline_body(hls::stream<TOutputWord> o_data[ARRAY_PAR],
                             TOutput mem[WORD_PAR][ARRAY_PAR]) {
