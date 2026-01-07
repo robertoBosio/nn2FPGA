@@ -46,14 +46,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def pattern(
         op,
         x,
-        dilations,
         kernel_shape,
         pads,
         strides,
     ):
         y = op.MaxPool(
             x,
-            dilations=dilations,
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
@@ -65,14 +63,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def rewrite(
         op,
         x,
-        dilations,
         kernel_shape,
         pads,
         strides,
     ):
         return op.StreamingMaxPool(
             x,
-            dilations=dilations,
             kernel_shape=kernel_shape,
             pads=pads,
             strides=strides,
@@ -86,7 +82,6 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def get_nodeattr_types(self):
         return {
             # Standard ONNX attributes for Conv
-            "dilations": ("ints", True, [1, 1]),
             "kernel_shape": ("ints", True, [1, 1]),
             "pads": ("ints", True, [0, 0]),
             "strides": ("ints", True, [1, 1]),
@@ -95,11 +90,13 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             # Custom attributes for parallelization of StreamingMaxPool
             "channel_unroll": ("i", False, 1),
             "width_unroll": ("i", False, 1),
+            "filter_height_unroll": ("i", False, 1),
+            "filter_width_unroll": ("i", False, 1),
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
-            "in_stream_width": ("i", False, 1),
-            "out_stream_width": ("i", False, 1),
+            "in_word_array": ("i", False, 1),
+            "out_word_array": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -110,7 +107,6 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             inputs=node.input,
             outputs=node.output,
             name=f"{node.name}_shape_compatible",
-            dilations=self.get_nodeattr("dilations"),
             kernel_shape=self.get_nodeattr("kernel_shape"),
             pads=self.get_nodeattr("pads"),
             strides=self.get_nodeattr("strides"),
@@ -133,6 +129,27 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Returns the name of the stream for the tensor.
         """
         return f"{name}_stream"
+    
+    def __is_power_of_two(self, value) -> bool:
+        """Check if a value is a power of two."""
+        return value > 0 and float(np.log2(value)).is_integer()
+    
+    def __get_quantizer(self, input_quant, output_quant) -> str:
+        """ Returns the quantizer type for the StreamingConv operation. """
+
+        if (
+            self.__is_power_of_two(input_quant.scale)
+            and self.__is_power_of_two(output_quant.scale)
+        ):
+            shift = -1 * (
+                int(np.log2(input_quant.scale))
+                - int(np.log2(output_quant.scale))
+            )
+            return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
+        else:
+            raise ValueError(
+                "Float quantization is currently not supported for StreamingConv.  "
+            )
 
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingMaxPool operation. """
@@ -167,6 +184,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
                     "TInputStruct",
                 ),
                 (f"{get_hls_quant_type(input_quant)}", "TInput"),
+                (
+                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    "TOutputStruct",
+                ),
+                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
+                (f"{self.__get_quantizer(input_quant, output_quant)}", "Quantizer"),
                 (output_shape[1], "OUT_CH"),
                 (output_shape[2], "IN_HEIGHT"),
                 (output_shape[3], "IN_WIDTH"),
@@ -338,7 +361,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         """
         return 0
 
-    def get_dse_point(self, model: ModelWrapper) -> list["StreamingMaxPool.DSEPoint"]:
+    def get_dse_points(self, model: ModelWrapper) -> list["StreamingMaxPool.DSEPoint"]:
         """ Generate the DSE points for the StreamingMaxPool operation.
         Args:
             model (ModelWrapper): The model with quantization information.
