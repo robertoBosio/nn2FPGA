@@ -1,44 +1,34 @@
 import os
-import sys
-import backend.transformation as transformation
+import logging
+import numpy as np
 from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import (
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
 )
-from qonnx.core.modelwrapper import ModelWrapper
+import backend.transformation as transformation
 from backend.util.compare_models import test_transformation_equivalence
-from backend.analysis.check_quantization import check_quantization
-import numpy as np
-import logging
 
-def nn2fpga_compile(
-    onnx_model,
-    board="ULTRA96v2",
-    frequency=200,
-    hls_version="2024.2",
-    silvia_packing=False,
-    prj_root="/tmp",
-    top_name="top",
-):
+def nn2fpga_compile(config_dict: dict):
 
     """Compile an ONNX model for FPGA using nn2FPGA flow.
     Args:
-        onnx_model (str or ModelWrapper): Path to the ONNX model.
-        board (str): Target FPGA board name.
-        part (str): Target FPGA part name.
-        frequency (str): Target clock frequency in MHz (without the 'MHz' suffix).
-        hls_version (str): Version of HLS to use.
-        silvia_packing (bool): Whether to use Silvia packing for resource allocation.
-        prj_root (str): Root directory for the project.
-        top_name (str): Name of the top-level module in the HLS project.
+        config_dict (dict): Configuration dictionary containing:
+            - onnx_model (str): Path to the ONNX model file.
+            - board (str): Target FPGA board name.
+            - prj_root (str): Project root directory.
+            - top_name (str): Top module name.
+            - frequency (str): Target frequency.
+            - hls_version (str): HLS version.
+            - other options as needed.
     Returns:
         None
     """
 
     # Change the working directory to the project root.
-    os.chdir(prj_root)
+    os.chdir(config_dict["prj_root"])
     # Create handlers
     console_handler = logging.StreamHandler()
     file_handler = logging.FileHandler("nn2fpga_compile.log", mode="w")
@@ -57,9 +47,8 @@ def nn2fpga_compile(
     # Get the root logger and attach handlers
     logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
 
-    original_model = ModelWrapper(onnx_model)
-    generate_report_file = f"{prj_root}/generate_{top_name}_{board}.rpt"
-
+    original_model = ModelWrapper(config_dict["onnx_path"])
+    generate_report_file = f"{config_dict['prj_root']}/generate_{config_dict['top_name']}_{config_dict['board']}.rpt"
     # If the file generate_report_file exists, delete it
     if os.path.exists(generate_report_file):
         os.remove(generate_report_file)
@@ -68,14 +57,19 @@ def nn2fpga_compile(
     model = original_model
 
     # Save target board name in metadata properties.
-    model.set_metadata_prop("board_name", board)
-    model.set_metadata_prop("top_name", top_name)
-    model.set_metadata_prop("frequency", frequency)
-    model.set_metadata_prop("hls_version", hls_version)
+    model.set_metadata_prop("board_name", config_dict["board"])
+    model.set_metadata_prop("top_name", config_dict["top_name"])
+    model.set_metadata_prop("frequency", config_dict["frequency"])
+    model.set_metadata_prop("hls_version", config_dict["hls_version"])
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
-    model.set_metadata_prop("silvia_packing", str(silvia_packing))
+
+    # Optional parameters
+    if config_dict["dsp_limit"] is not None:
+        model.set_metadata_prop("dsp_limit", str(config_dict["dsp_limit"]))
+    if config_dict["silvia_packing"]:
+        model.set_metadata_prop("silvia_packing", str(config_dict["silvia_packing"]))
 
     # Clean up the model.
     model.cleanup()
@@ -85,10 +79,11 @@ def nn2fpga_compile(
     model = model.transform(GiveReadableTensorNames())
 
     # Propagate quantization through quantization invariant nodes.
+    model = model.transform(transformation.SplitConcat())
     model = model.transform(transformation.PropagateQuant())
 
     # Extract implementable partition.
-    nn2fpga_model = model.transform(transformation.SupportedPartition(prj_root))
+    nn2fpga_model = model.transform(transformation.SupportedPartition(config_dict["prj_root"]))
 
     # Insert custom nodes.
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
@@ -99,10 +94,13 @@ def nn2fpga_compile(
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
 
     # Handle quantization.
+    # nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
+    nn2fpga_model = nn2fpga_model.transform(transformation.AdjustBiasScale())
+    nn2fpga_model.save("post_adjust_bias.onnx") 
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
     nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
     nn2fpga_model.save("lowered_to_nn2fpga.onnx")
@@ -114,33 +112,35 @@ def nn2fpga_compile(
 
     # Balance resource allocation per layer.
     nn2fpga_model = nn2fpga_model.transform(
-        transformation.BalanceComputation(silvia_packing=silvia_packing, nn2fpga_root=prj_root)
+        transformation.BalanceComputation(nn2fpga_root=config_dict["prj_root"])
     )
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustStreamingCommunication())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
     # Handle weights streaming.
-    nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=prj_root))
+    # nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"]))
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
     nn2fpga_model.save("lowered_to_hls.onnx")
-    nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=prj_root, erase=False, ste_already_done=False))
+    nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=config_dict["prj_root"], erase=False, ste_already_done=False))
     nn2fpga_model.save("post_fifo_depth.onnx")
     model = ModelWrapper("wrapper_model.onnx")
     model = model.transform(
         transformation.EmbedHLSCode(
-            nn2fpga_model=nn2fpga_model, work_root=prj_root
+            nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"]
         )
     )
 
     # Simulate the model to check if it works.
-    # model.save("wrapper_model.onnx")
-    # test_transformation_equivalence(original_model, model)
-    model = model.transform(transformation.GenerateBitstream(work_dir=prj_root, already_exported=False, only_synthesize=False))
+    model.save("wrapper_model.onnx")
+    test_transformation_equivalence(original_model, model)
+    # original_model = original_model.transform(transformation.ConvertToQCDQ())
+    # original_model.save("original_model_qcdq.onnx")
     exit(0)
+    model = model.transform(transformation.GenerateBitstream(work_dir=config_dict["prj_root"], already_exported=False, only_synthesize=False))
     model.save("bitstream_generated.onnx")
     model = ModelWrapper("bitstream_generated.onnx")
-    model = model.transform(transformation.GenerateDriver(work_dir=prj_root))
+    model = model.transform(transformation.GenerateDriver(work_dir=config_dict["prj_root"]))
 
     # Generate as a comparison the original model with QCDQ quantization.
     original_model = original_model.transform(transformation.ConvertToQCDQ())

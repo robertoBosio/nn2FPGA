@@ -21,7 +21,7 @@ class FuseElementwiseOps(Transformation):
                 if node.op_type == "StreamingReLU":
                     # Check if the input is from a StreamingConv or StreamingDepthwiseConv node
                     producer = model.find_producer(node.input[0])
-                    if producer.op_type in ["StreamingConv", "StreamingDepthwiseConv"]:
+                    if producer.op_type in ["StreamingConv", "StreamingDepthwiseConv", "StreamingAdd"]:
                         # Fuse Relu into the producer node
                         getCustomOp(producer).set_nodeattr("activation", "ReLU")
                         # Redirect outputs

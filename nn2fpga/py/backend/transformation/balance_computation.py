@@ -494,23 +494,19 @@ class BalanceComputation(Transformation):
     resourcses evenly among the model's operations.
     """
 
-    def __init__(self, silvia_packing: bool = False, nn2fpga_root: str = "/tmp"):
+    def __init__(self, nn2fpga_root: str = "/tmp"):
         """
         Initializes the BalanceComputation transformation.
         Args:
-            silvia_packing (bool): If True, uses Silvia packing for DSPs.
             nn2fpga_root (str): The root directory of nn2FPGA.
         """
         super().__init__()
         self.nn2fpga_root = nn2fpga_root
-        self.silvia_packing = silvia_packing
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """ Applies the transformation to the model.
-        
         Args:
             model (ModelWrapper): The ONNX model to transform, wrapped in QONNX ModelWrapper.
-        
         Returns:
             tuple: A tuple containing the transformed model and a boolean indicating if the transformation was applied.
         """
@@ -518,11 +514,15 @@ class BalanceComputation(Transformation):
         board_res = read_board_info(
             board=model.get_metadata_prop("board_name"),
         )
+        dsp_limit = model.get_metadata_prop("dsp_limit")
+        if dsp_limit is not None:
+            dsp_limit = int(dsp_limit)
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
         NUM_PORTS = int(NUM_PORTS * 1)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.15  # 50% of the DSPs are used for parallelization
-        NUM_DSP = 1700
+        NUM_DSP = board_res["dsp"] * 0.8  # 80% of the DSPs are used for parallelization
+        if dsp_limit is not None:
+            NUM_DSP = dsp_limit
 
         # Extract layers information
         DSE_nodes = [node for node in model.graph.node if isinstance(getCustomOp(node), DSECapable)]

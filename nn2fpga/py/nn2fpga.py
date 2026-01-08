@@ -27,9 +27,14 @@ def load_config(config_path: str) -> dict:
         config_dict["top_name"] = config["project"]["top_name"]
         config_dict["onnx_path"] = config["project"]["onnx_path"]
         config_dict["prj_root"] = config["project"]["project_root"]
+        config_dict["hls_version"] = str(config["project"]["hls_version"])
         config_dict["board"] = config["platform"]["board"]
         config_dict["frequency"] = config["platform"]["frequency"]
+
+        # Optional fields with defaults
         config_dict["silvia_packing"] = config.get("options", {}).get("silvia_packing", False)
+        config_dict["dsp_limit"] = config.get("options", {}).get("dsp_limit", None)
+
     except KeyError as e:
         print(f"Missing configuration field: {e}")
         sys.exit(1)
@@ -106,13 +111,7 @@ def main():
     check_config(config_dict)
 
     nn2fpga_compile(
-        onnx_model=config_dict["onnx_path"],
-        board=config_dict["board"],
-        silvia_packing=config_dict["silvia_packing"],
-        prj_root=config_dict["prj_root"],
-        top_name=config_dict["top_name"],
-        frequency=config_dict["frequency"],
-        hls_version=config_dict["xilinx_version"],
+        config_dict
     )
 
 if __name__ == '__main__':

@@ -130,7 +130,7 @@ def bram_consumption(word_bits, words, word_parallelism, WIDTH=36):
     WIDTH_BRAM36 = WIDTH
 
     # Assuming is implemented using LUTRAM
-    if (words * word_bits) <= SIZE_BRAM36:
+    if (words * word_bits) <= SIZE_BRAM18:
         return 0
     
     very_long_word = word_parallelism * word_bits
