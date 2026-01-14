@@ -64,12 +64,12 @@ def nn2fpga_compile(config_dict: dict):
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
+    model.set_metadata_prop("silvia_packing", str(config_dict["silvia_packing"]))
 
     # Optional parameters
     if config_dict["dsp_limit"] is not None:
         model.set_metadata_prop("dsp_limit", str(config_dict["dsp_limit"]))
-    if config_dict["silvia_packing"]:
-        model.set_metadata_prop("silvia_packing", str(config_dict["silvia_packing"]))
+    
 
     # Clean up the model.
     model.cleanup()
@@ -100,17 +100,13 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustBiasScale())
-    nn2fpga_model.save("post_adjust_bias.onnx") 
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
-    nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
     nn2fpga_model.save("lowered_to_nn2fpga.onnx")
 
     # Start of the backend.
-    # Fold quantization into tensor datatype.
+    nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldAsymmetricActQuant())
-
-    # Balance resource allocation per layer.
     nn2fpga_model = nn2fpga_model.transform(
         transformation.BalanceComputation(nn2fpga_root=config_dict["prj_root"])
     )
@@ -119,7 +115,7 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
     # Handle weights streaming.
-    # nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"]))
+    nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"]))
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
     nn2fpga_model.save("lowered_to_hls.onnx")
     nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=config_dict["prj_root"], erase=False, ste_already_done=False))
@@ -134,12 +130,8 @@ def nn2fpga_compile(config_dict: dict):
     # Simulate the model to check if it works.
     model.save("wrapper_model.onnx")
     test_transformation_equivalence(original_model, model)
-    # original_model = original_model.transform(transformation.ConvertToQCDQ())
-    # original_model.save("original_model_qcdq.onnx")
-    exit(0)
     model = model.transform(transformation.GenerateBitstream(work_dir=config_dict["prj_root"], already_exported=False, only_synthesize=False))
     model.save("bitstream_generated.onnx")
-    model = ModelWrapper("bitstream_generated.onnx")
     model = model.transform(transformation.GenerateDriver(work_dir=config_dict["prj_root"]))
 
     # Generate as a comparison the original model with QCDQ quantization.

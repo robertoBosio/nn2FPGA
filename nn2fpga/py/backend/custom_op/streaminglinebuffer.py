@@ -10,6 +10,8 @@ from backend.util.codegen_utils import (
     cpp_object,
     get_struct_type,
 )
+import logging
+logger = logging.getLogger(__name__)
 
 class StreamingLineBuffer(NN2FPGAOp):
     """ Node producing a streaming window. """
@@ -117,40 +119,47 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
-                depth=2,  # Given the design of the LineBuffer, we already know we need a depth of 2 here.
+                depth=0,  # Given the design of the LineBuffer, we already know we need a depth of 2 here.
                 hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=FH * FW_EXTENDED,
             )
 
         # Create the PixelWindowSelector internal streams.
         # The last W_PAR nodes does not streams out anything.
-        for i in range(FH * FW_EXTENDED - self.get_nodeattr("width_unroll")):
-            fifos[f"{self.onnx_node.name}_buffer_stream_{i}_"] = TensorFifo(
-                depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
-                n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
-            )
+        # for i in range(FH * FW_EXTENDED - self.get_nodeattr("width_unroll")):
+        #     fifos[f"{self.onnx_node.name}_buffer_stream_{i}_"] = TensorFifo(
+        #         depth=0,
+        #         hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+        #         n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
+        #     )
 
-        # Shift index pattern, based on which part of the tensor the pixel is
-        # considering.
-        shift_pattern = []
+        windows_dict = list(range(FH * FW_EXTENDED))
         for i_fh in range(FH):
             for i_fw in range(FW_EXTENDED):
-                pixel_w = FW_EXTENDED - 1 - i_fw
-                shift_pattern.append(
-                    (pixel_w + PAD_L * (self.get_nodeattr("width_unroll") - 1))
-                    % self.get_nodeattr("width_unroll")
-                )
+                # The pixels are created in reverse order, starting from the right bottom corner of the window,
+                # which has index 0.
+                pixel_index = i_fh * FW_EXTENDED + i_fw
 
-        for i_fh in range(FH):
-            for i_fw in range(FW_EXTENDED):
+                # Pixel coordinates within the kernel window. The left top corner is (0,0).
                 pixel_h = FH - 1 - i_fh
                 pixel_w = FW_EXTENDED - 1 - i_fw
-                pixel_index = i_fh * FW_EXTENDED + i_fw
+
+                # Determine the input stream which provides data to this pixel.
+                input_stream = (
+                    pixel_w + PAD_L * (self.get_nodeattr("width_unroll") - 1)
+                ) % self.get_nodeattr("width_unroll")
+
+                windows_dict[pixel_index] = {"h": pixel_h, "w": pixel_w, "stream": input_stream}
+
+        for i_fh in range(FH):
+            for i_fw in range(FW_EXTENDED):
                 function_args = set()
+                pixel_index = i_fh * FW_EXTENDED + i_fw
+                pixel_h = FH - 1 - i_fh
+                pixel_w = FW_EXTENDED - 1 - i_fw
 
                 # Get the section of tensor considered by this pixel.
-                w_stream = shift_pattern[pixel_index]
+                w_stream = windows_dict[pixel_index]["stream"]
 
                 # Determine the input stream for this pixel.
                 pixel_input_name = []
@@ -180,9 +189,27 @@ class StreamingLineBuffer(NN2FPGAOp):
                     # Search the next pixel with the same w_stream.
                     next_pixel_index = None
                     for search_pixel_index in range(pixel_index + 1, FH * FW_EXTENDED):
-                        if shift_pattern[search_pixel_index] == w_stream:
+                        if windows_dict[search_pixel_index]["stream"] == w_stream:
                             next_pixel_index = search_pixel_index
                             break
+                    next_pixel_index_h = windows_dict[next_pixel_index]["h"]
+                    next_pixel_index_w = windows_dict[next_pixel_index]["w"]
+
+                    distance = (
+                        (pixel_h - next_pixel_index_h) * output_shape[3]
+                        + (pixel_w - next_pixel_index_w)
+                    ) * output_shape[1]
+                    # logger.info(f"Raw Pixel {pixel_index} ({pixel_h},{pixel_w}) shift distance to pixel {next_pixel_index} ({next_pixel_index_h},{next_pixel_index_w}): {distance}")
+                    distance //= self.get_nodeattr("width_unroll") * self.get_nodeattr(
+                        "channel_unroll"
+                    )
+                    # logger.info(f"Pixel {pixel_index} ({pixel_h},{pixel_w}) shift distance to pixel {next_pixel_index} ({next_pixel_index_h},{next_pixel_index_w}): {distance}")
+                    fifos[f"{self.onnx_node.name}_buffer_stream_{pixel_index}_"] = TensorFifo(
+                        depth=distance + 1,
+                        hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+                        n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
+                    )
+
                     next_pixel_index = next_pixel_index - self.get_nodeattr("width_unroll")
                     pixel_output_name.append(f"{self.onnx_node.name}_buffer_stream_{next_pixel_index}_")
                     function_args.add((

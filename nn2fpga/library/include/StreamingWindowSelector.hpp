@@ -140,16 +140,18 @@ public:
     ActorStatus actor_status{1, 1};
     bool initialized = false;
     size_t depth = 1;
+    size_t shift_stream_depth = 1;
 
-    void init(size_t depth) {
+    void init(size_t depth, size_t shift_stream_depth) {
       if (initialized)
         return;
       delayed_output[0] = PipelineDelayBuffer<TWord>(depth);
       delayed_output[1] = PipelineDelayBuffer<TWord>(depth);
       actor_status =
           ActorStatus(depth, IN_HEIGHT * (IN_WIDTH / W_PAR) * (IN_CH / CH_PAR));
+      this->depth = depth;
+      this->shift_stream_depth = shift_stream_depth;
       initialized = true;
-      depth = depth;
     }
   };
 
@@ -159,9 +161,9 @@ public:
     return r;
   }
 
-  void step_init(size_t pipeline_depth = 1) {
+  void step_init(size_t pipeline_depth = 1, size_t shift_stream_depth = 1) {
     auto &st = registry()[this];
-    st.init(pipeline_depth);
+    st.init(pipeline_depth, shift_stream_depth);
   }
 
   template <size_t HLS_TAG>
@@ -190,22 +192,7 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
-    if (st.depth == 1){
-      bool is_within_window = true;
-      is_within_window &= (st.i_h >= TOP_BORDER && st.i_h < BOTTOM_BORDER);
-      is_within_window &= (st.i_w >= LEFT_BORDER && st.i_w < RIGHT_BORDER);
-      is_within_window &= ((st.i_h % STRIDE_H) == H_ROW_MOD);
-      is_within_window &= ((st.i_w_stride % STRIDE_W) == W_COL_MOD);
-      if (is_within_window && o_data.size() >= 2) {
-        firing_condition = false;
-      }
-    } else {
-      if (st.delayed_output[0].peek() && o_data.size() >= 2) {
-        firing_condition = false;
-      }
-    }
-
-    if (i_data.empty()) {
+    if (i_data.size() < st.shift_stream_depth) {
       firing_condition = false;
     }
 
@@ -288,21 +275,6 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
-    if (st.depth == 1){
-      bool is_within_window = true;
-      is_within_window &= (st.i_h >= TOP_BORDER && st.i_h < BOTTOM_BORDER);
-      is_within_window &= (st.i_w >= LEFT_BORDER && st.i_w < RIGHT_BORDER);
-      is_within_window &= ((st.i_h % STRIDE_H) == H_ROW_MOD);
-      is_within_window &= ((st.i_w_stride % STRIDE_W) == W_COL_MOD);
-      if (is_within_window && o_data.size() >= 2) {
-        firing_condition = false;
-      }
-    } else {
-      if (st.delayed_output[0].peek() && o_data.size() >= 2) {
-        firing_condition = false;
-      }
-    }
-
     if (i_data.empty()) {
       firing_condition = false;
     }
@@ -337,17 +309,20 @@ public:
         // If the output stream is empty, push a placeholder.
         st.delayed_output[0].push(TWord(), false);
       }
-
-      // Advance the state of the actor firings.
-      st.actor_status.advance();
-
-      // Write the output data to the output stream.
-      TWord out;
-      if (st.delayed_output[0].pop(out)) {
-        o_data.write(out);
-      }
+    } else {
+      // If not firing, just advance the delayed output buffer.
+      st.delayed_output[0].push(TWord(), false);
     }
 
+    // Advance the state of the actor firings.
+    st.actor_status.advance();
+
+    // Write the output data to the output stream.
+    TWord out;
+    if (st.delayed_output[0].pop(out)) {
+      o_data.write(out);
+    }
+    
     return st.actor_status;
   }
 };

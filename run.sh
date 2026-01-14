@@ -13,6 +13,7 @@ XILINX_VERSION="2025.1"
 DATASET_DIR="/home-ssd/datasets"
 WORKSPACE_ROOT_DIR="/workspace"
 CONTAINER_NAME="nn2fpga-container-${USERNAME}"
+WORK_DIR="/home/roberto/Documents/nn2FPGA-work"
 
 # Per-user home dir for the container (on the host)
 DOCKER_HOME_DIR="$(pwd)/.docker_home_${USERNAME}"
@@ -35,11 +36,9 @@ docker run -it --rm \
     -v "${XRT_DIR}:${XRT_DIR}" \
     -v "${DATASET_DIR}:/home/datasets" \
     -v "${DOCKER_HOME_DIR}:/home/${USERNAME}" \
+    -v "${WORK_DIR}:${WORKSPACE_ROOT_DIR}/NN2FPGA/work" \
     --network=host \
-    --gpus all \
     --memory 80g \
-    --env NVIDIA_VISIBLE_DEVICES=all \
-    --env NVIDIA_DRIVER_CAPABILITIES=all \
     --env NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/NN2FPGA" \
     --env XILINX_DIR="${XILINX_DIR}" \
     --env XRT_DIR="${XRT_DIR}" \

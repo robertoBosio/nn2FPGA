@@ -140,7 +140,6 @@ public:
            hls::stream<TBiasWord> i_biases[1],
            hls::stream<TOutputWord> o_data[W_PAR]) {
 
-#pragma HLS expression_balance off
     // Accumulator buffer.
     // The order of the loops impose that for each input window, we process
     // all the output channels, thus we need to store an accumulator for
@@ -397,7 +396,8 @@ public:
 
       hls::stream<TOutputWord> instant_output_stream[W_PAR];
       StreamingConv::pipeline_body(
-          i_data, i_weights[st.i_ich / IN_CH_PAR], i_biases[st.i_och / OUT_CH_PAR], instant_output_stream, st.input_data,
+          i_data, i_weights[st.i_ich / IN_CH_PAR],
+          i_biases[st.i_och / OUT_CH_PAR], instant_output_stream, st.input_data,
           st.acc_buff[st.i_och / OUT_CH_PAR], st.i_ich, st.i_och);
 
       st.i_och += OUT_CH_PAR;

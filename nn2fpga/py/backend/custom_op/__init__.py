@@ -15,6 +15,7 @@ from backend.custom_op.streaminglinebuffer import StreamingLineBuffer
 from backend.custom_op.streamingmaxpool import StreamingMaxPool
 from backend.custom_op.streamingmemory import StreamingMemory
 from backend.custom_op.streamingrelu import StreamingReLU
+from backend.custom_op.streamingupsample import StreamingUpsample
 from backend.custom_op.streamtonhwc import StreamToNHWC
 from backend.custom_op.tensorduplicator import TensorDuplicator
 
@@ -36,6 +37,7 @@ custom_op = {
     "StreamingMaxPool": StreamingMaxPool,
     "StreamingMemory": StreamingMemory,
     "StreamingReLU": StreamingReLU,
+    "StreamingUpsample": StreamingUpsample,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
 }
