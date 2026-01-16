@@ -2,6 +2,9 @@ import numpy as np
 import qonnx.core.onnx_exec as oxe
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import TensorProto
+import logging
+
+logger = logging.getLogger(__name__)
 
 def generate_random_input(model: ModelWrapper) -> dict:
     """
@@ -59,23 +62,23 @@ def report_error_stats(output_name: str, expected_output: np.ndarray, produced_o
     topk_idx = flat_idx[:top_k]
     unraveled_idx = [np.unravel_index(i, error.shape) for i in topk_idx]
 
-    print("=" * 50)
-    print(f"Output: {output_name}")
-    print(f"Expected Output (first 10 elements): {expected_output.flatten()[:10]}")
-    print(f"Produced Output (first 10 elements): {produced_output.flatten()[:10]}")
-    print(f"Max Error: {max_error}")
-    print(f"Min Error: {min_error}")
-    print(f"Mean Error: {mean_error}")
-    print(f"Std Dev of Error: {std_error}")
+    logger.info("=" * 50)
+    logger.info(f"Output: {output_name}")
+    logger.info(f"Expected Output (first 10 elements): {expected_output.flatten()[:10]}")
+    logger.info(f"Produced Output (first 10 elements): {produced_output.flatten()[:10]}")
+    logger.info(f"Max Error: {max_error}")
+    logger.info(f"Min Error: {min_error}")
+    logger.info(f"Mean Error: {mean_error}")
+    logger.info(f"Std Dev of Error: {std_error}")
     if max_error == 0:
-        print("No errors detected.")
+        logger.info("No errors detected.")
         return
-    print(f"Top {top_k} errors:")
+    logger.info(f"Top {top_k} errors:")
     for rank, (idx, val) in enumerate(zip(unraveled_idx, flat_error[topk_idx]), 1):
         exp_val = expected_output[idx]
         prod_val = produced_output[idx]
-        print(f" {rank:2d}. idx={idx}, error={val}, expected={exp_val}, produced={prod_val}")
-    print("=" * 50)
+        logger.info(f" {rank:2d}. idx={idx}, error={val}, expected={exp_val}, produced={prod_val}")
+    logger.info("=" * 50)
 
 def test_transformation_equivalence(model_pre: ModelWrapper, model_post: ModelWrapper):
     """
