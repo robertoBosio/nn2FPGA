@@ -4,10 +4,11 @@
 #include <cassert>
 #include <cstddef>
 
-template <typename TWord, size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH,
-          size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
+template <typename TWord, typename TData, size_t IN_HEIGHT, size_t IN_WIDTH,
+          size_t IN_CH, size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
           size_t DILATION_H, size_t DILATION_W, size_t PAD_T, size_t PAD_L,
-          size_t PAD_B, size_t PAD_R, size_t W_PAR, size_t CH_PAR>
+          size_t PAD_B, size_t PAD_R, size_t W_PAR, size_t CH_PAR,
+          int PAD_VALUE = 0>
 class StreamingPad {
   static constexpr size_t FW_EXPAND = FW + (W_PAR - 1) * STRIDE_W;
   static constexpr size_t OUT_HEIGHT =
@@ -166,7 +167,7 @@ private:
           in_word = i_data[i_fh * FW_EXPAND + i_fw].read();
         } else {
           for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-            in_word[i_ch_par] = 0; // Padding with zeros
+            in_word[i_ch_par] = TData(PAD_VALUE); // Padding with specified value
           }
         }
         o_data[i_fh * FW_EXPAND + i_fw].write(in_word);

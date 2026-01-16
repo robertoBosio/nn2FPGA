@@ -56,6 +56,10 @@ class InsertStreamingLineBuffer(Transformation):
 
             iface = nn2fpga_node.get_port_interface()
 
+            pad_value = 0
+            if node.op_type == "StreamingMaxPool":
+                pad_value = float('-inf')
+
             # Create the StreamingLineBuffer node
             streaming_line_buffer_node = helper.make_node(
                 op_type="StreamingLineBuffer",
@@ -72,6 +76,7 @@ class InsertStreamingLineBuffer(Transformation):
                 out_stream_array=iface.in_stream_array,
                 channel_unroll=iface.in_word_array,
                 width_unroll=iface.in_stream_array,
+                pad_value=pad_value,
                 name=f"{node.name}_streaming_linebuffer",
             )
 

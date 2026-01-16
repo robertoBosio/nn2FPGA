@@ -8,6 +8,7 @@ from backend.custom_op.op_base import NN2FPGAOp
 from backend.util.codegen_utils import (
     cpp_function,
     cpp_object,
+    get_hls_quant_type,
     get_struct_type,
 )
 import logging
@@ -32,6 +33,9 @@ class StreamingLineBuffer(NN2FPGAOp):
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
+
+            # Padding value
+            "pad_value": ("f", False, 0.0),
         }
 
     def make_shape_compatible_op(self, model):
@@ -72,6 +76,23 @@ class StreamingLineBuffer(NN2FPGAOp):
             str: A string representing the declaration of internal variables.
         """
         return ""
+
+    def __get_pad_value(self, pad_value, output_quant):
+        """ Get the pad value in HLS format.
+        Args:
+            pad_value (float): The pad value as a float.
+            output_quant: The quantization information of the output tensor.
+        Returns:
+            str: The pad value in HLS format.
+        """
+        if output_quant.signed:
+            # Convert to signed representation
+            if pad_value == float('-inf'):
+                return f"{int(-(2 ** (output_quant.bitwidth - 1)))}"
+            else:
+                return str(int(pad_value))
+        else:
+            return str(int(pad_value) if pad_value >= 0 else int(0))
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -321,7 +342,11 @@ class StreamingLineBuffer(NN2FPGAOp):
                 f"StreamingPad",
                 f"{self.onnx_node.name}_pad",
                 template_args=[
-                    (f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}", "TWord"),
+                    (
+                        f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+                        "TWord",
+                    ),
+                    (f"{get_hls_quant_type(output_quant)}", "TData"),
                     (output_shape[2], "IN_HEIGHT"),
                     (output_shape[3], "IN_WIDTH"),
                     (output_shape[1], "IN_CH"),
@@ -337,7 +362,14 @@ class StreamingLineBuffer(NN2FPGAOp):
                     (self.get_nodeattr("pads")[3], "PAD_R"),
                     (self.get_nodeattr("width_unroll"), "W_PAR"),
                     (self.get_nodeattr("channel_unroll"), "CH_PAR"),
-                ])
+                    (
+                        self.__get_pad_value(
+                            self.get_nodeattr("pad_value"), output_quant
+                        ),
+                        "PAD_VALUE",
+                    ),
+                ],
+            )
 
             hls_kernels.append(
                 HLSKernel.make_node(
