@@ -100,6 +100,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
         for i, depth in enumerate(arr):
             function.add_code(f"#pragma HLS STREAM variable={base_name}[{i}] depth={depth}")
 
+    model_outputs = [output.name for output in model.graph.output]
     for node in model.graph.node:
         custom_op = getCustomOp(node)
 
@@ -111,6 +112,23 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
         # Generate the run call for the custom operation
         function.add_code(f"{custom_op.get_nodeattr('hls_run_call')};")
+
+        # Print the max size of the FIFOs in output
+        for output in [output for output in node.output if output not in model_outputs]:
+            tensor_fifo = get_custom_tensor_fifo_metadata(model, output)
+            m = re.match(r"^(.*)_(\d+)_$", output)
+            if not m:
+                raise ValueError(f"Invalid fifo name: {output}")
+            base_name = m.group(1)
+            index = int(m.group(2))
+            trimmed_name = output[:-1]  # Remove the _ suffix
+            function.add_code(f'#ifndef __SYNTHESIS__')
+            if "linebuffer" in base_name:
+                function.add_code(f'std::cout << "{trimmed_name},{tensor_fifo.depth}" << std::endl;')
+            else:
+                function.add_code(f'std::cout << "{trimmed_name}," << {base_name}[{index}].size() << std::endl;')
+            function.add_code(f'#endif') 
+
 
     cwr.add_function_definition(function)
     return cwr.code

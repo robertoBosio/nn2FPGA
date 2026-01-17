@@ -18,11 +18,11 @@ def get_tensorproto_dtype(bitwidth, signed):
             return TensorProto.INT8
         else:
             return TensorProto.UINT8
-    elif bitwidth <= 16:
-        if signed:
-            return TensorProto.INT16
-        else:
-            return TensorProto.UINT16
+    # elif bitwidth <= 16:
+    #     if signed:
+    #         return TensorProto.INT16
+    #     else:
+    #         return TensorProto.UINT16
     elif bitwidth <= 32:
         if signed:
             return TensorProto.INT32

@@ -81,7 +81,13 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
         function.add_code(custom_op.get_nodeattr("hls_object_declaration"))
 
         # Set the pipeline depth
-        function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
+        if "StreamingWindowSelector" in custom_op.get_nodeattr("original_op_type"):
+            tensor_fifo = get_custom_tensor_fifo_metadata(model, node.input[0])
+            size = tensor_fifo.depth
+            size = max(size, 1)
+            function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
+        else:
+            function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
 
     # Declare the output streams.
     consumers_step_calls = []
@@ -508,7 +514,7 @@ class ComputeFifoDepth(Transformation):
 
             with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
                 f.write(generate_hls_code(model, self.work_root))
-
+            
             # Write the driver code.
             with open(os.path.join(self.work_root, "testbench.cpp"), "w") as f:
                 f.write(generate_hls_driver(model))
