@@ -1,7 +1,8 @@
 import os
 import subprocess
 from abc import ABC, abstractmethod
-import sys
+import numpy as np
+from onnx import TensorProto
 
 PROJECT_NAME = "proj_unit_test"
 FILE_DIR = "/workspace/NN2FPGA/nn2fpga/library"
@@ -27,6 +28,26 @@ class BaseHLSTest(ABC):
     def unit_filename(self) -> str:
         """The filename of the unit test for the operator."""
         ...
+
+    def get_tensorproto_dtype(self, datawidth, is_unsigned):
+        if datawidth == 8:
+            return TensorProto.UINT8 if is_unsigned else TensorProto.INT8
+        elif datawidth == 16:
+            return TensorProto.UINT16 if is_unsigned else TensorProto.INT16
+        elif datawidth == 32:
+            return TensorProto.UINT32 if is_unsigned else TensorProto.INT32
+        else:
+            raise ValueError(f"Unsupported datawidth: {datawidth}")
+
+    def get_numpy_dtype(self, datawidth, is_unsigned):
+        if datawidth == 8:
+            return np.uint8 if is_unsigned else np.int8
+        elif datawidth == 16:
+            return np.uint16 if is_unsigned else np.int16
+        elif datawidth == 32:
+            return np.uint32 if is_unsigned else np.int32
+        else:
+            raise ValueError(f"Unsupported datawidth: {datawidth}")
 
     def generate_hls_script(self, steps: str) -> str:
         op_filenames = self.operator_filename
