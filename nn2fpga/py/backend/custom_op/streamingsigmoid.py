@@ -24,18 +24,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class StreamingLeakyReLU(NN2FPGAOp):
-    """ Node implementing the LeakyReLU operation. """
+class StreamingSigmoid(NN2FPGAOp):
+    """ Node implementing the Sigmoid operation. """
 
     @staticmethod
-    def pattern(op, x, alpha):
-        return op.LeakyRelu(x, alpha=alpha, _allow_other_attributes=True)
+    def hardsigmoid_pattern(op, x, B, alpha):
+        y = op.HardSigmoid(x, alpha=alpha)
+        return op.Mul(y, B)
 
     @staticmethod
-    def rewrite(op, x, alpha):
-        return op.StreamingLeakyReLU(
+    def rewrite(op, x, B, alpha):
+        b_value = B.const_value.numpy()[-1]
+        return op.StreamingSigmoid(
             x,
             alpha=alpha,
+            B=b_value,
             _domain="backend.custom_op",
         )
 
@@ -43,13 +46,14 @@ class StreamingLeakyReLU(NN2FPGAOp):
     def register_rules():
         return [
             pattern.RewriteRule(
-                StreamingLeakyReLU.pattern, StreamingLeakyReLU.rewrite
+                StreamingSigmoid.hardsigmoid_pattern, StreamingSigmoid.rewrite
             )
         ]
 
     def get_nodeattr_types(self):
         return {
             "alpha": ("f", False, 0.01),  # Slope for negative inputs
+            "B": ("f", False, 1.0),      # Scaling factor after HardSigmoid
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -64,9 +68,10 @@ class StreamingLeakyReLU(NN2FPGAOp):
         node = self.onnx_node
 
         return helper.make_node(
-            "Relu",
+            "Sigmoid",
             inputs=node.input,
             outputs=node.output,
+            alpha=self.get_nodeattr("alpha"),
             name=f"{node.name}_shape_compatible",
         )
 
@@ -78,10 +83,11 @@ class StreamingLeakyReLU(NN2FPGAOp):
     def execute_node(self, context, graph):
         # create a standard relu node to compute the result
         node = self.onnx_node
-        node_relu = helper.make_node(
-            "Relu",
+        node_sigmoid = helper.make_node(
+            "Sigmoid",
             inputs=node.input,
             outputs=node.output,
+            alpha=self.get_nodeattr("alpha"),
             name=f"{node.name}_shape_compatible",
         )
 
@@ -92,9 +98,9 @@ class StreamingLeakyReLU(NN2FPGAOp):
         inp = helper.make_tensor_value_info(node.input[0], TensorProto.FLOAT, ishape)
         outp = helper.make_tensor_value_info(node.output[0], TensorProto.FLOAT, oshape)
 
-        graph_relu = helper.make_graph(
-            nodes=[node_relu],
-            name="single-relu-exec",
+        graph_sigmoid = helper.make_graph(
+            nodes=[node_sigmoid],
+            name="single-sigmoid-exec",
             inputs=[inp],
             outputs=[outp],
         )
@@ -102,11 +108,11 @@ class StreamingLeakyReLU(NN2FPGAOp):
         opset_version = self.onnx_opset_version
         opset_imports = [helper.make_opsetid("", opset_version)]
         onnx_kwargs = {"opset_imports": opset_imports}
-        model_relu = qonnx_make_model(graph_relu, **onnx_kwargs)
+        model_sigmoid = qonnx_make_model(graph_sigmoid, **onnx_kwargs)
         idict = {node.input[0]: inp_values}
 
         # Execute the model using ONNX Runtime
-        sess = rt.InferenceSession(model_relu.SerializeToString())
+        sess = rt.InferenceSession(model_sigmoid.SerializeToString())
         result = np.array(sess.run(None, idict)[0])
         context[node.output[0]] = result.astype(np.float32)
 
@@ -120,7 +126,7 @@ class StreamingLeakyReLU(NN2FPGAOp):
         return f"{name}_stream"
 
     def __get_variable_declaration(self, model, input_quant, output_quant) -> str:
-        """ Get the internal cpp variables of the StreamingLeakyReLU node.
+        """ Get the internal cpp variables of the StreamingSigmoid node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -194,25 +200,35 @@ class StreamingLeakyReLU(NN2FPGAOp):
             outputs=["X_dq"],
         )
 
-        LeakyReLU = helper.make_node(
-            "LeakyRelu",
+        B = helper.make_tensor(
+            "B", TensorProto.FLOAT, [], [self.get_nodeattr("B")]
+        )
+
+        HardSigmoid = helper.make_node(
+            "HardSigmoid",
             alpha=self.get_nodeattr("alpha"),
             inputs=["X_dq"],
-            outputs=["Y_dq"],
+            outputs=["A"],
+        )
+
+        Mul = helper.make_node(
+            "Mul",
+            inputs=["A", "B"],
+            outputs=["Y_scaled"],
         )
 
         qlinear = helper.make_node(
             "QuantizeLinear",
-            inputs=["Y_dq", "Y_scale", "Y_zp"],
+            inputs=["Y_scaled", "Y_scale", "Y_zp"],
             outputs=["Y"],
         )
 
         graph = helper.make_graph(
-            [dqlinear, LeakyReLU, qlinear],
-            "qleakyrelu_test",
+            [dqlinear, HardSigmoid, Mul, qlinear],
+            "qhard_sigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
         )
         model_qonnx = helper.make_model(graph, producer_name="qonnx")
         sess = rt.InferenceSession(
@@ -246,7 +262,7 @@ class StreamingLeakyReLU(NN2FPGAOp):
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
 
         lut_size = 1 << input_quant.bitwidth
-        StreamingLeakyReLU = cpp_object(
+        StreamingSigmoid = cpp_object(
             "StreamingLUT",
             f"{self.onnx_node.name}",
             template_args=[
@@ -275,7 +291,7 @@ class StreamingLeakyReLU(NN2FPGAOp):
             ]
         )
 
-        return StreamingLeakyReLU.generate_declaration()
+        return StreamingSigmoid.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
 
@@ -370,7 +386,7 @@ class StreamingLeakyReLU(NN2FPGAOp):
             outputs=output_names,
             name=f"{self.onnx_node.name}_hls",
             domain="backend.custom_op",
-            original_op_type="StreamingLeakyReLU",
+            original_op_type="StreamingSigmoid",
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(
