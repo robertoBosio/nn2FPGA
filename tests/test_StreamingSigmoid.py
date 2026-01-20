@@ -4,7 +4,7 @@ import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
 
-class TestStreamingLeakyReLU(BaseHLSTest):
+class TestStreamingSigmoid(BaseHLSTest):
 
     @property
     def operator_filename(self):
@@ -12,11 +12,11 @@ class TestStreamingLeakyReLU(BaseHLSTest):
 
     @property
     def unit_filename(self):
-        return "StreamingLeakyReLU"
+        return "StreamingSigmoid"
 
     def generate_lut_memory(self, config_dict):
         """
-        Generate LUT contents for (DequantizeLinear -> LeakyRelu -> QuantizeLinear),
+        Generate LUT contents for (DequantizeLinear -> HardSigmoid -> Mul -> QuantizeLinear),
         supporting signed/unsigned input and signed/unsigned output independently.
 
         Expected config_dict keys:
@@ -25,7 +25,8 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         OUTPUT_IS_UNSIGNED (bool, optional; default False)
         X_SCALE (float), X_ZP (int)
         Y_SCALE (float), Y_ZP (int)
-        LEAKY_ALPHA (float)
+        SIGMOID_ALPHA (float)
+        B_VALUE (float)
         """
         nbits = int(config_dict["INPUT_DATAWIDTH"])
         out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
@@ -33,6 +34,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
 
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
         out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
+
 
         def signed_from_raw_codes(raw: np.ndarray, bits: int) -> np.ndarray:
             """Map 0..2^bits-1 codes to signed two's-complement integers."""
@@ -70,7 +72,9 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         # Zero-points must match tensor element types (and signed/unsigned-ness)
         X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
         Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
-        
+
+        B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
+
         # ----- nodes -----
         dqlinear = helper.make_node(
             "DequantizeLinear",
@@ -78,10 +82,16 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             outputs=["X_dq"],
         )
 
-        LeakyReLU = helper.make_node(
-            "LeakyRelu",
-            alpha=config_dict["LEAKY_ALPHA"],
+        HardSigmoid = helper.make_node(
+            "HardSigmoid",
+            alpha=float(config_dict["SIGMOID_ALPHA"]),
             inputs=["X_dq"],
+            outputs=["A"],
+        )
+
+        Mul = helper.make_node(
+            "Mul",
+            inputs=["A", "B"],
             outputs=["Y_dq"],
         )
 
@@ -92,14 +102,15 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         )
 
         graph = helper.make_graph(
-            [dqlinear, LeakyReLU, qlinear],
-            "qleakyrelu_test",
+            [dqlinear, HardSigmoid, Mul, qlinear],
+            "qsigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
         )
+
         model_qonnx = helper.make_model(graph, producer_name="qonnx")
-        
+
         # ----- run -----
         sess = ort.InferenceSession(
             model_qonnx.SerializeToString(),
@@ -117,7 +128,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             value=lut_values,
         )
         return lut_variable.generate_initialization()
-    
+ 
     def generate_config_file(self, config_dict):
         """
         Generate a self-contained C++ test config (input/output tensors + LUT),
@@ -177,10 +188,18 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             outputs=["X_dq"],
         )
 
-        leakyrelu = helper.make_node(
-            "LeakyRelu",
-            alpha=float(config_dict["LEAKY_ALPHA"]),
+        B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
+
+        HardSigmoid = helper.make_node(
+            "HardSigmoid",
+            alpha=float(config_dict["SIGMOID_ALPHA"]),
             inputs=["X_dq"],
+            outputs=["A"],
+        )
+
+        Mul = helper.make_node(
+            "Mul",
+            inputs=["A", "B"],
             outputs=["Y_dq"],
         )
 
@@ -191,17 +210,15 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         )
 
         graph = helper.make_graph(
-            [dqlinear, leakyrelu, qlinear],
-            "qconv_test",
+            [dqlinear, HardSigmoid, Mul, qlinear],
+            "qsigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
         )
         model = helper.make_model(graph, producer_name="qonnx")
-        
-        sess = ort.InferenceSession(
-            model.SerializeToString(), providers=["CPUExecutionProvider"]
-        )
+
+        sess = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
         y = sess.run(None, {"X": input_tensor})[0]
 
         # Optional: cast ORT output to expected numpy dtype (ORT should already produce correct dtype)
@@ -216,8 +233,9 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         cwr.include("<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
+
         for key, value in config_dict.items():
-            if key in ["X_SCALE", "W_SCALE", "Y_SCALE", "LEAKY_ALPHA"]:
+            if key in ["X_SCALE", "W_SCALE", "Y_SCALE", "SIGMOID_ALPHA", "B_VALUE"]:
                 cwr.add_line(f"const float {key} = {float(value)}f;")
             else:
                 if isinstance(value, bool):
@@ -267,16 +285,17 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             "IN_CH": 2,
             "CH_PAR": 2,
             "W_PAR": 2,
-            "X_SCALE": 2**-5,
-            "Y_SCALE": 2**-5,
+            "X_SCALE": 2**-2,
+            "Y_SCALE": 2**-6,
             "X_ZP": 0,
             "Y_ZP": 0,
-            "LEAKY_ALPHA": 0.1,
+            "SIGMOID_ALPHA": 0.1666666716337204,
+            "B_VALUE": 1.0001220703125,
             "LUT_SIZE": 256,
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
-
+    
     def test_8bit_po2_unsigned(self, hls_steps):
         np.random.seed(42)
         config_dict = {
@@ -289,11 +308,12 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             "IN_CH": 2,
             "CH_PAR": 2,
             "W_PAR": 2,
-            "X_SCALE": 2**-5,
-            "Y_SCALE": 2**-5,
+            "X_SCALE": 2**-2,
+            "Y_SCALE": 2**-6,
             "X_ZP": 0,
             "Y_ZP": 0,
-            "LEAKY_ALPHA": 0.1,
+            "SIGMOID_ALPHA": 0.1666666716337204,
+            "B_VALUE": 1.0001220703125,
             "LUT_SIZE": 256,
             "PIPELINE_DEPTH": 5,
         }
@@ -304,18 +324,19 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         config_dict = {
             "INPUT_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "INPUT_IS_UNSIGNED": False,
-            "OUTPUT_IS_UNSIGNED": True,
+            "INPUT_IS_UNSIGNED": True,
+            "OUTPUT_IS_UNSIGNED": False,
             "IN_HEIGHT": 2,
             "IN_WIDTH": 2,
             "IN_CH": 2,
             "CH_PAR": 2,
             "W_PAR": 2,
-            "X_SCALE": 2**-5,
-            "Y_SCALE": 2**-5,
+            "X_SCALE": 2**-2,
+            "Y_SCALE": 2**-6,
             "X_ZP": 0,
             "Y_ZP": 0,
-            "LEAKY_ALPHA": 0.1,
+            "SIGMOID_ALPHA": 0.1666666716337204,
+            "B_VALUE": 1.0001220703125,
             "LUT_SIZE": 256,
             "PIPELINE_DEPTH": 5,
         }
