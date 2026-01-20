@@ -11,14 +11,14 @@
 template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, size_t LUT_SIZE, size_t IN_HEIGHT, size_t IN_WIDTH,
           size_t IN_CH, size_t CH_PAR, size_t W_PAR>
-class StreamingLeakyReLU {
+class StreamingLUT {
 public:
   static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
   static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
   static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
                 "IN_HEIGHT and IN_WIDTH must be greater than 0");
 
-  StreamingLeakyReLU() = default;
+  StreamingLUT() = default;
 
   struct StepState {
     // Loop iteration indexes.
@@ -60,7 +60,7 @@ public:
     STREAMINGRELU_RUN_LOOP:
       for (size_t i_ch = 0; i_ch < IN_CH / CH_PAR; i_ch++) {
 #pragma HLS pipeline II = 1
-        StreamingLeakyReLU::pipeline_body(i_data, LUTmem, o_data);
+        StreamingLUT::pipeline_body(i_data, LUTmem, o_data);
       }
     }
   }
@@ -86,7 +86,7 @@ public:
     if (firing_condition) {
 
       hls::stream<TOutputWord> instant_output_stream[W_PAR];
-      StreamingLeakyReLU::pipeline_body(i_data, LUTmem, instant_output_stream);
+      StreamingLUT::pipeline_body(i_data, LUTmem, instant_output_stream);
 
       st.actor_status.fire();
 

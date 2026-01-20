@@ -1,5 +1,5 @@
 #include "DequantQuant.hpp"
-#include "StreamingLeakyReLU.hpp"
+#include "StreamingLUT.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -16,7 +16,7 @@ using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
 void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
               const test_config::TOutput LUTmem[test_config::LUT_SIZE],
               hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
-  StreamingLeakyReLU<
+  StreamingLUT<
       TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
       test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
       test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
@@ -83,7 +83,7 @@ bool test_step() {
   hls::stream<TInputWord> in_stream[test_config::W_PAR];
   hls::stream<TOutputWord> out_stream[test_config::W_PAR];
 
-  StreamingLeakyReLU<
+  StreamingLUT<
       TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
       test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
       test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>

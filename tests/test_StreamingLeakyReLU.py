@@ -8,7 +8,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return "StreamingLeakyReLU"
+        return "StreamingLUT"
 
     @property
     def unit_filename(self):
@@ -49,7 +49,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         # Define the input tensor to accomodate enough values to fill the LUT
         X = helper.make_tensor_value_info(
             "X",
-            TensorProto.INT8,
+            onnx_int_type,
             [
                 1,
                 LUT_entries,
@@ -59,7 +59,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         )
         Y = helper.make_tensor_value_info(
             "Y",
-            TensorProto.INT8,
+            onnx_int_type,
             [
                 1,
                 LUT_entries,
@@ -71,12 +71,11 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         X_scale = helper.make_tensor(
             "X_scale", TensorProto.FLOAT, [], [config_dict["X_SCALE"]]
         )
-        X_zp = helper.make_tensor("X_zp", TensorProto.INT8, [], [config_dict["X_ZP"]])
+        X_zp = helper.make_tensor("X_zp", onnx_int_type, [], [config_dict["X_ZP"]])
         Y_scale = helper.make_tensor(
             "Y_scale", TensorProto.FLOAT, [], [config_dict["Y_SCALE"]]
         )
-        Y_zp = helper.make_tensor("Y_zp", TensorProto.INT8, [], [config_dict["Y_ZP"]])
-
+        Y_zp = helper.make_tensor("Y_zp", onnx_int_type, [], [config_dict["Y_ZP"]])
         dqlinear = helper.make_node(
             "DequantizeLinear",
             inputs=["X", "X_scale", "X_zp"],
@@ -229,7 +228,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         cwr.add_line("}")
         return cwr.code
 
-    def test_7x7_po2(self, hls_steps):
+    def test_8bit_po2(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
