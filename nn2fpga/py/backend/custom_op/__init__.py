@@ -14,6 +14,7 @@ from backend.custom_op.streamingleakyrelu import StreamingLeakyReLU
 from backend.custom_op.streaminglinebuffer import StreamingLineBuffer
 from backend.custom_op.streamingmaxpool import StreamingMaxPool
 from backend.custom_op.streamingmemory import StreamingMemory
+from backend.custom_op.streamingmul import StreamingMul
 from backend.custom_op.streamingrelu import StreamingReLU
 from backend.custom_op.streamingsigmoid import StreamingSigmoid
 from backend.custom_op.streamingupsample import StreamingUpsample
@@ -37,6 +38,7 @@ custom_op = {
     "StreamingLineBuffer": StreamingLineBuffer,
     "StreamingMaxPool": StreamingMaxPool,
     "StreamingMemory": StreamingMemory,
+    "StreamingMul": StreamingMul,
     "StreamingReLU": StreamingReLU,
     "StreamingSigmoid": StreamingSigmoid,
     "StreamingUpsample": StreamingUpsample,

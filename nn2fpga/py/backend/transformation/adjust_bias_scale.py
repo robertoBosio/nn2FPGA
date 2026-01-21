@@ -153,10 +153,7 @@ class AdjustBiasScale(Transformation):
                     continue
 
                 ratio = current_bias_scale[0] / target_bias_scale[0]
-                logger.info(f"Adjusting per-tensor bias scale for node {node.name}: {current_bias_scale[0]} -> {target_bias_scale[0]}. Ratio: {ratio}")
                 new_bias_tensor = bias_tensor_quantized * ratio
-                for new, old in zip(new_bias_tensor, bias_tensor_quantized):
-                    logger.info(f"    {old} -> {new}")
                 
                 # compute int range under NEW scale (no clipping)
                 i_min = int(np.min(new_bias_tensor))
@@ -166,7 +163,6 @@ class AdjustBiasScale(Transformation):
                 if needed_bw > bias_tensor_quant.bitwidth:
                     # update the quant node bitwidth attribute (how you do this depends on how TensorQuant stores it)
                     # common pattern in qonnx/finn: a node attribute named "bitwidth"
-                    logger.info(f"Updating bitwidth of bias quant node {bias_q.name} from {bias_tensor_quant.bitwidth} to {needed_bw}")
                     model.set_initializer(bias_q.input[3], np.array(needed_bw, dtype=np.float32))
 
                 # model.set_initializer(bias_float_name, new_bias_tensor.astype(np.float32))
