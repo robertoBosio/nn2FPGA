@@ -48,7 +48,7 @@ def safe_int_quant_call(*args, **kwargs):
 def quant_array(inp_tensor, scale, zeropt, bitwidth, signed, narrow, rounding_mode):
     """Quantize an input tensor to a specified bitwidth and return the quantized tensor."""
 
-    # Let QONNX handle the quantization. This function return the dequantized tensor.
+    # Let QONNX handle the quantization. This function return the quantized floating tensor.
     inp_tensor = safe_int_quant_call(
         inp_tensor,
         scale=scale,
@@ -59,7 +59,7 @@ def quant_array(inp_tensor, scale, zeropt, bitwidth, signed, narrow, rounding_mo
         rounding_mode=rounding_mode,
     )
 
-    # Moving from a dequantized tensor to a quantized tensor, knowing that clipping
+    # Moving from the quantized floating tensor to a int tensor, knowing that clipping
     # and rounding have already been applied.
     inp_tensor = inp_tensor / scale
     inp_tensor = inp_tensor + zeropt
@@ -178,10 +178,14 @@ class AddStreamingParams(Transformation):
             sequential_streaming.append(
                 (node, packed_array.size)
             )
+
         grouped_initializer = grouped_initializer.reshape((1, grouped_initializer.size))
 
         if len(sequential_streaming) == 0:
+            logger.info("No parameters to stream. Skipping AddStreamingParams transformation.")
             return (model, False)
+        
+        logger.info(f"Packed streaming parameters size: {grouped_initializer.size} words")
 
         ap = AcceleratorPackage.from_json(
             model.get_metadata_prop("accelerator_package")

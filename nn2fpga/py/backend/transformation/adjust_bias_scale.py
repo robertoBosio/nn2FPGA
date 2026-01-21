@@ -1,15 +1,43 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import TensorQuant
+from qonnx.custom_op.registry import getCustomOp
 import logging
 import numpy as np
-from backend.transformation.add_streaming_params import safe_int_quant_call
+import math
+from backend.transformation.add_streaming_params import quant_array
 from backend.core.tensor_quant import TensorQuant
 logger = logging.getLogger(__name__)
 
 NODES_WITH_BIAS = [
     "Conv",
 ]
+
+def required_bitwidth_from_int_range(i_min: int, i_max: int, signed: bool, narrow: bool) -> int:
+    # Determine minimal bitwidth that can represent [i_min, i_max]
+    if signed:
+        # For signed b bits:
+        # narrow=False: [-2^(b-1), 2^(b-1)-1]
+        # narrow=True : [-2^(b-1)+1, 2^(b-1)-1]
+        abs_needed = max(abs(i_min), abs(i_max))
+        if abs_needed == 0:
+            return 1
+        # Need (b-1) magnitude bits
+        mag_bits = math.ceil(math.log2(abs_needed + 1))
+        b = mag_bits + 1
+        # If narrow and we need exactly -2^(b-1), bump
+        if narrow:
+            min_allowed = -(2 ** (b - 1)) + 1
+            if i_min < min_allowed:
+                b += 1
+        return b
+    else:
+        # Unsigned b bits: [0, 2^b - 1]
+        if i_min < 0:
+            raise ValueError("Unsigned quant but negative integers required.")
+        if i_max == 0:
+            return 1
+        return math.ceil(math.log2(i_max + 1))
 
 class AdjustBiasScale(Transformation):
     """
@@ -100,7 +128,8 @@ class AdjustBiasScale(Transformation):
                 )
 
             bias_tensor_quant = TensorQuant.from_quant_node(bias_q, model)
-            bias_tensor_quantized = safe_int_quant_call(
+
+            bias_tensor_quantized = quant_array(
                 model.get_initializer(bias_q.input[0]),
                 bias_tensor_quant.scale,
                 bias_tensor_quant.zeropt,
@@ -124,10 +153,24 @@ class AdjustBiasScale(Transformation):
                     continue
 
                 ratio = current_bias_scale[0] / target_bias_scale[0]
+                logger.info(f"Adjusting per-tensor bias scale for node {node.name}: {current_bias_scale[0]} -> {target_bias_scale[0]}. Ratio: {ratio}")
                 new_bias_tensor = bias_tensor_quantized * ratio
+                for new, old in zip(new_bias_tensor, bias_tensor_quantized):
+                    logger.info(f"    {old} -> {new}")
+                
+                # compute int range under NEW scale (no clipping)
+                i_min = int(np.min(new_bias_tensor))
+                i_max = int(np.max(new_bias_tensor))
 
-                model.set_initializer(bias_float_name, new_bias_tensor.astype(np.float32))
-                # model.set_initializer(bias_q.input[1], target_bias_scale)  # stays per-tensor
+                needed_bw = required_bitwidth_from_int_range(i_min, i_max, bias_tensor_quant.signed, bias_tensor_quant.narrow)
+                if needed_bw > bias_tensor_quant.bitwidth:
+                    # update the quant node bitwidth attribute (how you do this depends on how TensorQuant stores it)
+                    # common pattern in qonnx/finn: a node attribute named "bitwidth"
+                    logger.info(f"Updating bitwidth of bias quant node {bias_q.name} from {bias_tensor_quant.bitwidth} to {needed_bw}")
+                    model.set_initializer(bias_q.input[3], np.array(needed_bw, dtype=np.float32))
+
+                # model.set_initializer(bias_float_name, new_bias_tensor.astype(np.float32))
+                model.set_initializer(bias_q.input[1], target_bias_scale)  # stays per-tensor
                 logger.info(f"Adjusted per-tensor bias scale for node {node.name}")
 
             else:
@@ -144,9 +187,19 @@ class AdjustBiasScale(Transformation):
                 ratio = b_s / target_bias_scale
                 # bias_tensor is [C_out] for per-channel case
                 new_bias_tensor = bias_tensor_quantized * ratio
+                
+                i_min = int(np.min(new_bias_tensor))
+                i_max = int(np.max(new_bias_tensor))
 
-                model.set_initializer(bias_float_name, new_bias_tensor.astype(np.float32))
-                # model.set_initializer(bias_q.input[1], target_bias_scale.astype(np.float32))  # stays per-channel
+                needed_bw = required_bitwidth_from_int_range(i_min, i_max, bias_tensor_quant.signed, bias_tensor_quant.narrow)
+                if needed_bw > bias_tensor_quant.bitwidth:
+                    # update the quant node bitwidth attribute (how you do this depends on how TensorQuant stores it)
+                    # common pattern in qonnx/finn: a node attribute named "bitwidth"
+                    logger.info(f"Updating bitwidth of bias quant node {bias_q.name} from {bias_tensor_quant.bitwidth} to {needed_bw}")
+                    model.set_initializer(bias_q.input[3], np.array(needed_bw, dtype=np.float32))
+
+                # model.set_initializer(bias_float_name, new_bias_tensor.astype(np.float32))
+                model.set_initializer(bias_q.input[1], target_bias_scale.astype(np.float32))  # stays per-channel
                 logger.info(f"Adjusted per-channel bias scale for node {node.name}")
 
         return model, False
