@@ -19,13 +19,21 @@ from backend.util.codegen_utils import (
 from backend.core.tensor_quant import TensorQuant
 from backend.util.par_utils import get_par_attributes
 from backend.custom_op.register_rewrite_rule import register_rules
+from onnxscript import ir
+from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 import logging
 
 logger = logging.getLogger(__name__)
 
+def _get_B_as_python_number(B: ir.Value) -> float:
+    t = ir_convenience.get_const_tensor(B)  # handles initializer OR Constant node
+    if t is None:
+        raise ValueError("B is not a compile-time constant")
+    arr = t.numpy().reshape(-1)
+    return float(arr[-1])  # keep your original "last element" behavior
+
 class StreamingSigmoid(NN2FPGAOp):
-    """ Node implementing the Sigmoid operation. """
 
     @staticmethod
     def hardsigmoid_pattern(op, x, B, alpha):
@@ -33,8 +41,13 @@ class StreamingSigmoid(NN2FPGAOp):
         return op.Mul(y, B)
 
     @staticmethod
-    def rewrite(op, x, B, alpha):
-        b_value = B.const_value.numpy()[-1]
+    def _condition(context, x, B, alpha, **_):
+        # Only rewrite if B is actually constant
+        return ir_convenience.get_const_tensor(B) is not None
+
+    @staticmethod
+    def rewrite(op, x, B, alpha, **_):
+        b_value = _get_B_as_python_number(B)
         return op.StreamingSigmoid(
             x,
             alpha=alpha,
@@ -46,7 +59,9 @@ class StreamingSigmoid(NN2FPGAOp):
     def register_rules():
         return [
             pattern.RewriteRule(
-                StreamingSigmoid.hardsigmoid_pattern, StreamingSigmoid.rewrite
+                StreamingSigmoid.hardsigmoid_pattern,
+                StreamingSigmoid.rewrite,
+                StreamingSigmoid._condition,
             )
         ]
 
