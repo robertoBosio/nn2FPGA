@@ -19,6 +19,13 @@ template <typename TOut> struct LimitsImpl<TOut, false> {
   static inline TOut min() { return TOut(0); }
 };
 
+template <typename T> struct is_ap_signed {
+  static constexpr bool value =
+      std::is_same<typename T::Base::Base,
+                   _AP_ROOT_TYPE<T::Base::width, true>>::value;
+};
+
+
 template <int Shift, typename TAcc, typename TOut> struct DequantQuantPo2 {
 
   TOut operator()(TAcc acc) const {
@@ -55,13 +62,26 @@ private:
   }
 
   static TOut run(TAcc acc, std::false_type) {
-    // Saturate to OUT_WIDTH
-    TAcc shifted = acc << (-Shift);
-    if (shifted > LimitsImpl<TOut>::max())
-      shifted = LimitsImpl<TOut>::max();
-    if (shifted < LimitsImpl<TOut>::min())
-      shifted = LimitsImpl<TOut>::min();
-    return TOut(shifted);
+    constexpr int L = (-Shift); // left shift amount (>= 0)
+
+    // Widen enough to prevent wrap-around during the shift.
+    // For signed, add +1 for sign growth safety.
+    using TWide = typename std::conditional<is_ap_signed<TAcc>::value,
+                                            ap_int<TAcc::width + L + 1>,
+                                            ap_uint<TAcc::width + L>>::type;
+
+    TWide wide = TWide(acc);
+    wide = wide << L;
+
+    const TWide wmax = TWide(LimitsImpl<TOut>::max());
+    const TWide wmin = TWide(LimitsImpl<TOut>::min());
+
+    if (wide > wmax)
+      wide = wmax;
+    if (wide < wmin)
+      wide = wmin;
+
+    return TOut(wide);
   }
 };
 

@@ -206,3 +206,54 @@ class TestDequantQuant(BaseHLSTest):
             config_dict,
             hls_steps,
         )
+    
+    def test_clip_signed_negative_shift(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": -2,
+            "INPUT": -100,
+            "EXPECTED": -128,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_clip_signed_negative_shift_min_limit_bug_extreme(self, hls_steps):
+        # Shift left by 7 -> should saturate to -128 for int8
+        # If LimitsImpl<TOut>::min() is wrong (+128), the code will NOT clip to -128.
+        config_dict = {
+            "ACC_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": -7,
+            "INPUT": -1,
+            "EXPECTED": -128,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+
+    def test_clip_signed_negative_shift_min_limit_bug_near_boundary(self, hls_steps):
+        # -2 << 6 = -128 exactly. This should produce -128 (no wrap/clip ambiguity).
+        # With an incorrect positive min limit (+128), comparisons against "min" are broken,
+        # and implementations sometimes produce 0 or +128 depending on downstream casts.
+        config_dict = {
+            "ACC_DATAWIDTH": 8,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": -6,
+            "INPUT": -2,
+            "EXPECTED": -128,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
