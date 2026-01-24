@@ -16,7 +16,6 @@ void wrap_run(
   bandwidth_adjust.run<0>(input_data_stream, output_data_stream);
 }
 
-template <class BandwidthAdjust>
 bool test_run(){
 
   // Prepare input and output streams
@@ -66,7 +65,7 @@ bool test_run(){
   return flag;
 }
 
-template <class BandwidthAdjust> bool test_step() {
+bool test_step() {
 
   static constexpr size_t expectedII =
       test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH /
@@ -77,7 +76,7 @@ template <class BandwidthAdjust> bool test_step() {
   hls::stream<test_config::TInputWord> in_stream[test_config::IN_W_PAR];
   hls::stream<test_config::TOutputWord> out_stream[test_config::OUT_W_PAR];
 
-  BandwidthAdjust bandwidth_adjust;
+  test_config::BandwidthAdjust bandwidth_adjust;
   bandwidth_adjust.step_init(test_config::PIPELINE_DEPTH);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
@@ -125,12 +124,12 @@ int main(int argc, char **argv) {
 
   bool all_passed = true;
 
-  all_passed &= test_run<test_config::BandwidthAdjust>();
+  all_passed &= test_run();
 
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
   // estimations
   if (argc > 1 && std::string(argv[1]) == "csim") {
-    all_passed &= test_step<test_config::BandwidthAdjust>();
+    all_passed &= test_step();
   }
 
   if (!all_passed) {

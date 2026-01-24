@@ -79,7 +79,7 @@ bool test_step() {
 
   static constexpr size_t expectedII =
       test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH /
-      (test_config::W_PAR * test_config::W_PAR);
+      (test_config::W_PAR * test_config::CH_PAR);
 
   // Prepare input and output streams
   hls::stream<test_config::TWord> in_stream[test_config::W_PAR];
