@@ -126,7 +126,10 @@ class StreamingAdd(NN2FPGAOp):
 
         # Determine signedness and bitwidth
         signed = input_quantA.signed or input_quantB.signed
-        acc_bits = max(input_quantA.bitwidth, input_quantB.bitwidth) + 1
+        common_scale = min(input_quantA.scale, input_quantB.scale)
+        align_a = int(np.log2(input_quantA.scale / common_scale))
+        align_b = int(np.log2(input_quantB.scale / common_scale))
+        acc_bits = max(input_quantA.bitwidth + align_a, input_quantB.bitwidth + align_b) + 1
 
         # In case the input signedness is different, we need an extra bit, as the accumulator will be signed.
         if (input_quantA.signed != input_quantB.signed):
@@ -135,10 +138,29 @@ class StreamingAdd(NN2FPGAOp):
         acc_quant = TensorQuant(
             bitwidth=acc_bits,
             signed=signed,
-            scale=input_quantA.scale,
+            scale=common_scale,
             zeropt=input_quantA.zeropt
         )
         return f"{get_hls_quant_type(acc_quant)}"
+    
+    def __get_align_shift(self, input_quantA, input_quantB) -> tuple[str, str]:
+        """ Returns the align shifts for the Add operation. """
+
+        common_scale = min(input_quantA.scale, input_quantB.scale)
+        align_a = int(np.log2(input_quantA.scale / common_scale))
+        align_b = int(np.log2(input_quantB.scale / common_scale))
+
+        if align_a != 0:
+            alignA = f"DequantQuantPo2<{align_a}, TInputA, TAcc>"
+        else:
+            alignA = f"DequantQuantEqual<TInputA>"
+
+        if align_b != 0:
+            alignB = f"DequantQuantPo2<{align_b}, TInputB, TAcc>"
+        else:
+            alignB = f"DequantQuantEqual<TInputB>"
+
+        return alignA, alignB
 
     def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
         """ Returns the quantizer type for the Add operation. """
@@ -227,6 +249,8 @@ class StreamingAdd(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
                     f"Quantizer",
                 ),
+                (f"{self.__get_align_shift(input_quantA, input_quantB)[0]}", "AlignA"),
+                (f"{self.__get_align_shift(input_quantA, input_quantB)[1]}", "AlignB"),
                 (f"{input_shapeA[2]}", "IN_HEIGHT"),
                 (f"{input_shapeA[3]}", "IN_WIDTH"),
                 (f"{input_shapeA[1]}", "IN_CH"),

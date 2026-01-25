@@ -15,45 +15,52 @@ class TestStreamingAdd(BaseHLSTest):
         return "StreamingAdd"
 
     def generate_config_file(self, config_dict):
+        ina_unsigned = bool(config_dict.get("INPUTA_IS_UNSIGNED", False))
+        inb_unsigned = bool(config_dict.get("INPUTB_IS_UNSIGNED", False))
+        out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
 
-        # random tensors
-        input_tensor0 = np.random.randint(
-            0 if config_dict.get("INPUTA_IS_UNSIGNED", False) else -128,
-            256 if config_dict.get("INPUTA_IS_UNSIGNED", False) else 127,
+        ina_bits = int(config_dict["INPUTA_DATAWIDTH"])
+        inb_bits = int(config_dict["INPUTB_DATAWIDTH"])
+        out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
+
+        onnx_ina_type = self.get_tensorproto_dtype(ina_bits, ina_unsigned)
+        onnx_inb_type = self.get_tensorproto_dtype(inb_bits, inb_unsigned)
+        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
+        np_ina_type = self.get_numpy_dtype(ina_bits, ina_unsigned)
+        np_inb_type = self.get_numpy_dtype(inb_bits, inb_unsigned)
+        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+
+        # Random input tensor in correct integer domain/range
+        in_info = np.iinfo(np_ina_type)
+        inputa_tensor = np.random.randint(
+            int(in_info.min),
+            int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
                 config_dict["IN_CH"],
                 config_dict["IN_HEIGHT"],
                 config_dict["IN_WIDTH"],
             ),
-            dtype=self.get_numpy_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTA_IS_UNSIGNED", False),
-            ),
+            dtype=np_ina_type,
         )
 
-        input_tensor1 = np.random.randint(
-            0 if config_dict.get("INPUTB_IS_UNSIGNED", False) else -128,
-            256 if config_dict.get("INPUTB_IS_UNSIGNED", False) else 127,
+        in_info = np.iinfo(np_inb_type)
+        inputb_tensor = np.random.randint(
+            int(in_info.min),
+            int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
                 config_dict["IN_CH"],
                 config_dict["IN_HEIGHT"],
                 config_dict["IN_WIDTH"],
             ),
-            dtype=self.get_numpy_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTB_IS_UNSIGNED", False),
-            ),
+            dtype=np_inb_type,
         )
 
         # I/O
         A = helper.make_tensor_value_info(
             "A",
-            self.get_tensorproto_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTA_IS_UNSIGNED", False),
-            ),
+            onnx_ina_type,
             [
                 1,
                 config_dict["IN_CH"],
@@ -63,10 +70,7 @@ class TestStreamingAdd(BaseHLSTest):
         )
         B = helper.make_tensor_value_info(
             "B",
-            self.get_tensorproto_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTB_IS_UNSIGNED", False),
-            ),
+            onnx_inb_type,
             [
                 1,
                 config_dict["IN_CH"],
@@ -76,10 +80,7 @@ class TestStreamingAdd(BaseHLSTest):
         )
         Y = helper.make_tensor_value_info(
             "Y",
-            self.get_tensorproto_dtype(
-                config_dict["OUTPUT_DATAWIDTH"],
-                config_dict.get("OUTPUT_IS_UNSIGNED", False),
-            ),
+            onnx_out_type,
             [
                 1,
                 config_dict["IN_CH"],
@@ -96,19 +97,13 @@ class TestStreamingAdd(BaseHLSTest):
         )
         A_zp = helper.make_tensor(
             "A_zp",
-            self.get_tensorproto_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTA_IS_UNSIGNED", False),
-            ),
+            onnx_ina_type,
             [],
             [config_dict["A_ZP"]],
         )
         B_zp = helper.make_tensor(
             "B_zp",
-            self.get_tensorproto_dtype(
-                config_dict["INPUT_DATAWIDTH"],
-                config_dict.get("INPUTB_IS_UNSIGNED", False),
-            ),
+            onnx_inb_type,  
             [],
             [config_dict["B_ZP"]],
         )
@@ -117,10 +112,7 @@ class TestStreamingAdd(BaseHLSTest):
         )
         Y_zp = helper.make_tensor(
             "Y_zp",
-            self.get_tensorproto_dtype(
-                config_dict["OUTPUT_DATAWIDTH"],
-                config_dict.get("OUTPUT_IS_UNSIGNED", False),
-            ),
+            onnx_out_type,
             [],
             [config_dict["Y_ZP"]],
         )
@@ -161,9 +153,21 @@ class TestStreamingAdd(BaseHLSTest):
         sess = ort.InferenceSession(
             model.SerializeToString(), providers=["CPUExecutionProvider"]
         )
-        y = sess.run(None, {"A": input_tensor0, "B": input_tensor1})[0]
+        y = sess.run(None, {"A": inputa_tensor, "B": inputb_tensor})[0]
 
-        shift = int(np.log2(config_dict["Y_SCALE"] / config_dict["A_SCALE"]))
+        # Aligning scales in input
+        common_scale = min(config_dict["A_SCALE"], config_dict["B_SCALE"])
+        align_a = int(np.log2(config_dict["A_SCALE"] / common_scale))
+        align_b = int(np.log2(config_dict["B_SCALE"] / common_scale))
+        shift = int(np.log2(config_dict["Y_SCALE"] / common_scale))
+
+        tacc_bits = max(
+            ina_bits + align_a, inb_bits + align_b
+        ) + 1  # +1 for possible overflow in addition
+        if ina_unsigned != inb_unsigned:
+            tacc_bits += 1  # extra bit for signed + unsigned addition
+        config_dict["ACC_DATAWIDTH"] = tacc_bits
+
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
@@ -179,36 +183,39 @@ class TestStreamingAdd(BaseHLSTest):
                     cwr.add_line(f"const bool {key} = {value_str};")
                 else:
                     cwr.add_line(f"const int {key} = {value};")
-        typedef_suffix = "u" if config_dict.get("INPUTA_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInputA;")
-        typedef_suffix = "u" if config_dict.get("INPUTB_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInputB;")
-        typedef_suffix = (
-            "u"
-            if (
-                config_dict.get("INPUTA_IS_UNSIGNED", False)
-                and config_dict.get("INPUTB_IS_UNSIGNED", False)
-            )
-            else ""
-        )
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
-        typedef_suffix = "u" if config_dict.get("OUTPUT_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+        typedef_suffix = "u" if ina_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{ina_bits}> TInputA;")
+        typedef_suffix = "u" if inb_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{inb_bits}> TInputB;")
+        typedef_suffix = "u" if (ina_unsigned and inb_unsigned) else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{tacc_bits}> TAcc;")
+        typedef_suffix = "u" if out_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
+
+        # Quantizers
+        if align_a != 0:
+            cwr.add_line(f"typedef DequantQuantPo2<{-align_a}, TInputA, TAcc> AlignA;")
+        else:
+            cwr.add_line(f"typedef DequantQuantEqual<TInputA> AlignA;")
+        if align_b != 0:
+            cwr.add_line(f"typedef DequantQuantPo2<{-align_b}, TInputB, TAcc> AlignB;")
+        else:
+            cwr.add_line(f"typedef DequantQuantEqual<TInputB> AlignB;")
         cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> Quantizer;")
         cwr.add_line("typedef DequantQuantEqual<TAcc> Activation;")
-        # cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
+
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor0",
                 primitive=f"TInputA",
-                value=input_tensor0,
+                value=inputa_tensor,
             ).generate_initialization()
         )
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor1",
                 primitive=f"TInputB",
-                value=input_tensor1,
+                value=inputb_tensor,
             ).generate_initialization()
         )
         cwr.add_lines(
@@ -228,9 +235,9 @@ class TestStreamingAdd(BaseHLSTest):
             "INPUTA_IS_UNSIGNED": False,
             "INPUTB_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": False,
-            "INPUT_DATAWIDTH": 8,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "ACC_DATAWIDTH": 9,
             "IN_HEIGHT": 4,
             "IN_WIDTH": 4,
             "IN_CH": 4,
@@ -245,16 +252,40 @@ class TestStreamingAdd(BaseHLSTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
-    
+
     def test_pertensor_po2_unsigned(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUTA_IS_UNSIGNED": True,
             "INPUTB_IS_UNSIGNED": True,
             "OUTPUT_IS_UNSIGNED": True,
-            "INPUT_DATAWIDTH": 8,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "ACC_DATAWIDTH": 9,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
+            "CH_PAR": 2,
+            "W_PAR": 1,
+            "A_SCALE": 2**-5,
+            "B_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "A_ZP": 0,
+            "B_ZP": 0,
+            "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_pertensor_po2_hybrid(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUTA_IS_UNSIGNED": False,
+            "INPUTB_IS_UNSIGNED": True,
+            "OUTPUT_IS_UNSIGNED": True,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
             "IN_HEIGHT": 4,
             "IN_WIDTH": 4,
             "IN_CH": 4,
@@ -270,22 +301,22 @@ class TestStreamingAdd(BaseHLSTest):
         }
         self.run(config_dict, hls_steps)
     
-    def test_pertensor_po2_hybrid(self, hls_steps):
+    def test_pertensor_po2_mixed_scales(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUTA_IS_UNSIGNED": False,
-            "INPUTB_IS_UNSIGNED": True,
-            "OUTPUT_IS_UNSIGNED": True,
-            "INPUT_DATAWIDTH": 8,
+            "INPUTB_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": False,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "ACC_DATAWIDTH": 10, # extra bit for signed + unsigned addition
             "IN_HEIGHT": 4,
             "IN_WIDTH": 4,
             "IN_CH": 4,
             "CH_PAR": 2,
             "W_PAR": 1,
-            "A_SCALE": 2**-5,
-            "B_SCALE": 2**-5,
+            "A_SCALE": 2**-4,
+            "B_SCALE": 2**-6,
             "Y_SCALE": 2**-5,
             "A_ZP": 0,
             "B_ZP": 0,

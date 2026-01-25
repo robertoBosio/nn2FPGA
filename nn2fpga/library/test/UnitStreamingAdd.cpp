@@ -20,9 +20,9 @@ void wrap_run(hls::stream<TInputWordA> i_data0[test_config::W_PAR],
   StreamingAdd<TInputWordA, test_config::TInputA, TInputWordB,
                test_config::TInputB, TOutputWord, test_config::TOutput,
                test_config::TAcc, test_config::Activation,
-               test_config::Quantizer, test_config::IN_HEIGHT,
-               test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
-               test_config::CH_PAR>
+               test_config::Quantizer, test_config::AlignA, test_config::AlignB,
+               test_config::IN_HEIGHT, test_config::IN_WIDTH,
+               test_config::IN_CH, test_config::W_PAR, test_config::CH_PAR>
       add;
   add.run<0>(i_data0, i_data1, o_data);
 }
@@ -113,9 +113,9 @@ bool test_step() {
   StreamingAdd<TInputWordA, test_config::TInputA, TInputWordB,
                test_config::TInputB, TOutputWord, test_config::TOutput,
                test_config::TAcc, test_config::Activation,
-               test_config::Quantizer, test_config::IN_HEIGHT,
-               test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
-               test_config::CH_PAR>
+               test_config::Quantizer, test_config::AlignA, test_config::AlignB,
+               test_config::IN_HEIGHT, test_config::IN_WIDTH, test_config::IN_CH,
+               test_config::W_PAR, test_config::CH_PAR>
       add;
   add.step_init(test_config::PIPELINE_DEPTH);
 

@@ -7,8 +7,8 @@
 template <typename TInputWordA, typename TInputA, typename TInputWordB,
           typename TInputB, typename TOutputWord, typename TOutput,
           typename TAcc, typename Activation, typename Quantizer,
-          size_t IN_HEIGHT, size_t IN_WIDTH, size_t IN_CH, size_t W_PAR,
-          size_t CH_PAR>
+          typename AlignA, typename AlignB, size_t IN_HEIGHT, size_t IN_WIDTH,
+          size_t IN_CH, size_t W_PAR, size_t CH_PAR>
 class StreamingAdd {
 
   struct StepState {
@@ -121,6 +121,8 @@ private:
     TOutputWord s_output_struct;
     Quantizer quantizer;
     Activation activation;
+    AlignA align_a;
+    AlignB align_b;
 
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       // Read the input data structure from the input streams.
@@ -133,7 +135,7 @@ private:
         TInputB s_inputB_data = s_inputB_struct[i_ch_par];
 
         // Perform the addition.
-        TAcc s_sum = s_inputA_data + s_inputB_data;
+        TAcc s_sum = align_a(s_inputA_data) + align_b(s_inputB_data);
         // Apply activation function.
         s_sum = activation(s_sum);
 
