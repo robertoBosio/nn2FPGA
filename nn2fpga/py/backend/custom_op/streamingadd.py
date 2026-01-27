@@ -142,7 +142,7 @@ class StreamingAdd(NN2FPGAOp):
             zeropt=input_quantA.zeropt
         )
         return f"{get_hls_quant_type(acc_quant)}"
-    
+
     def __get_align_shift(self, input_quantA, input_quantB) -> tuple[str, str]:
         """ Returns the align shifts for the Add operation. """
 
@@ -151,14 +151,14 @@ class StreamingAdd(NN2FPGAOp):
         align_b = int(np.log2(input_quantB.scale / common_scale))
 
         if align_a != 0:
-            alignA = f"DequantQuantPo2<{align_a}, TInputA, TAcc>"
+            alignA = f"DequantQuantPo2<{align_a}, {get_hls_quant_type(input_quantA)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
-            alignA = f"DequantQuantEqual<TInputA>"
+            alignA = f"DequantQuantEqual<{get_hls_quant_type(input_quantA)}>"
 
         if align_b != 0:
-            alignB = f"DequantQuantPo2<{align_b}, TInputB, TAcc>"
+            alignB = f"DequantQuantPo2<{align_b}, {get_hls_quant_type(input_quantB)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
-            alignB = f"DequantQuantEqual<TInputB>"
+            alignB = f"DequantQuantEqual<{get_hls_quant_type(input_quantB)}>"
 
         return alignA, alignB
 
@@ -398,17 +398,17 @@ class StreamingAdd(NN2FPGAOp):
             int: Estimated DSP usage.
         """
         return 0
-    
+
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingAdd operation requires a line buffer.
         Returns:
             bool: True if Line Buffering is required, False otherwise.
         """
         return False
-    
+
     def can_inherit_interface(self):
         return True
-    
+
     def inherit_interface(self, model: ModelWrapper, upstream: NodeInterface) -> None:
         """ Inherit the interface from the upstream node."""
         self.set_nodeattr("in_stream_array", upstream.out_stream_array)
