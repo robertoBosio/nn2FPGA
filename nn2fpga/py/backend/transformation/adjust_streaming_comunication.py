@@ -187,12 +187,12 @@ class AdjustStreamingCommunication(Transformation):
         communication_nodes = []
         mark_visited = set()
         queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
+        mark_visited.update(node.name for node in queue)
         if not queue:
             raise ValueError("No NHWCToStream node found in the model. This means the model has not a entry point for streaming.")
 
         while queue:
             node = queue.popleft()
-            mark_visited.add(node.name)
             iface = getCustomOp(node).get_port_interface()
 
             consumers = model.find_direct_successors(node)
@@ -221,6 +221,7 @@ class AdjustStreamingCommunication(Transformation):
                     if consumer.name not in mark_visited:
                         # If the consumer is not already visited, add it to the queue.
                         queue.append(consumer)
+                        mark_visited.add(consumer.name)
 
         for (
             producer,
