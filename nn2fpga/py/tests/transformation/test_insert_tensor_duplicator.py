@@ -99,6 +99,9 @@ def test_double_tensor_pattern():
     output1_tensor = helper.make_tensor_value_info(
         "output1", TensorProto.FLOAT, [1, 1280, 1, 1]
     )
+    quantized_input_tensor = helper.make_tensor_value_info(
+        "quantized_input", TensorProto.FLOAT, [1, 1280, 1, 1]
+    )
 
     scale_tensor0, zero_point_tensor0, bitwidth_tensor0, quant_node0 = build_quant_node(
         "input",
@@ -148,6 +151,7 @@ def test_double_tensor_pattern():
             zero_point_tensor2,
             bitwidth_tensor2,
         ],
+        value_info=[quantized_input_tensor],
     )
 
     model = qonnx_make_model(graph, producer_name="test_slice")
@@ -178,6 +182,9 @@ def test_triple_tensor_pattern():
     )
     quant_nodes = []
     quant_initializers = []
+    quantized_input_tensor = helper.make_tensor_value_info(
+        "quantized_input", TensorProto.FLOAT, [1, 1500, 1, 1]
+    )
 
     scale, zero_point, bitwidth, quant_node = build_quant_node(
         "input",
@@ -214,6 +221,7 @@ def test_triple_tensor_pattern():
         [input_tensor],
         [output0_tensor, output1_tensor, output2_tensor],
         initializer=quant_initializers,
+        value_info=[quantized_input_tensor],
     )
     
     model = qonnx_make_model(graph, producer_name="test_slice")
@@ -221,7 +229,9 @@ def test_triple_tensor_pattern():
     model = build_accelerator_package(model)
 
     # Apply the SlicesToSplitTree transformation
+    model.save("before_insert_tensor_duplicator.onnx")
     transformed_model = model.transform(InsertTensorDuplicator())
+    transformed_model.save("after_insert_tensor_duplicator.onnx")
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
     tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]
@@ -288,9 +298,7 @@ def test_triple_tensor_with_output_pattern():
     model = build_accelerator_package(model)
 
     # Apply the SlicesToSplitTree transformation
-    model.save("before_insert_tensor_duplicator.onnx")
     transformed_model = model.transform(InsertTensorDuplicator())
-    transformed_model.save("after_insert_tensor_duplicator.onnx")
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
     tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]

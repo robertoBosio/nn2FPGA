@@ -2,7 +2,7 @@ from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import helper
 from backend.core.acceleratorpackage import AcceleratorPackage
-    
+
 def _fresh_node_name(model: ModelWrapper, base: str) -> str:
     """Generate a node name not used in the graph."""
     used = {n.name for n in model.graph.node}
@@ -12,6 +12,11 @@ def _fresh_node_name(model: ModelWrapper, base: str) -> str:
         k += 1
         name = f"{base}_{k}"
     return name
+
+def _get_tensor_consumers(model: ModelWrapper, tensor_name: str):
+    consumers = len([x.name for x in model.graph.output if x.name == tensor_name])
+    consumers += len(model.find_consumers(tensor_name))
+    return consumers
 
 class InsertTensorDuplicator(Transformation):
     """
@@ -24,14 +29,29 @@ class InsertTensorDuplicator(Transformation):
         ap = AcceleratorPackage.from_json(
             model.get_metadata_prop("accelerator_package")
         )
-        fork_nodes = [node for node in model.graph.node if model.is_fork_node(node) and node.op_type != "TensorDuplicator"]
+
+        # Search for tensors with multiple consumers
+        multi_consumer_tensors = set(
+            [
+                tensor
+                for tensor in model.get_all_tensor_names()
+                if _get_tensor_consumers(model, tensor) > 1
+            ]
+        )
+
+        # Find the nodes that produce these tensors
+        fork_nodes = [
+            model.find_producer(tensor)
+            for tensor in multi_consumer_tensors
+            if model.find_producer(tensor) is not None
+        ]
 
         modified = False
         for node in fork_nodes:
 
             fork_out = node.output[0]
             consumers = model.find_consumers(fork_out)
-            
+
             # Extract two consumers from the dictionary (sorting to have a deterministic order)
             node_pos = {id(n): i for i, n in enumerate(model.graph.node)}
             consumers = sorted(consumers, key=lambda n: node_pos.get(id(n), 10**9))
@@ -42,7 +62,7 @@ class InsertTensorDuplicator(Transformation):
             ]
             for graph_out in graph_output_consumers:
                 consumer_list.append((graph_out, "graph_output"))
-            
+
             consumers = consumer_list[:2]
             dup_outputs = [model.make_new_valueinfo_name() for _ in range(2)]
             dup_outputs_all = dup_outputs.copy()
