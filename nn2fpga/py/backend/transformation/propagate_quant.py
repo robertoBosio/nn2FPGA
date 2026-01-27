@@ -26,9 +26,12 @@ QUANT_INVARIANT_NODES = [
     "NHWCToStream",  # nn2FPGA
     "Pad",
     "Reshape",
+    "Slice",
     "Split",
+    "StreamingConcat",  # nn2FPGA
     "StreamingLineBuffer",  # nn2FPGA
     "StreamingMaxPool",  # nn2FPGA
+    "StreamingSplit",  # nn2FPGA
     "StreamToNHWC",  # nn2FPGA
     "TensorDuplicator",  # nn2FPGA
     "Transpose",
@@ -222,6 +225,7 @@ def backward_propagate_quantization(
 
     return added_quant_nodes
 
+
 class PropagateQuant(Transformation):
     """Propagate quantization parameters through quantization invariant nodes.
 
@@ -258,7 +262,7 @@ class PropagateQuant(Transformation):
             producers = [
                 model.find_producer(inp) for inp in get_non_constant_inputs(node, model)
             ]
-            
+
             # Retrieve all the consumers of the outputs of the current node
             # removing Quant nodes that have all constant inputs (i.e., weights)
             # Consumers of a tensor can be multiple nodes, so we collect them in a list
@@ -271,13 +275,12 @@ class PropagateQuant(Transformation):
             )
             if quant_forward_nodes is not None and len(quant_forward_nodes) > 0:
                 new_quant_nodes.extend(quant_forward_nodes)
-            
+
             quant_backward_nodes = backward_propagate_quantization(
                 consumers, producers, node, model
             )
             if quant_backward_nodes is not None and len(quant_backward_nodes) > 0:
                 new_quant_nodes.extend(quant_backward_nodes)
-
 
         if new_quant_nodes:
             # Insert all new quant nodes into the graph
