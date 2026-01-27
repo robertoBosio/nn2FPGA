@@ -26,6 +26,7 @@ class SlicesToSplitTree(Transformation):
 
     def __init__(self):
         super().__init__()
+        self.axis_to_split_op = [1, 2, 3]  # C, H, W axes
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
