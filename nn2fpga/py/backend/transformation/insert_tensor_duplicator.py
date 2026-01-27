@@ -50,6 +50,8 @@ class InsertTensorDuplicator(Transformation):
         for node in fork_nodes:
 
             fork_out = node.output[0]
+            fork_shape = model.get_tensor_shape(fork_out)
+            fork_dtype = model.get_tensor_datatype(fork_out)
             consumers = model.find_consumers(fork_out)
 
             # Extract two consumers from the dictionary (sorting to have a deterministic order)
@@ -105,11 +107,9 @@ class InsertTensorDuplicator(Transformation):
                             break
 
             # Copy shape and datatype info
-            shape = model.get_tensor_shape(fork_out)
-            dtype = model.get_tensor_datatype(fork_out)
             for out in dup_outputs_all:
-                model.set_tensor_shape(out, shape)
-                model.set_tensor_datatype(out, dtype)
+                model.set_tensor_shape(out, fork_shape)
+                model.set_tensor_datatype(out, fork_dtype)
             modified = True
 
         model.set_metadata_prop("accelerator_package", ap.to_json())
