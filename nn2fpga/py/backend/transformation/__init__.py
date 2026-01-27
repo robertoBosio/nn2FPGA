@@ -30,5 +30,6 @@ from backend.transformation.propagate_quant import PropagateQuant
 from backend.transformation.remove_redundant_quant import RemoveRedundantQuant
 from backend.transformation.remove_squeeze import RemoveSqueeze
 from backend.transformation.set_dynamic_batchsize import SetDynamicBatchSize
+from backend.transformation.slices_to_split_tree import SlicesToSplitTree
 from backend.transformation.split_concat import SplitConcat
 from backend.transformation.supported_partition import SupportedPartition
