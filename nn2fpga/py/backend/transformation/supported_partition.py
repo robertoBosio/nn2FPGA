@@ -1,3 +1,4 @@
+import time
 import onnx
 import numpy as np
 from collections import deque, defaultdict
@@ -25,9 +26,28 @@ class Pattern:
     """Anchor-based pattern; match is evaluated around a specific anchor node."""
     name: str = "Pattern"
     anchor_op: str = ""
+    debug_allowlist: Optional[Set[str]] = None  # optional debug filter
+    
+    def __init__(self, debug_allowlist: Optional[Set[str]] = None):
+        self.debug_allowlist = set(debug_allowlist) if debug_allowlist is not None else None
 
     def match(self, model, anchor_node) -> Match:
+        covered: Set[str] = set()
+
+        # Debug filter: only consider certain node names (optional)
+        if self.debug_allowlist is not None and anchor_node.name not in self.debug_allowlist:
+            return Match(False, self.name, covered, [f"{anchor_node.name} not in debug allowlist"])
+
+        # Anchor op-type check (common)
+        if self.anchor_op and anchor_node.op_type != self.anchor_op:
+            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
+
+        # Delegate to subclass-specific logic
+        return self._match_impl(model, anchor_node)
+
+    def _match_impl(self, model, anchor_node) -> Match:
         raise NotImplementedError
+    
 
 # =========================== Helper Functions ===========================#
 
@@ -219,12 +239,9 @@ class MulQuantized(Pattern):
     name = "Mul(Quant(a), Quant(b))"
     anchor_op = "Mul"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != "Mul":
-            return Match(False, self.name, covered, ["Not a Mul anchor"])
 
         if len(anchor_node.input) != 2:
             return Match(False, self.name, covered, [f"Mul expects 2 inputs, got {len(anchor_node.input)}"])
@@ -248,12 +265,9 @@ class MulHardSigmoidTimesConst(Pattern):
     name = "Mul(HardSigmoid(Quant(x)), Const)"
     anchor_op = "Mul"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != "Mul":
-            return Match(False, self.name, covered, ["Not a Mul anchor"])
 
         if len(anchor_node.input) != 2:
             return Match(False, self.name, covered, [f"Mul expects 2 inputs, got {len(anchor_node.input)}"])
@@ -298,17 +312,9 @@ class ConvQuantPattern(Pattern):
     name = "Conv(Quant(act), Quant(w), [Quant(b)]) + attr constraints"
     anchor_op = "Conv"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        # if anchor_node.name not in [f"Conv_{i}" for i in range(18)]:
-        #     return Match(False, self.name, covered, ["Not a Conv in debug set"])
-        # if anchor_node.name != "Conv_17":
-        #     return Match(False, self.name, covered, ["Not Conv_17 in debug"])
-
-        if anchor_node.op_type != "Conv":
-            return Match(False, self.name, covered, ["Not a Conv anchor"])
 
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Conv missing required inputs"])
@@ -373,12 +379,9 @@ class GemmQuantPattern(Pattern):
     name = "Gemm(Quant(act), Quant(w), [Quant(b)]) + attr/shape constraints"
     anchor_op = "Gemm"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != "Gemm":
-            return Match(False, self.name, covered, ["Not a Gemm anchor"])
 
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Gemm missing required inputs"])
@@ -445,12 +448,9 @@ class PoolQuantPattern(Pattern):
     name = "Pool(Quant(act)) + attr constraints"
     anchor_op = ""  # set by subclasses
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != self.anchor_op:
-            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
 
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["Pool missing required input"])
@@ -500,12 +500,9 @@ class GlobalPoolQuantPattern(Pattern):
     name = "GlobalPool(Quant(act))"
     anchor_op = ""  # set by subclasses
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != self.anchor_op:
-            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
 
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["GlobalPool missing required input"])
@@ -538,12 +535,9 @@ class ResizeQuantUpsampleNearestAsymmetric(Pattern):
     name = "Resize(Quant(act)) upsample nearest/asymmetric + scales [1,1,s,s]"
     anchor_op = "Resize"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != "Resize":
-            return Match(False, self.name, covered, ["Not a Resize anchor"])
 
         if len(anchor_node.input) < 3:
             return Match(False, self.name, covered, [f"Resize expects at least 3 inputs, got {len(anchor_node.input)}"])
@@ -602,20 +596,17 @@ class ResizeQuantUpsampleNearestAsymmetric(Pattern):
 
         return Match(True, self.name, covered, reasons)
 
-class AddQuantSameParams(Pattern):
+class AddQuant(Pattern):
     """
-    Matches Add where both inputs come from activation Quant/IntQuant
-    AND have identical (scale, zeropt).
+    Matches Add where both inputs come from activation Quant/IntQuant.
     """
-    name = "Add(Quant(a), Quant(b)) same params"
+    name = "Add(Quant(a), Quant(b))"
     anchor_op = "Add"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
-
-        if anchor_node.op_type != "Add":
-            return Match(False, self.name, covered, ["Not an Add anchor"])
+        
         if len(anchor_node.input) != 2:
             return Match(False, self.name, covered, [f"Add expects 2 inputs, got {len(anchor_node.input)}"])
 
@@ -645,12 +636,10 @@ class ConcatQuantSameParamsAxis1(Pattern):
     name = "Concat(Quant(...)) same params + axis=1"
     anchor_op = "Concat"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
 
-        if anchor_node.op_type != "Concat":
-            return Match(False, self.name, covered, ["Not a Concat anchor"])
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Concat expects >=2 inputs"])
 
@@ -689,12 +678,10 @@ class ReshapeFlattenFCOnly(Pattern):
     name = "Reshape/Flatten FC-only shape constraints"
     anchor_op = ""  # set in subclasses
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
 
-        if anchor_node.op_type != self.anchor_op:
-            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
         if len(anchor_node.input) < 1 or len(anchor_node.output) < 1:
             return Match(False, self.name, covered, ["Missing input/output"])
 
@@ -736,12 +723,10 @@ class QuantizedActivationPattern(Pattern):
     name = "QuantizedActivation(Quant(x))"
     anchor_op = ""  # set in subclasses
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
 
-        if anchor_node.op_type != self.anchor_op:
-            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["Missing input"])
 
@@ -778,12 +763,10 @@ class ReluQuantOrFusable(Pattern):
     name = "Relu(Quant(x)) or fused into Conv/Gemm/Add"
     anchor_op = "Relu"
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
 
-        if anchor_node.op_type != "Relu":
-            return Match(False, self.name, covered, ["Not a Relu anchor"])
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["Missing input"])
 
@@ -816,13 +799,10 @@ class ActivationQuantNodePattern(Pattern):
     name = "Activation Quant/IntQuant node"
     anchor_op = ""  # set in subclasses
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
         
-        if anchor_node.op_type != self.anchor_op:
-            return Match(False, self.name, covered, [f"Not a {self.anchor_op} anchor"])
-
         # Only activation quantizers (not params quantizers)
         if is_constant_input_node(model, anchor_node):
             reasons.append("Not an activation quant node (has constant inputs)")
@@ -863,16 +843,15 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
         start: int
         end: int
 
-    def __init__(self, allowed_axes: Set[int] = {1, 2, 3}):
+    def __init__(self, allowed_axes: Set[int] = {1, 2, 3}, **kwargs):
         self.allowed_axes = set(allowed_axes)
+        super().__init__(**kwargs)
 
-    def match(self, model, anchor_node) -> Match:
+    def _match_impl(self, model, anchor_node) -> Match:
         covered: Set[str] = set()
         reasons: List[str] = []
 
         # quick sanity
-        if anchor_node.op_type != "Slice":
-            return Match(False, self.name, covered, ["Not a Slice anchor"])
         if len(anchor_node.input) < 3:
             return Match(False, self.name, covered, ["Slice missing required inputs"])
 
@@ -1059,7 +1038,7 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
         return prev_end == dim
 
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
-    "Add": [AddQuantSameParams()],
+    "Add": [AddQuant()],
     "Concat": [ConcatQuantSameParamsAxis1()],
     "Flatten": [FlattenFCOnly()],
     "Reshape": [ReshapeFCOnly()],
@@ -1218,10 +1197,18 @@ class SupportedPartition(Transformation):
         name_to_node: Dict[str, object] = {n.name: n for n in graph.node}
 
         # Helper: iterate direct successor names (safe if wrapper returns None)
+        # build once at top of __detect_convexity_violations
+        succ_cache: Dict[str, List[str]] = {}
+
         def succ_names(node_name: str) -> List[str]:
-            node = name_to_node[node_name]
-            succs = model.find_direct_successors(node) or []
-            return [s.name for s in succs if s is not None]
+            try:
+                return succ_cache[node_name]
+            except KeyError:
+                node = name_to_node[node_name]
+                succs = model.find_direct_successors(node) or []
+                out = [s.name for s in succs if s is not None]
+                succ_cache[node_name] = out
+                return out
 
         violations: List[Tuple[str, str, List[str]]] = []
         seen_pairs: Set[Tuple[str, str]] = set()
@@ -1295,7 +1282,6 @@ class SupportedPartition(Transformation):
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
         
-        logger.info(fpga_nodes)
         fpga_nodes = self.__repair_convexity_remove_reentries(model, fpga_nodes)
 
         # Build adjacency list between FPGA nodes
@@ -1333,8 +1319,6 @@ class SupportedPartition(Transformation):
         largest_component = max(components, key=len, default=set())
         logger.info(f"Found {len(components)} connected components among FPGA-supported nodes.")
         logger.info(f"Largest component has {len(largest_component)} nodes.")
-        for node in largest_component:
-            logger.info(f"  FPGA node: {node}")
         return largest_component
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
