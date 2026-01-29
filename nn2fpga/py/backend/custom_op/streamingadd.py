@@ -151,12 +151,12 @@ class StreamingAdd(NN2FPGAOp):
         align_b = int(np.log2(input_quantB.scale / common_scale))
 
         if align_a != 0:
-            alignA = f"DequantQuantPo2<{align_a}, {get_hls_quant_type(input_quantA)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
+            alignA = f"DequantQuantPo2<{-align_a}, {get_hls_quant_type(input_quantA)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
             alignA = f"DequantQuantEqual<{get_hls_quant_type(input_quantA)}>"
 
         if align_b != 0:
-            alignB = f"DequantQuantPo2<{align_b}, {get_hls_quant_type(input_quantB)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
+            alignB = f"DequantQuantPo2<{-align_b}, {get_hls_quant_type(input_quantB)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
             alignB = f"DequantQuantEqual<{get_hls_quant_type(input_quantB)}>"
 
@@ -165,13 +165,15 @@ class StreamingAdd(NN2FPGAOp):
     def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
         """ Returns the quantizer type for the Add operation. """
 
+
         if (
             self.__is_power_of_two(input_quantA.scale)
             and self.__is_power_of_two(input_quantB.scale)
             and self.__is_power_of_two(output_quant.scale)
         ):
+            common_scale = min(input_quantA.scale, input_quantB.scale)
             shift = -1 * (
-                int(np.log2(input_quantA.scale))
+                int(np.log2(common_scale))
                 - int(np.log2(output_quant.scale))
             )
             return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quantA, input_quantB)}, {get_hls_quant_type(output_quant)}>"
