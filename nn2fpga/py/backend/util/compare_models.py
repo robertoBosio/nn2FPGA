@@ -2,6 +2,7 @@ import numpy as np
 import qonnx.core.onnx_exec as oxe
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import TensorProto
+from typing import List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -80,12 +81,13 @@ def report_error_stats(output_name: str, expected_output: np.ndarray, produced_o
         logger.info(f" {rank:2d}. idx={idx}, error={val}, expected={exp_val}, produced={prod_val}")
     logger.info("=" * 50)
 
-def test_transformation_equivalence(model_pre: ModelWrapper, model_post: ModelWrapper):
+def test_transformation_equivalence(model_pre: ModelWrapper, model_post: ModelWrapper, intermediate_tensors: List[Tuple[str, str]] = []):
     """
     Test if the outputs of two ONNX models are equivalent given the same random input.
     Args:
         model_pre (ModelWrapper): The original ONNX model before transformation.
         model_post (ModelWrapper): The transformed ONNX model after transformation.
+        intermediate_tensors (List[Tuple[str, str]]): List of tuples containing names of intermediate tensors to compare between the two models.
     """
     input_dict = generate_random_input(model_pre)
     output_names = get_output_names(model_pre)
@@ -99,3 +101,11 @@ def test_transformation_equivalence(model_pre: ModelWrapper, model_post: ModelWr
         assert name in out_expected and name in out_produced, f"Missing output: {name}"
         assert flattened_expected.shape == flattened_produced.shape, f"Shape mismatch for: {name}"
         report_error_stats(name, flattened_expected, flattened_produced)
+    
+    for post_name, pre_name in intermediate_tensors:
+        assert post_name in out_produced, f"Missing output tensor in produced model: {post_name}"
+        assert pre_name in out_expected, f"Missing output tensor in expected model: {pre_name}"
+        flattened_expected = out_expected[pre_name].flatten()
+        flattened_produced = out_produced[post_name].flatten()
+        report_error_stats(f"{post_name} vs {pre_name}", flattened_expected, flattened_produced)
+    
