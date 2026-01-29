@@ -32,6 +32,7 @@ def patch_qonnx_ops():
     import tempfile
 
     original_partition_from_lambda_apply = PartitionFromLambda.apply
+    original_rename_tensor = ModelWrapper.rename_tensor
 
     def custom_partition_from_lambda_apply(self, model: ModelWrapper):
         original_nodes = list(model.graph.node)
@@ -129,9 +130,6 @@ def patch_qonnx_ops():
                     p_model.graph.value_info.remove(o)
             
             # Build the accelerator package input/output maps
-            # It is fundamental to maintain consistency between the maps and the inputs/outputs names
-            # in the partition model. We use the same name convention as qonnx's GiveReadableTensorNames
-            # transformation, i.e. global_in and global_out.
             index = 0
             ap_input_map = {}
             for i, input in enumerate(p_model.graph.input):
@@ -140,9 +138,8 @@ def patch_qonnx_ops():
                     raise ValueError(
                         f"Partition input {input.name} does not have a consumer."
                     )
-                new_name = f"global_in" if i == 0 else f"global_in_{i}"
                 ap_input_map[input.name] = {
-                    "new_name": new_name,
+                    "new_name": input.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(input.name),
                     "quant": None,
@@ -167,9 +164,8 @@ def patch_qonnx_ops():
                     raise ValueError(
                         f"Partition output {output.name} does not have a producer."
                     )
-                new_name = f"global_out" if i == 0 else f"global_out_{i}"
                 ap_output_map[output.name] = {
-                    "new_name": new_name,
+                    "new_name": output.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(output.name),
                     "quant": None,
@@ -185,6 +181,8 @@ def patch_qonnx_ops():
                         f"Partition output {output.name} is not quantized."
                     )
                 index += 1
+            
+            print(f"Create accelerator package with inputs: {list(ap_input_map.keys())} and outputs: {list(ap_output_map.keys())}")
 
             # Create the accelerator package
             ap = AcceleratorPackage(
@@ -221,4 +219,22 @@ def patch_qonnx_ops():
 
         return (model, False)
 
+    def custom_rename_tensor(self, old_name: str, new_name: str):
+        # call original
+        original_rename_tensor(self, old_name, new_name)
+        # additionally rename in accelerator package if present
+        ap_json = self.get_metadata_prop("accelerator_package")
+        if ap_json is not None:
+            ap = AcceleratorPackage.from_json(ap_json)
+            for val in ap.input_map.values():
+                if val["new_name"] == old_name:
+                    val["new_name"] = new_name
+                    break
+            for val in ap.output_map.values():
+                if val["new_name"] == old_name:
+                    val["new_name"] = new_name
+                    break
+            self.set_metadata_prop("accelerator_package", ap.to_json())
+
     PartitionFromLambda.apply = custom_partition_from_lambda_apply
+    ModelWrapper.rename_tensor = custom_rename_tensor
