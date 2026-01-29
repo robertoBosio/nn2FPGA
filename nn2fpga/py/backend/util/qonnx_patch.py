@@ -181,8 +181,6 @@ def patch_qonnx_ops():
                         f"Partition output {output.name} is not quantized."
                     )
                 index += 1
-            
-            print(f"Create accelerator package with inputs: {list(ap_input_map.keys())} and outputs: {list(ap_output_map.keys())}")
 
             # Create the accelerator package
             ap = AcceleratorPackage(
