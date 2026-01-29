@@ -17,3 +17,11 @@ nn2fpga/.run/
 nn2fpga/.ipcache/
 .docker_bash_history
 .docker_home*
+
+#pytest 
+nn2fpga/proj_unit_test/
+
+reports/
+
+# config files
+*.toml
