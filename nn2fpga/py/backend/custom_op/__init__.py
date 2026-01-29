@@ -17,6 +17,7 @@ from backend.custom_op.streamingmemory import StreamingMemory
 from backend.custom_op.streamingmul import StreamingMul
 from backend.custom_op.streamingrelu import StreamingReLU
 from backend.custom_op.streamingsigmoid import StreamingSigmoid
+from backend.custom_op.streamingsplit import StreamingSplit
 from backend.custom_op.streamingupsample import StreamingUpsample
 from backend.custom_op.streamtonhwc import StreamToNHWC
 from backend.custom_op.tensorduplicator import TensorDuplicator
@@ -41,6 +42,7 @@ custom_op = {
     "StreamingMul": StreamingMul,
     "StreamingReLU": StreamingReLU,
     "StreamingSigmoid": StreamingSigmoid,
+    "StreamingSplit": StreamingSplit,
     "StreamingUpsample": StreamingUpsample,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
