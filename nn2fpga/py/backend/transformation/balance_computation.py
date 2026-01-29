@@ -665,11 +665,10 @@ def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
     
     # Retrieving the NHWCToStream nodes to propagate the parallelism.
     queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
-    mark_visited = set()
+    mark_visited = {node.name for node in queue}
 
     while queue:
         node = queue.popleft()
-        mark_visited.add(node.name)
 
         # Creating the propagation interface.
         interface = getCustomOp(node).get_port_interface()
@@ -685,6 +684,7 @@ def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
                 if consumer.name not in mark_visited:
                 # If the consumer is not already visited, add it to the queue.
                     queue.append(consumer)
+                    mark_visited.add(consumer.name)
             
     return model
 
