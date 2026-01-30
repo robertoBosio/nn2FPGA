@@ -39,6 +39,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     cwr.include("hls_stream.h")
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
+    cwr.include("<chrono>")
 
     # Include files from the nn2FPGA library
     nn2fpga_include_dir = "/workspace/NN2FPGA/nn2fpga/library/include"
@@ -55,6 +56,9 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
 
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
+    
+    # Record start time
+    function.add_code("auto start_time = std::chrono::high_resolution_clock::now();")
 
     stream_vars = []
     stream_count = len(model.graph.value_info)
@@ -228,6 +232,8 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
 
     # Add the final code to save the json report.
     function.add_code("done_simulation:")
+    function.add_code("auto end_time = std::chrono::high_resolution_clock::now();")
+    function.add_code("auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();")
     function.add_code(f"std::ofstream report_file(\"{work_root}/fifo_depth.json\");")
     function.add_code("report_file << \"{\\n\";")
     function.add_code("report_file << \"\t\\\"fifo_depth\\\": {\\n\";")
@@ -244,7 +250,8 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
 
     function.add_code("report_file << \"\t},\\n\";")
     function.add_code("report_file << \"\t\\\"Simulation cycles\\\": \" << clock_cycle << \",\\n\";")
-    function.add_code("report_file << \"\t\\\"II\\\": \" << actual_II << \"\\n\";")
+    function.add_code("report_file << \"\t\\\"II\\\": \" << actual_II << \",\\n\";")
+    function.add_code("report_file << \"\t\\\"Simulation time (ms)\\\": \" << duration << \"\\n\";")
     function.add_code("report_file << \"}\\n\";")
     function.add_code("report_file.close();")
     cwr.add_function_definition(function)
@@ -265,7 +272,6 @@ def generate_hls_driver(model: ModelWrapper) -> str:
     cwr.include("hls_stream.h")
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
-    cwr.include("<chrono>")
 
     # Accelerator kernel function definition
     kernel_function = cpp_function(
@@ -283,16 +289,9 @@ def generate_hls_driver(model: ModelWrapper) -> str:
         return_type="int",
         arguments=[cpp_variable("argc", "int"), cpp_variable("argv", "char**")],
     )
-    
-    # Record start time
-    main_function.add_code("auto start_time = std::chrono::high_resolution_clock::now();")
 
     # Add the kernel function call
     main_function.add_code(f"{kernel_function.generate_call()};")
-    main_function.add_code("auto end_time = std::chrono::high_resolution_clock::now();")
-    main_function.add_code("auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();")
-    main_function.add_code('std::cout << "Simulation time: " << duration << " ms" << std::endl;')
-
 
     main_function.add_code("return 0;")
     cwr.add_function_definition(main_function)
