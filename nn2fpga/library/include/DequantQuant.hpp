@@ -63,10 +63,12 @@ private:
 
   static TOut run(TAcc acc, std::false_type) {
     constexpr int L = (-Shift); // left shift amount (>= 0)
+    constexpr bool need_signed =
+        is_ap_signed<TAcc>::value || is_ap_signed<TOut>::value;
 
     // Widen enough to prevent wrap-around during the shift.
     // For signed, add +1 for sign growth safety.
-    using TWide = typename std::conditional<is_ap_signed<TAcc>::value,
+    using TWide = typename std::conditional<need_signed,
                                             ap_int<TAcc::width + L + 1>,
                                             ap_uint<TAcc::width + L>>::type;
 

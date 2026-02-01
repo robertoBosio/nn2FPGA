@@ -239,7 +239,6 @@ class TestDequantQuant(BaseHLSTest):
             hls_steps,
         )
 
-
     def test_clip_signed_negative_shift_min_limit_bug_near_boundary(self, hls_steps):
         # -2 << 6 = -128 exactly. This should produce -128 (no wrap/clip ambiguity).
         # With an incorrect positive min limit (+128), comparisons against "min" are broken,
@@ -251,6 +250,21 @@ class TestDequantQuant(BaseHLSTest):
             "INPUT": -2,
             "EXPECTED": -128,
             "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_unsigned_to_signed_no_shift(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 14,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 0,
+            "INPUT": 3,
+            "EXPECTED": 3,
+            "ACC_SIGNED": 0,
             "OUT_SIGNED": 1,
         }
         self.run(
