@@ -77,6 +77,7 @@ def nn2fpga_compile(config_dict: dict):
     model = model.transform(GiveUniqueParameterTensors())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
+    original_model = model
 
     # Propagate quantization through quantization invariant nodes.
     model = model.transform(transformation.SplitConcat())
@@ -86,15 +87,17 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = model.transform(transformation.SupportedPartition(config_dict["prj_root"]))
 
     # Insert custom nodes.
+    nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveSqueeze())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
+    nn2fpga_model.save("after_custom_nodes.onnx")
 
     # Handle quantization.
-    # nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
+    nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
@@ -129,6 +132,7 @@ def nn2fpga_compile(config_dict: dict):
 
     # Simulate the model to check if it works.
     model.save("wrapper_model.onnx")
+    model = ModelWrapper("wrapper_model.onnx")
     test_transformation_equivalence(original_model, model)
     model = model.transform(transformation.GenerateBitstream(work_dir=config_dict["prj_root"], already_exported=False, only_synthesize=False))
     model.save("bitstream_generated.onnx")
