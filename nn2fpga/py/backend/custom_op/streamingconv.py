@@ -596,10 +596,10 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
 
-        name = f"{self.onnx_node.name}.run_allpartitioned" if hls_tag == 51 else f"{self.onnx_node.name}.run"
+        # name = f"{self.onnx_node.name}.run_allpartitioned" if hls_tag == 51 else f"{self.onnx_node.name}.run"
         # Generate the call to the StreamingConv run method.
         run = cpp_function(
-            name=name,
+            name=f"{self.onnx_node.name}.run",
             return_type="void",
             arguments=(
                 (
@@ -989,7 +989,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                         continue
 
                     # Heuristic to spread unrolling across dimensions
-                    if (width_unroll > 4 or out_channel_unroll > 20 or in_channel_unroll > 20):
+                    if (width_unroll > 4 or out_channel_unroll > 5 or in_channel_unroll > 40):
                         continue
 
                     DSE_points.append(
