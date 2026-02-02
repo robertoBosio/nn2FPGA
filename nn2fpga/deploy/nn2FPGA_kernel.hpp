@@ -147,12 +147,12 @@ public:
       const auto &pd = Spec::Inputs[i];
       if (pd.mode == PortMode::StaticInit)
         continue; // already uploaded
-      if (!tx_[i]->wait_done(20))
+      if (!tx_[i]->wait_done(200))
         throw std::runtime_error("MM2S timeout on input port " + std::to_string(i));
     }
     // Wait outputs to complete
     for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
-      if (!rx_[o]->wait_done(20, static_cast<int>(batch)))
+      if (!rx_[o]->wait_done(200, static_cast<int>(batch)))
         throw std::runtime_error("S2MM timeout on output port " + std::to_string(o));
     }
 
@@ -241,9 +241,10 @@ private:
       in_bos_[i].sync(XCL_BO_SYNC_BO_TO_DEVICE, size, 0);
 
       tx_[i]->transfer(size, 0);
-      if (!tx_[i]->wait_done(20)) {
+      if (!tx_[i]->wait_done(200)) {
         throw std::runtime_error("MM2S timeout during static upload on port " +
-                                 std::to_string(i));
+                                 std::to_string(i) + " with name " +
+                                 entry.at("new_name").get<std::string>());
       }
     }
   }
