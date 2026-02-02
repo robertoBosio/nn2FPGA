@@ -359,7 +359,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated DSP usage.
         """
-        return 0
+        
+        # It is not actually using any DSPs, but we need to force the DSE to
+        # to choose lower unrolling factors to reduce resource usage.
+        point = self.__current_dse_point()
+        return (point.channel_unroll * point.width_unroll)
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingMaxPool.DSEPoint"]:
         """ Generate the DSE points for the StreamingMaxPool operation.
