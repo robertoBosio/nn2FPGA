@@ -1,2155 +1,0 @@
-pytorch2.1.0:™¼
-¦
-x.1
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0G/features/features.0/input_quant/export_handler/QuantizeLinear_output_0>/features/features.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ğ
-G/features/features.0/input_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.0/input_quant/export_handler/DequantizeLinear_output_0@/features/features.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-features.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.0/weight_quant/export_handler/QuantizeLinear_output_0?/features/features.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ó
-H/features/features.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0>/features/features.0/weight_quant/export_handler/Clip_output_05/features/features.0/weight_quant/export_handler/Clip"Clip
-ê
->/features/features.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.0/weight_quant/export_handler/DequantizeLinear_output_0A/features/features.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-I/features/features.0/input_quant/export_handler/DequantizeLinear_output_0
-J/features/features.0/weight_quant/export_handler/DequantizeLinear_output_0"/features/features.0/Conv_output_0/features/features.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-È
-"/features/features.0/Conv_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.0/output_quant/export_handler/QuantizeLinear_output_0?/features/features.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.0/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.0/output_quant/export_handler/DequantizeLinear_output_0A/features/features.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-J/features/features.0/output_quant/export_handler/DequantizeLinear_output_0
-features.1.weight
-features.1.bias
-features.1.running_mean
-features.1.running_var0/features/features.1/BatchNormalization_output_0'/features/features.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-«
-0/features/features.1/BatchNormalization_output_0</features/features.2/act_quant/activation_impl/Relu_output_03/features/features.2/act_quant/activation_impl/Relu"Relu
-×
-</features/features.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0E/features/features.2/act_quant/export_handler/QuantizeLinear_output_0</features/features.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-æ
-E/features/features.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0G/features/features.2/act_quant/export_handler/DequantizeLinear_output_0>/features/features.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-ë
-G/features/features.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0G/features/features.3/input_quant/export_handler/QuantizeLinear_output_0>/features/features.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ñ
-G/features/features.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.3/input_quant/export_handler/DequantizeLinear_output_0@/features/features.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-features.3.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.3/weight_quant/export_handler/QuantizeLinear_output_0?/features/features.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ó
-H/features/features.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0>/features/features.3/weight_quant/export_handler/Clip_output_05/features/features.3/weight_quant/export_handler/Clip"Clip
-ê
->/features/features.3/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.3/weight_quant/export_handler/DequantizeLinear_output_0A/features/features.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-I/features/features.3/input_quant/export_handler/DequantizeLinear_output_0
-J/features/features.3/weight_quant/export_handler/DequantizeLinear_output_0"/features/features.3/Conv_output_0/features/features.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-È
-"/features/features.3/Conv_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.3/output_quant/export_handler/QuantizeLinear_output_0?/features/features.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.3/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.3/output_quant/export_handler/DequantizeLinear_output_0A/features/features.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-J/features/features.3/output_quant/export_handler/DequantizeLinear_output_0
-features.4.weight
-features.4.bias
-features.4.running_mean
-features.4.running_var0/features/features.4/BatchNormalization_output_0'/features/features.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-«
-0/features/features.4/BatchNormalization_output_0</features/features.5/act_quant/activation_impl/Relu_output_03/features/features.5/act_quant/activation_impl/Relu"Relu
-×
-</features/features.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0E/features/features.5/act_quant/export_handler/QuantizeLinear_output_0</features/features.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-æ
-E/features/features.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0G/features/features.5/act_quant/export_handler/DequantizeLinear_output_0>/features/features.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-ë
-G/features/features.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0G/features/features.6/input_quant/export_handler/QuantizeLinear_output_0>/features/features.6/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ñ
-G/features/features.6/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.6/input_quant/export_handler/DequantizeLinear_output_0@/features/features.6/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-features.6.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.6/weight_quant/export_handler/QuantizeLinear_output_0?/features/features.6/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ó
-H/features/features.6/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0>/features/features.6/weight_quant/export_handler/Clip_output_05/features/features.6/weight_quant/export_handler/Clip"Clip
-ê
->/features/features.6/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.6/weight_quant/export_handler/DequantizeLinear_output_0A/features/features.6/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-I/features/features.6/input_quant/export_handler/DequantizeLinear_output_0
-J/features/features.6/weight_quant/export_handler/DequantizeLinear_output_0"/features/features.6/Conv_output_0/features/features.6/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-È
-"/features/features.6/Conv_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.6/output_quant/export_handler/QuantizeLinear_output_0?/features/features.6/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.6/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.6/output_quant/export_handler/DequantizeLinear_output_0A/features/features.6/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-J/features/features.6/output_quant/export_handler/DequantizeLinear_output_0
-features.7.weight
-features.7.bias
-features.7.running_mean
-features.7.running_var0/features/features.7/BatchNormalization_output_0'/features/features.7/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-«
-0/features/features.7/BatchNormalization_output_0</features/features.8/act_quant/activation_impl/Relu_output_03/features/features.8/act_quant/activation_impl/Relu"Relu
-×
-</features/features.8/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0E/features/features.8/act_quant/export_handler/QuantizeLinear_output_0</features/features.8/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-æ
-E/features/features.8/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0G/features/features.8/act_quant/export_handler/DequantizeLinear_output_0>/features/features.8/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-ë
-G/features/features.8/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0G/features/features.9/input_quant/export_handler/QuantizeLinear_output_0>/features/features.9/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ñ
-G/features/features.9/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.9/input_quant/export_handler/DequantizeLinear_output_0@/features/features.9/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-·
-features.9.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.9/weight_quant/export_handler/QuantizeLinear_output_0?/features/features.9/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ó
-H/features/features.9/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0>/features/features.9/weight_quant/export_handler/Clip_output_05/features/features.9/weight_quant/export_handler/Clip"Clip
-ê
->/features/features.9/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.9/weight_quant/export_handler/DequantizeLinear_output_0A/features/features.9/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-I/features/features.9/input_quant/export_handler/DequantizeLinear_output_0
-J/features/features.9/weight_quant/export_handler/DequantizeLinear_output_0"/features/features.9/Conv_output_0/features/features.9/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-È
-"/features/features.9/Conv_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.9/output_quant/export_handler/QuantizeLinear_output_0?/features/features.9/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.9/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.9/output_quant/export_handler/DequantizeLinear_output_0A/features/features.9/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-½
-J/features/features.9/output_quant/export_handler/DequantizeLinear_output_0
-features.10.weight
-features.10.bias
-features.10.running_mean
-features.10.running_var1/features/features.10/BatchNormalization_output_0(/features/features.10/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.10/BatchNormalization_output_0=/features/features.11/act_quant/activation_impl/Relu_output_04/features/features.11/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.11/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.11/act_quant/export_handler/QuantizeLinear_output_0=/features/features.11/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.11/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.11/act_quant/export_handler/DequantizeLinear_output_0?/features/features.11/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.11/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.12/input_quant/export_handler/QuantizeLinear_output_0?/features/features.12/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.12/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.12/input_quant/export_handler/DequantizeLinear_output_0A/features/features.12/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.12.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.12/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.12/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.12/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.12/weight_quant/export_handler/Clip_output_06/features/features.12/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.12/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.12/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.12/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.12/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.12/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.12/Conv_output_0/features/features.12/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-Ë
-#/features/features.12/Conv_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.12/output_quant/export_handler/QuantizeLinear_output_0@/features/features.12/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-÷
-I/features/features.12/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.12/output_quant/export_handler/DequantizeLinear_output_0B/features/features.12/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.12/output_quant/export_handler/DequantizeLinear_output_0
-features.13.weight
-features.13.bias
-features.13.running_mean
-features.13.running_var1/features/features.13/BatchNormalization_output_0(/features/features.13/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.13/BatchNormalization_output_0=/features/features.14/act_quant/activation_impl/Relu_output_04/features/features.14/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.14/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.14/act_quant/export_handler/QuantizeLinear_output_0=/features/features.14/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.14/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.14/act_quant/export_handler/DequantizeLinear_output_0?/features/features.14/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.14/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.15/input_quant/export_handler/QuantizeLinear_output_0?/features/features.15/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.15/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.15/input_quant/export_handler/DequantizeLinear_output_0A/features/features.15/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.15.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.15/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.15/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.15/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.15/weight_quant/export_handler/Clip_output_06/features/features.15/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.15/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.15/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.15/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.15/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.15/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.15/Conv_output_0/features/features.15/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-Ë
-#/features/features.15/Conv_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.15/output_quant/export_handler/QuantizeLinear_output_0@/features/features.15/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-÷
-I/features/features.15/output_quant/export_handler/QuantizeLinear_output_0
-B/features/features.9/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.15/output_quant/export_handler/DequantizeLinear_output_0B/features/features.15/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.15/output_quant/export_handler/DequantizeLinear_output_0
-features.16.weight
-features.16.bias
-features.16.running_mean
-features.16.running_var1/features/features.16/BatchNormalization_output_0(/features/features.16/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.16/BatchNormalization_output_0=/features/features.17/act_quant/activation_impl/Relu_output_04/features/features.17/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.17/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.17/act_quant/export_handler/QuantizeLinear_output_0=/features/features.17/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.17/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.17/act_quant/export_handler/DequantizeLinear_output_0?/features/features.17/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.17/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.18/input_quant/export_handler/QuantizeLinear_output_0?/features/features.18/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.18/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.18/input_quant/export_handler/DequantizeLinear_output_0A/features/features.18/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.18.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.18/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.18/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.18/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.18/weight_quant/export_handler/Clip_output_06/features/features.18/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.18/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.18/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.18/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.18/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.18/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.18/Conv_output_0/features/features.18/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-Ì
-#/features/features.18/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.18/output_quant/export_handler/QuantizeLinear_output_0@/features/features.18/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ø
-I/features/features.18/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.18/output_quant/export_handler/DequantizeLinear_output_0B/features/features.18/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.18/output_quant/export_handler/DequantizeLinear_output_0
-features.19.weight
-features.19.bias
-features.19.running_mean
-features.19.running_var1/features/features.19/BatchNormalization_output_0(/features/features.19/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.19/BatchNormalization_output_0=/features/features.20/act_quant/activation_impl/Relu_output_04/features/features.20/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.20/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.20/act_quant/export_handler/QuantizeLinear_output_0=/features/features.20/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.20/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.20/act_quant/export_handler/DequantizeLinear_output_0?/features/features.20/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.20/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.21/input_quant/export_handler/QuantizeLinear_output_0?/features/features.21/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.21/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.21/input_quant/export_handler/DequantizeLinear_output_0A/features/features.21/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.21.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.21/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.21/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.21/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.21/weight_quant/export_handler/Clip_output_06/features/features.21/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.21/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.21/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.21/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.21/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.21/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.21/Conv_output_0/features/features.21/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-Ì
-#/features/features.21/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.21/output_quant/export_handler/QuantizeLinear_output_0@/features/features.21/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ø
-I/features/features.21/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.21/output_quant/export_handler/DequantizeLinear_output_0B/features/features.21/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.21/output_quant/export_handler/DequantizeLinear_output_0
-features.22.weight
-features.22.bias
-features.22.running_mean
-features.22.running_var1/features/features.22/BatchNormalization_output_0(/features/features.22/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.22/BatchNormalization_output_0=/features/features.23/act_quant/activation_impl/Relu_output_04/features/features.23/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.23/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.23/act_quant/export_handler/QuantizeLinear_output_0=/features/features.23/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.23/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.23/act_quant/export_handler/DequantizeLinear_output_0?/features/features.23/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.23/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.24/input_quant/export_handler/QuantizeLinear_output_0?/features/features.24/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.24/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.24/input_quant/export_handler/DequantizeLinear_output_0A/features/features.24/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.24.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.24/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.24/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.24/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.24/weight_quant/export_handler/Clip_output_06/features/features.24/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.24/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.24/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.24/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.24/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.24/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.24/Conv_output_0/features/features.24/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-Ì
-#/features/features.24/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.24/output_quant/export_handler/QuantizeLinear_output_0@/features/features.24/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ø
-I/features/features.24/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.24/output_quant/export_handler/DequantizeLinear_output_0B/features/features.24/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.24/output_quant/export_handler/DequantizeLinear_output_0
-features.25.weight
-features.25.bias
-features.25.running_mean
-features.25.running_var1/features/features.25/BatchNormalization_output_0(/features/features.25/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.25/BatchNormalization_output_0=/features/features.26/act_quant/activation_impl/Relu_output_04/features/features.26/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.26/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.26/act_quant/export_handler/QuantizeLinear_output_0=/features/features.26/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.26/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.26/act_quant/export_handler/DequantizeLinear_output_0?/features/features.26/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-Š
-H/features/features.26/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.27/features.27.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.27/features.27.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.27/features.27.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.27/features.27.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.27/features.27.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.27.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.27/features.27.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.27/features.27.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.27/features.27.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.27/features.27.0/weight_quant/export_handler/Clip_output_0D/features/features.27/features.27.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.27/features.27.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.27/features.27.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.27/features.27.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.27/features.27.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.27/features.27.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.27/features.27.0/Conv_output_0(/features/features.27/features.27.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.27/features.27.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.27/features.27.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.27/features.27.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.27/features.27.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.27/features.27.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.27/features.27.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.27/features.27.0/output_quant/export_handler/DequantizeLinear_output_0
-features.27.1.weight
-features.27.1.bias
-features.27.1.running_mean
-features.27.1.running_var?/features/features.27/features.27.1/BatchNormalization_output_06/features/features.27/features.27.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.27/features.27.1/BatchNormalization_output_0K/features/features.27/features.27.2/act_quant/activation_impl/Relu_output_0B/features/features.27/features.27.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.27/features.27.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.27/features.27.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.27/features.27.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.27/features.27.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.27/features.27.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.27/features.27.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.27/features.27.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.27/features.27.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.27/features.27.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.27/features.27.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.27/features.27.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.27/features.27.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.27.3.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.27/features.27.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.27/features.27.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.27/features.27.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.27/features.27.3/weight_quant/export_handler/Clip_output_0D/features/features.27/features.27.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.27/features.27.3/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.27/features.27.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.27/features.27.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.27/features.27.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.27/features.27.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.27/features.27.3/Conv_output_0(/features/features.27/features.27.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.27/features.27.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.27/features.27.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.27/features.27.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.27/features.27.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.27/features.27.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.27/features.27.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.27/features.27.3/output_quant/export_handler/DequantizeLinear_output_0
-features.27.4.weight
-features.27.4.bias
-features.27.4.running_mean
-features.27.4.running_var?/features/features.27/features.27.4/BatchNormalization_output_06/features/features.27/features.27.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.27/features.27.4/BatchNormalization_output_0K/features/features.27/features.27.5/act_quant/activation_impl/Relu_output_0B/features/features.27/features.27.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.27/features.27.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.27/features.27.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.27/features.27.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.27/features.27.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.27/features.27.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.27/features.27.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.27/features.27.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.28/features.28.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.28/features.28.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.28/features.28.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.28/features.28.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.28/features.28.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.28.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.28/features.28.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.28/features.28.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.28/features.28.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.28/features.28.0/weight_quant/export_handler/Clip_output_0D/features/features.28/features.28.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.28/features.28.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.28/features.28.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.28/features.28.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.28/features.28.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.28/features.28.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.28/features.28.0/Conv_output_0(/features/features.28/features.28.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.28/features.28.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.28/features.28.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.28/features.28.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.28/features.28.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.28/features.28.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.28/features.28.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.28/features.28.0/output_quant/export_handler/DequantizeLinear_output_0
-features.28.1.weight
-features.28.1.bias
-features.28.1.running_mean
-features.28.1.running_var?/features/features.28/features.28.1/BatchNormalization_output_06/features/features.28/features.28.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.28/features.28.1/BatchNormalization_output_0K/features/features.28/features.28.2/act_quant/activation_impl/Relu_output_0B/features/features.28/features.28.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.28/features.28.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.28/features.28.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.28/features.28.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.28/features.28.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.28/features.28.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.28/features.28.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.28/features.28.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.28/features.28.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.28/features.28.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.28/features.28.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.28/features.28.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.28/features.28.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.28.3.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.28/features.28.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.28/features.28.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.28/features.28.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.28/features.28.3/weight_quant/export_handler/Clip_output_0D/features/features.28/features.28.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.28/features.28.3/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.28/features.28.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.28/features.28.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.28/features.28.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.28/features.28.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.28/features.28.3/Conv_output_0(/features/features.28/features.28.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.28/features.28.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.28/features.28.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.28/features.28.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.28/features.28.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.28/features.28.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.28/features.28.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.28/features.28.3/output_quant/export_handler/DequantizeLinear_output_0
-features.28.4.weight
-features.28.4.bias
-features.28.4.running_mean
-features.28.4.running_var?/features/features.28/features.28.4/BatchNormalization_output_06/features/features.28/features.28.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.28/features.28.4/BatchNormalization_output_0K/features/features.28/features.28.5/act_quant/activation_impl/Relu_output_0B/features/features.28/features.28.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.28/features.28.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.28/features.28.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.28/features.28.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.28/features.28.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.28/features.28.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.28/features.28.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.28/features.28.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.29/features.29.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.29/features.29.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.29/features.29.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.29/features.29.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.29/features.29.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.29.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.29/features.29.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.29/features.29.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.29/features.29.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.29/features.29.0/weight_quant/export_handler/Clip_output_0D/features/features.29/features.29.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.29/features.29.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.29/features.29.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.29/features.29.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.29/features.29.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.29/features.29.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.29/features.29.0/Conv_output_0(/features/features.29/features.29.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.29/features.29.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.29/features.29.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.29/features.29.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.29/features.29.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.29/features.29.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.29/features.29.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.29/features.29.0/output_quant/export_handler/DequantizeLinear_output_0
-features.29.1.weight
-features.29.1.bias
-features.29.1.running_mean
-features.29.1.running_var?/features/features.29/features.29.1/BatchNormalization_output_06/features/features.29/features.29.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.29/features.29.1/BatchNormalization_output_0K/features/features.29/features.29.2/act_quant/activation_impl/Relu_output_0B/features/features.29/features.29.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.29/features.29.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.29/features.29.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.29/features.29.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.29/features.29.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.29/features.29.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.29/features.29.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.29/features.29.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.29/features.29.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.29/features.29.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.29/features.29.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.29/features.29.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.29/features.29.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.29.3.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.29/features.29.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.29/features.29.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.29/features.29.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.29/features.29.3/weight_quant/export_handler/Clip_output_0D/features/features.29/features.29.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.29/features.29.3/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.29/features.29.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.29/features.29.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.29/features.29.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.29/features.29.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.29/features.29.3/Conv_output_0(/features/features.29/features.29.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.29/features.29.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.29/features.29.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.29/features.29.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.29/features.29.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.29/features.29.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.29/features.29.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.29/features.29.3/output_quant/export_handler/DequantizeLinear_output_0
-features.29.4.weight
-features.29.4.bias
-features.29.4.running_mean
-features.29.4.running_var?/features/features.29/features.29.4/BatchNormalization_output_06/features/features.29/features.29.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.29/features.29.4/BatchNormalization_output_0K/features/features.29/features.29.5/act_quant/activation_impl/Relu_output_0B/features/features.29/features.29.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.29/features.29.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.29/features.29.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.29/features.29.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.29/features.29.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.29/features.29.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.29/features.29.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.29/features.29.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.30/features.30.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.30/features.30.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.30/features.30.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.30/features.30.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.30/features.30.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.30.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.30/features.30.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.30/features.30.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.30/features.30.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.30/features.30.0/weight_quant/export_handler/Clip_output_0D/features/features.30/features.30.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.30/features.30.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.30/features.30.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.30/features.30.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.30/features.30.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.30/features.30.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.30/features.30.0/Conv_output_0(/features/features.30/features.30.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.30/features.30.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.30/features.30.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.30/features.30.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.30/features.30.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.30/features.30.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.30/features.30.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.30/features.30.0/output_quant/export_handler/DequantizeLinear_output_0
-features.30.1.weight
-features.30.1.bias
-features.30.1.running_mean
-features.30.1.running_var?/features/features.30/features.30.1/BatchNormalization_output_06/features/features.30/features.30.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.30/features.30.1/BatchNormalization_output_0K/features/features.30/features.30.2/act_quant/activation_impl/Relu_output_0B/features/features.30/features.30.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.30/features.30.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.30/features.30.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.30/features.30.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.30/features.30.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.30/features.30.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.30/features.30.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.30/features.30.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.30/features.30.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.30/features.30.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.30/features.30.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.30/features.30.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.30/features.30.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.30.3.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.30/features.30.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.30/features.30.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.30/features.30.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.30/features.30.3/weight_quant/export_handler/Clip_output_0D/features/features.30/features.30.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.30/features.30.3/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.30/features.30.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.30/features.30.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.30/features.30.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.30/features.30.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.30/features.30.3/Conv_output_0(/features/features.30/features.30.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.30/features.30.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.30/features.30.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.30/features.30.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.30/features.30.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.30/features.30.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.30/features.30.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.30/features.30.3/output_quant/export_handler/DequantizeLinear_output_0
-features.30.4.weight
-features.30.4.bias
-features.30.4.running_mean
-features.30.4.running_var?/features/features.30/features.30.4/BatchNormalization_output_06/features/features.30/features.30.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.30/features.30.4/BatchNormalization_output_0K/features/features.30/features.30.5/act_quant/activation_impl/Relu_output_0B/features/features.30/features.30.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.30/features.30.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.30/features.30.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.30/features.30.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.30/features.30.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.30/features.30.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.30/features.30.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.30/features.30.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.31/features.31.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.31/features.31.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.31/features.31.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.31/features.31.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.31/features.31.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.31.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.31/features.31.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.31/features.31.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.31/features.31.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.31/features.31.0/weight_quant/export_handler/Clip_output_0D/features/features.31/features.31.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.31/features.31.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.31/features.31.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.31/features.31.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.31/features.31.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.31/features.31.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.31/features.31.0/Conv_output_0(/features/features.31/features.31.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.31/features.31.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.31/features.31.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.31/features.31.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.31/features.31.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.31/features.31.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.31/features.31.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.31/features.31.0/output_quant/export_handler/DequantizeLinear_output_0
-features.31.1.weight
-features.31.1.bias
-features.31.1.running_mean
-features.31.1.running_var?/features/features.31/features.31.1/BatchNormalization_output_06/features/features.31/features.31.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.31/features.31.1/BatchNormalization_output_0K/features/features.31/features.31.2/act_quant/activation_impl/Relu_output_0B/features/features.31/features.31.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.31/features.31.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.31/features.31.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.31/features.31.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.31/features.31.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.31/features.31.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.31/features.31.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.31/features.31.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.31/features.31.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.31/features.31.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.31/features.31.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.31/features.31.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.31/features.31.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.31.3.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.31/features.31.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.31/features.31.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.31/features.31.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.31/features.31.3/weight_quant/export_handler/Clip_output_0D/features/features.31/features.31.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.31/features.31.3/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.31/features.31.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.31/features.31.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.31/features.31.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.31/features.31.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.31/features.31.3/Conv_output_0(/features/features.31/features.31.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.31/features.31.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.31/features.31.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.31/features.31.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.31/features.31.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.31/features.31.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.31/features.31.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.31/features.31.3/output_quant/export_handler/DequantizeLinear_output_0
-features.31.4.weight
-features.31.4.bias
-features.31.4.running_mean
-features.31.4.running_var?/features/features.31/features.31.4/BatchNormalization_output_06/features/features.31/features.31.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.31/features.31.4/BatchNormalization_output_0K/features/features.31/features.31.5/act_quant/activation_impl/Relu_output_0B/features/features.31/features.31.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.31/features.31.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.31/features.31.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.31/features.31.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.31/features.31.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.31/features.31.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.31/features.31.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-ü
-V/features/features.31/features.31.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.32/input_quant/export_handler/QuantizeLinear_output_0?/features/features.32/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.32/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.32/input_quant/export_handler/DequantizeLinear_output_0A/features/features.32/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.32.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.32/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.32/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.32/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.32/weight_quant/export_handler/Clip_output_06/features/features.32/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.32/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.32/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.32/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.32/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.32/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.32/Conv_output_0/features/features.32/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-Ì
-#/features/features.32/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.32/output_quant/export_handler/QuantizeLinear_output_0@/features/features.32/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ø
-I/features/features.32/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.32/output_quant/export_handler/DequantizeLinear_output_0B/features/features.32/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.32/output_quant/export_handler/DequantizeLinear_output_0
-features.33.weight
-features.33.bias
-features.33.running_mean
-features.33.running_var1/features/features.33/BatchNormalization_output_0(/features/features.33/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.33/BatchNormalization_output_0=/features/features.34/act_quant/activation_impl/Relu_output_04/features/features.34/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.34/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.34/act_quant/export_handler/QuantizeLinear_output_0=/features/features.34/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.34/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.34/act_quant/export_handler/DequantizeLinear_output_0?/features/features.34/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-î
-H/features/features.34/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0H/features/features.35/input_quant/export_handler/QuantizeLinear_output_0?/features/features.35/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-ô
-H/features/features.35/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0J/features/features.35/input_quant/export_handler/DequantizeLinear_output_0A/features/features.35/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-º
-features.35.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.35/weight_quant/export_handler/QuantizeLinear_output_0@/features/features.35/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-Ö
-I/features/features.35/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0?/features/features.35/weight_quant/export_handler/Clip_output_06/features/features.35/weight_quant/export_handler/Clip"Clip
-í
-?/features/features.35/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.35/weight_quant/export_handler/DequantizeLinear_output_0B/features/features.35/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-J/features/features.35/input_quant/export_handler/DequantizeLinear_output_0
-K/features/features.35/weight_quant/export_handler/DequantizeLinear_output_0#/features/features.35/Conv_output_0/features/features.35/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-Ì
-#/features/features.35/Conv_output_0
-C/features/features.35/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0I/features/features.35/output_quant/export_handler/QuantizeLinear_output_0@/features/features.35/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-ø
-I/features/features.35/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.35/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/features/features.35/output_quant/export_handler/DequantizeLinear_output_0B/features/features.35/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-¾
-K/features/features.35/output_quant/export_handler/DequantizeLinear_output_0
-features.36.weight
-features.36.bias
-features.36.running_mean
-features.36.running_var1/features/features.36/BatchNormalization_output_0(/features/features.36/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-®
-1/features/features.36/BatchNormalization_output_0=/features/features.37/act_quant/activation_impl/Relu_output_04/features/features.37/act_quant/activation_impl/Relu"Relu
-Ú
-=/features/features.37/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0F/features/features.37/act_quant/export_handler/QuantizeLinear_output_0=/features/features.37/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-é
-F/features/features.37/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0H/features/features.37/act_quant/export_handler/DequantizeLinear_output_0?/features/features.37/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-Š
-H/features/features.37/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.38/features.38.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.38/features.38.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.38/features.38.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.38/features.38.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.38/features.38.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.38.0.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.38/features.38.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.38/features.38.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.38/features.38.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.38/features.38.0/weight_quant/export_handler/Clip_output_0D/features/features.38/features.38.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.38/features.38.0/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.38/features.38.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.38/features.38.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.38/features.38.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.38/features.38.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.38/features.38.0/Conv_output_0(/features/features.38/features.38.0/Conv"Conv*
-	dilations@@ *
-group0 *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.38/features.38.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.38/features.38.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.38/features.38.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.38/features.38.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.38/features.38.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.38/features.38.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.38/features.38.0/output_quant/export_handler/DequantizeLinear_output_0
-features.38.1.weight
-features.38.1.bias
-features.38.1.running_mean
-features.38.1.running_var?/features/features.38/features.38.1/BatchNormalization_output_06/features/features.38/features.38.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.38/features.38.1/BatchNormalization_output_0K/features/features.38/features.38.2/act_quant/activation_impl/Relu_output_0B/features/features.38/features.38.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.38/features.38.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.38/features.38.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.38/features.38.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.38/features.38.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.38/features.38.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.38/features.38.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.38/features.38.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.38/features.38.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.38/features.38.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.38/features.38.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.38/features.38.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.38/features.38.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.38.3.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.38/features.38.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.38/features.38.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.38/features.38.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.38/features.38.3/weight_quant/export_handler/Clip_output_0D/features/features.38/features.38.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.38/features.38.3/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.38/features.38.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.38/features.38.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.38/features.38.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.38/features.38.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.38/features.38.3/Conv_output_0(/features/features.38/features.38.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.38/features.38.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.38/features.38.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.38/features.38.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.38/features.38.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.38/features.38.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.38/features.38.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.38/features.38.3/output_quant/export_handler/DequantizeLinear_output_0
-features.38.4.weight
-features.38.4.bias
-features.38.4.running_mean
-features.38.4.running_var?/features/features.38/features.38.4/BatchNormalization_output_06/features/features.38/features.38.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.38/features.38.4/BatchNormalization_output_0K/features/features.38/features.38.5/act_quant/activation_impl/Relu_output_0B/features/features.38/features.38.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.38/features.38.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.38/features.38.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.38/features.38.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.38/features.38.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.38/features.38.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.38/features.38.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.38/features.38.5/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.39/features.39.0/input_quant/export_handler/QuantizeLinear_output_0M/features/features.39/features.39.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.39/features.39.0/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.39/features.39.0/input_quant/export_handler/DequantizeLinear_output_0O/features/features.39/features.39.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.39.0.weight
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.39/features.39.0/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.39/features.39.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.39/features.39.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.39/features.39.0/weight_quant/export_handler/Clip_output_0D/features/features.39/features.39.0/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.39/features.39.0/weight_quant/export_handler/Clip_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.39/features.39.0/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.39/features.39.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.39/features.39.0/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.39/features.39.0/weight_quant/export_handler/DequantizeLinear_output_01/features/features.39/features.39.0/Conv_output_0(/features/features.39/features.39.0/Conv"Conv*
-	dilations@@ *
-group0 *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-ö
-1/features/features.39/features.39.0/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.39/features.39.0/output_quant/export_handler/QuantizeLinear_output_0N/features/features.39/features.39.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.39/features.39.0/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.39/features.39.0/output_quant/export_handler/DequantizeLinear_output_0P/features/features.39/features.39.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.39/features.39.0/output_quant/export_handler/DequantizeLinear_output_0
-features.39.1.weight
-features.39.1.bias
-features.39.1.running_mean
-features.39.1.running_var?/features/features.39/features.39.1/BatchNormalization_output_06/features/features.39/features.39.1/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.39/features.39.1/BatchNormalization_output_0K/features/features.39/features.39.2/act_quant/activation_impl/Relu_output_0B/features/features.39/features.39.2/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.39/features.39.2/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.39/features.39.2/act_quant/export_handler/QuantizeLinear_output_0K/features/features.39/features.39.2/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.39/features.39.2/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.39/features.39.2/act_quant/export_handler/DequantizeLinear_output_0M/features/features.39/features.39.2/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-˜
-V/features/features.39/features.39.2/act_quant/export_handler/DequantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0V/features/features.39/features.39.3/input_quant/export_handler/QuantizeLinear_output_0M/features/features.39/features.39.3/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-
-V/features/features.39/features.39.3/input_quant/export_handler/QuantizeLinear_output_0
-B/features/features.6/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0X/features/features.39/features.39.3/input_quant/export_handler/DequantizeLinear_output_0O/features/features.39/features.39.3/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ø
-features.39.3.weight
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.39/features.39.3/weight_quant/export_handler/QuantizeLinear_output_0N/features/features.39/features.39.3/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-W/features/features.39/features.39.3/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0M/features/features.39/features.39.3/weight_quant/export_handler/Clip_output_0D/features/features.39/features.39.3/weight_quant/export_handler/Clip"Clip
-—
-M/features/features.39/features.39.3/weight_quant/export_handler/Clip_output_0
-B/features/features.0/weight_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.39/features.39.3/weight_quant/export_handler/DequantizeLinear_output_0P/features/features.39/features.39.3/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-ö
-X/features/features.39/features.39.3/input_quant/export_handler/DequantizeLinear_output_0
-Y/features/features.39/features.39.3/weight_quant/export_handler/DequantizeLinear_output_01/features/features.39/features.39.3/Conv_output_0(/features/features.39/features.39.3/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@ @ @ @  *
-strides@@ 
-ö
-1/features/features.39/features.39.3/Conv_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0W/features/features.39/features.39.3/output_quant/export_handler/QuantizeLinear_output_0N/features/features.39/features.39.3/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-¢
-W/features/features.39/features.39.3/output_quant/export_handler/QuantizeLinear_output_0
-C/features/features.18/output_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0Y/features/features.39/features.39.3/output_quant/export_handler/DequantizeLinear_output_0P/features/features.39/features.39.3/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-ğ
-Y/features/features.39/features.39.3/output_quant/export_handler/DequantizeLinear_output_0
-features.39.4.weight
-features.39.4.bias
-features.39.4.running_mean
-features.39.4.running_var?/features/features.39/features.39.4/BatchNormalization_output_06/features/features.39/features.39.4/BatchNormalization"BatchNormalization*
-epsilon¬Å'7 *
-momentumfff? 
-Ø
-?/features/features.39/features.39.4/BatchNormalization_output_0K/features/features.39/features.39.5/act_quant/activation_impl/Relu_output_0B/features/features.39/features.39.5/act_quant/activation_impl/Relu"Relu
-„
-K/features/features.39/features.39.5/act_quant/activation_impl/Relu_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0T/features/features.39/features.39.5/act_quant/export_handler/QuantizeLinear_output_0K/features/features.39/features.39.5/act_quant/export_handler/QuantizeLinear"QuantizeLinear
-“
-T/features/features.39/features.39.5/act_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-?/features/features.2/act_quant/export_handler/Constant_output_0V/features/features.39/features.39.5/act_quant/export_handler/DequantizeLinear_output_0M/features/features.39/features.39.5/act_quant/export_handler/DequantizeLinear"DequantizeLinear
-Æ
-V/features/features.39/features.39.5/act_quant/export_handler/DequantizeLinear_output_00/features/features.40/GlobalAveragePool_output_0'/features/features.40/GlobalAveragePool"GlobalAveragePool
-ß
-0/features/features.40/GlobalAveragePool_output_0
-E/classifier/classifier.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0K/classifier/classifier.0/input_quant/export_handler/QuantizeLinear_output_0B/classifier/classifier.0/input_quant/export_handler/QuantizeLinear"QuantizeLinear
-€
-K/classifier/classifier.0/input_quant/export_handler/QuantizeLinear_output_0
-E/classifier/classifier.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0M/classifier/classifier.0/input_quant/export_handler/DequantizeLinear_output_0D/classifier/classifier.0/input_quant/export_handler/DequantizeLinear"DequantizeLinear
-À
-classifier.0.weight
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0L/classifier/classifier.0/weight_quant/export_handler/QuantizeLinear_output_0C/classifier/classifier.0/weight_quant/export_handler/QuantizeLinear"QuantizeLinear
-ß
-L/classifier/classifier.0/weight_quant/export_handler/QuantizeLinear_output_0
-D/features/features.0/weight_quant/export_handler/Constant_1_output_0
-D/features/features.0/weight_quant/export_handler/Constant_2_output_0B/classifier/classifier.0/weight_quant/export_handler/Clip_output_09/classifier/classifier.0/weight_quant/export_handler/Clip"Clip
-õ
-B/classifier/classifier.0/weight_quant/export_handler/Clip_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0N/classifier/classifier.0/weight_quant/export_handler/DequantizeLinear_output_0E/classifier/classifier.0/weight_quant/export_handler/DequantizeLinear"DequantizeLinear
-Ê
-M/classifier/classifier.0/input_quant/export_handler/DequantizeLinear_output_0
-N/classifier/classifier.0/weight_quant/export_handler/DequantizeLinear_output_0&/classifier/classifier.0/Conv_output_0/classifier/classifier.0/Conv"Conv*
-	dilations@@ *
-group *
-kernel_shape@@ *
-pads@@@@ *
-strides@@ 
-Ó
-&/classifier/classifier.0/Conv_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0L/classifier/classifier.0/output_quant/export_handler/QuantizeLinear_output_0C/classifier/classifier.0/output_quant/export_handler/QuantizeLinear"QuantizeLinear
-´
-L/classifier/classifier.0/output_quant/export_handler/QuantizeLinear_output_0
-A/features/features.0/input_quant/export_handler/Constant_output_0
-C/features/features.0/input_quant/export_handler/Constant_1_output_0524E/classifier/classifier.0/output_quant/export_handler/DequantizeLinear"DequantizeLinear
-main_graph*äBfeatures.0.weightJÄÌ¼[ÀõÇDÀÁsÀ9À$aÀÿ™´¿5Ì¿L¿ˆ¿¸!À!2 ÀÕ¬
-À/¢¿¹Ui¿BŞr¿Í"½êƒ>"•¾ãÛ @¬@¹—@¹=@ë_@ô‰f@§Ãr@‹Ò‹@]ƒ@±$¥¿thŞ¿#á¿Z½¿S Àmâë¿Û¬ù¿X¦ÀïÀ¯©c@pUj@0o@T·r@Å/|@ˆk@4x5@.i@Ñ¯J@.°™¿ıÆ«¿£àÓ¿§İŸ¿ú°¿küê¿nÌ)ÀtãÀˆşÀˆhœ¿´ª?h‚È¿—È‹?:?ÛIm¿EJ!@É‡‰>¨À®Æ?‡÷-@|ø¿Y†@ B@ÇMÀÃ‹@ªL½ÉHrÀr^Àæ¿æZÀS§Y?ïZ|?Â‹ı¾iq@äÏÛ?Æ“B¿*%Bfeatures.1.weightJ·|?9£¥?wLÓ?*#Bfeatures.1.biasJÇ@1ê?’1@*+Bfeatures.1.running_meanJwÆÕ?#"Ë½ñm]¿**Bfeatures.1.running_varJ_Cü)†BFÿíB*‹Bfeatures.3.weightJl_M@oT>@À)Àî†@~1@~¤¢¿¯wI¿¯Å#>Í'£¿àÄÑ¿jâ?¹Ï«¿ÈtÀ?4ı˜@·ùo¿FË¿!5W@¸óQÀ™ÄSÀ¾>¨Ùõ¾O®j¿ºík@+é&@6N©¿Z¨@>ã¾¾*%Bfeatures.4.weightJ›%?nVæ?XYÂ?*#Bfeatures.4.biasJX@@N5J@ş1@*+Bfeatures.4.running_meanJw\A|Ì@õ]JA**Bfeatures.4.running_varJ½EB±¬Aç…ŞB*gBfeatures.6.weightJHUÆ¿¥²!À3ÀîÚA®T¾i£»¾ß%é¿®à{@D©£?	»I?[ú@Šé…À'ò·¿I]Ÿ½À÷¥ÀÆP@ËÉ4¾Ù3<@*1Bfeatures.7.weightJúı?K¢9@?ßN@<[¥?±Ñ·?³ ü?*/Bfeatures.7.biasJ‚Nì?<Œ?5¡ş?‡@G1@Gìí?*7Bfeatures.7.running_meanJ¸‡Áüˆ—A€Œ%Aõ#µ¿?zÁÊMhA*6Bfeatures.7.running_varJCŸ Bğ¶œBD‰MBYhBÖj]B¯øûA*øBfeatures.9.weightJØËŒ„¿±ĞÁ¿ùø=¾åX%À´ÀÕˆ À{e?ïrí¿2õÀdZı¾w˜<¿ÉÜ$ÀÄ¿Áh;@,Ö @‘«¾ÑÙ‚@sÑ„@mò„À‰¯=Àqé8¿Ô15À·xÀúR)¾å°¿ä¦Àù…‹¿½êl¿Ÿ
-¿óî>Q;?>õ¡|ÀµĞŒÀòÿ¾Ò›Àä÷¿ºµÌ?g@º?éõ„@]äÅ?ÕÇ¿×öÀ$6pÀ‡`¿×ˆù?mŞh@Y€X@™ms>†ù¬¾›Ug¿Ü06Àä^]À‘À*2Bfeatures.10.weightJÉ—@ X@–ê@ºcö?P @³kã?*0Bfeatures.10.biasJlšO@Ô@=6(D@á¹¬?²i?*8Bfeatures.10.running_meanJDéòÁ‹ÓˆAXèêÁ±ˆÂR!AÂÀ¿*7Bfeatures.10.running_varJ1ÆÇC‰zCaƒD­ICœæºBb2ÌB*ÁBfeatures.12.weightJ ´® ?xñ¬ÀˆÊXÀAaŸ>¹¶¿BÌ¿•VÀ?®î¿[ƒó?eN@ƒé¿= ?—À½XXÀ³ª·?Óê.@BËB¿=ã’½\PÒ?;?t#¶?" @cB»>0U?f“Q?‹”.¾s–=¼™u›¾`0†¾ÕØ„À&Ûº¿íyÛ?Şƒ@l¨ª¿’?ìÌï?¦D@$$¾N½X@hÁÀ	Ší>ã[Œ¼É$b¿Rq1@Ø ¾Š"ÀÔ ä@×.¿'E:¿Ékk¾Ö®¾\N„?« ¾@½í
-¿f”@*¦ÀXÃÀ”%¨?ŒÀE‡º¿û¾:1¿âÉ@ˆ#’¿f†!ÀˆG¯?À×@ÇÃ”Àˆ# @Ô,>¿*JBfeatures.13.weightJ0ı‚Â?¸Ö?šAJ@óğ±?qP?½ @… ä?1A@¢Ë¾x†ô¿.wØ?Æ¼Ç?*HBfeatures.13.biasJ0´hM@Fo°?—	¿?ğsq¾ò)?’U>ğß@éj¿–s´?Ì@@gİñ?µİ>@*PBfeatures.13.running_meanJ0sèlÁ£ÄÀÍNÁb»XAc]k@;L[À’d§A w@—oÀ	.bÁ;lkÀy²eÁ*OBfeatures.13.running_varJ0LñHCÓ÷ÂBO4CBÅ¬A°„ıB€Ù&CWïB—¤>A¥üºBbä5CtbIC*ÑBfeatures.15.weightJ°ù9ÀÛº=Ÿ#ä¾;o‘?Ìh=@+W¿3Øt@ƒ$¼@-…Û¾Ş¿jY®¿Wh<@òLÀËp]¾b”“@fpHÀ7{½	>&@Ÿ›A@Cq×>+è*Àºb@æÏ¿‚_”¿“$°À6¥”?9«â?==¿ %†?¡Ô§>Å½½e($¾­Ô?]z¾…ÛÜ<XÊ?À¾`=¿Q	¿ÏÃ:¾h¿2Wd¿aÁ¾‹#¿ Ş>¿h06À9RˆÀÌ®Ài'?Ğ±?ä‹&=÷à„?~vh@ï¦8@,@d@L@?±@SÀ:Š@¦Ïñ>ƒÒYÀbe?ú}Å?ş«n¿¢—b?‹Cù¿0Q¥?á$?P×À1±ÀŸÀók€ÀÇG–À7±—¿Í¥ø¾F°š¾&z$¿w*¿ğ4Ê=¯3l?1ò?ˆ½’=ì5À9à¤@,3=À§I@¾PÀ·%?šp?ÈœÃ¿Ÿ?ç¡À6)Àè¶¿u|°?a €½¦¼?Ë?àÁ@¥•ù?Æ†Œ¿Á~$?ô ß?±SÀ$úß¿nõÀ@uåô¾m!À‹"3@*JBfeatures.16.weightJ0aù@ˆş!@nÑk@ v—=Ğ&P>/—O@ÕPû?!@ÚÚ>»g@Z¸D@ƒE*@*HBfeatures.16.biasJ0£U¢@s=„¾¬{¿foN¿8¿¾@Î½(ùX@_tŸ?Û:¿$ô?f$¿Fî>*PBfeatures.16.running_meanJ0 æAg+Z>‡  À‰¢Ÿ?u]ÀÁ¿›>½A+™Áß×ÀÔ[À©á'AèLA*OBfeatures.16.running_varJ0’ÁfCtj¹BİĞ§B¾Ğ~@Ã‡Aê.gBñiCÔ"iC¬ªz?Ş‹CCCùiC*áBfeatures.18.weightJÀ:fê¿¡O?ì­O@Û¡¾ç‹t¿Y³3¾§õÊÀ£]Ô?]>±P@ÀÓNM@Ç)B¿”iO>¿5cé¾_n„½ÉÏ¾€?ôŠ¶>"sŠ=î˜D>È¾6¿³‡v?'g%¾ñÀ?WK@¾†$>:=âİ@@öò¿ZDÊÀåW’=>‰Â?-‡À2ã?¥:è¿²:@Ä÷CÀK*8>ÌöÔ>°À©XÛ?Ô³@ àK¾Ş’Ò=Ø]*ÀJËw½b©å¾ïvŸ¾¾ò;Í>]Ş)¿şZr¿û¯"¿×ú’¾Í$8?L‚8A¦_Å¿z´Ñ>StQÀÄ[¯¿D#?L¦"¿xŠw¼œ–?V•>”ş²¿?ér¾8=,@ÛòÅ@Np@’3Ó@ÔqJÀãB>õg¿ÑQ<;U€½²—À¡Õ"@Et¿YâĞ¾®Ïğ¿;Iœ¿5Ór?Â2Æ¿—ªµ@Xé-¿÷\Ï¾ Ü½ß”@iŒ¿CI‘>pb)@óN«>[ÀÛÀ?:iÀF¨·=b†R¿S½§¾
-—/?J.@'	?ØŸ
-¿²õÇ<'¾ûÆã@~¤½œçA‡µ`À·>h+¾l³ã?IDÂ>’/??I×w>qT?œîÈ¿'e¿¯æÁÀ‘?Àü]>ÕJ“;½ú«>\?4j@å^Ü¾ÙR¿+­¾¦ı¸¿`rÚ¿†_Æ<©2®?)Ê-=BÊ&½æcß>dî½>•U¾+_‹¾íŠÏ=³è?$»1¿™Ş—=*JBfeatures.19.weightJ0©Ù?®<B>¹‹ó?g¡?4Ç?:øå?dÂ@º«ï?°së?µ @46@7§=*HBfeatures.19.biasJ0>Ğ^‹¿ À™åa@p²>@6Œ>ú@@;[@±u>y?>çç@qNš¿*PBfeatures.19.running_meanJ0f§¤ÁqÈ•¿«tÁ~2‘ÀÕê”@émÌÀšÈAó)¶AJÉAºwq@6I¤Áâ•ú¾*OBfeatures.19.running_varJ0•Ë@CÍ¶AÿC$àQC›…CÊÆ,CğaC2C§=CüNCÆTC:Á@*Bfeatures.21.weightJàP¼}¾Êûº¾b“>=jSÀZÆ¥ÀpäÀi@¿$[=¿}N5À1Ã>~Qâ?×Û?Í?Óg@ÿDP@y@(D;@R‰@ª—;ƒîK?F¦&?Ue«½Áú–?÷w ?÷==MU>%É-¾©é@>JA¾GÜ¾ÏŞu?y˜¾+»¿S‘ ?ÿEİ½~VT¿Š@"¿Ş,†<Q€¾€Ÿœ¿	¿Vèa¿qo¿:ê>QùX¾(!@X@®²@îx_@qz@fb¤?ÌÛ@C9î?é£›¿Øæâ?n°¿êªzÀEÙ`@áœ5@ûÿ¿ÂŠ§¿Ìıl@}:ñ?ƒ @ˆN@kš?½Iù¾f@^~T@Î,Ë¿øY¨>/¼Q@ÆğÃ¼ğµu¼5?S¿+7‚¾Îœ=¡¿=“¿9ş=ÃGh¿Ä{à¿øÀ=|‡¿rÀ!ƒÀŒö8ÀÀ…¿d˜%À¶áÀ.3m¾X/Ø?Åˆ@¾­ö?-†@ÏÚ/@²²È?¯ñ@×éˆ?zƒ€¿—Æ×=O³g¿ó4<ŞÏ»•PQ¿6‡Ö>8¿—Ù–¿«¤@õ4¢?J·ó¿3Ö¢@":@úÀ¿¤Õ‚?Ö¾¾à¿Jé1À¢ğOÀJ@Àû©¥>™÷{>=ÓŒ¿ş+@˜^}@1@#Ë2Àr2’À÷v¿Ä§QÀrOÀÔàª¿Ñê>À²ïÀgd¾Ø&‚¾~ÑÕ?ÂI?J†‹ÀßA@`¸°>ÂÀÊå@	y,@ü\“?cÖ¿VÛÚ¿ªÑ¬@Hq?ğÉ^À~Ğ¾?…N@¤MH?¯•?·§‹?›QÃ¾³©r¿0ç™@QL@Áºw>Ów@]@L¨†¿NH¿aK	¿L¸¿„áå¾/¾(%¿È¢ä<‚YÎ>ä@Ÿ]@‰ıë?00¢?`1ƒ@¥e@zRˆ<gà8½è´9?|öµ? 0­¿C.d¿²˜w?qº›À}UÀiá¾LgÀ¡%°ÀÀò£½ì÷¿QÜ ¿$¡P?”¡TÀéğoÀ„\M@5“Å¾1sÀ,Î>rœß¾d·e>O¡R?>? ¿õê@?¸p?Cˆ?¿óš¾A_T?qmn½ûï¾lÚO?@‡>rP'¾`±¼úÖ|?*zBfeatures.22.weightJ`„(ê?7ĞÊ?9üU?ßìJ?¼bK=LG€?Á?¼@@×\e>ØaB@h‰Á?ı>@Äv#@½…Ã?–°?®J¾?\î?—SÒ>á†Â?m@©{Ù?(_»?'?*xBfeatures.22.biasJ`ÓŠ>mŞ«?ø`ß½x0’¾«Š‡¾œ)Ê>Mt9@jeb@éİ}¿›Ë%@od¸?1ùÇ¿ß·/?¨Ğ-¾¤‹‚@ˆP½¾bÿ>ã–?Ê¿’‘¢?6ˆ*?ñˆ@Í,+¾˜^}¾*€Bfeatures.22.running_meanJ`“¡GÁcA     €à¾ME@·J´AGOCBE÷Í¿ğôVÁ¦dAïfÀğ>ïAìoÀYCÂ¼‹A¹e†@¿Z(ABšÀgø;Aè_ÂMcÄÁ      *Bfeatures.22.running_varJ`zC€y7C      ƒ,Ú?hğ$B<:òB>ø_C€@±¿ãBIcmCqgA%’DA"sC;–.D¨äåBÚ‰$C&»‡C¾dŠA›Ô©CñND|¼C      *¡Bfeatures.24.weightJ€ÓÛÀøMô@´Ş¿ñbÃ>ë>¢¿Ù ¿‰>·=Â¿(ÌÀb_‚@½‘‰?§ØB>õ¤@Fi·?Úû»Èg?‹2¿Ê|d>uû0ÀŞ$,?LoÒ¿ıõk½r¿û=„ÀÄÅ×¾®/Í¾ÉÓµ¾€Á¿¼;@£÷Õ¿Ûhñ¿[É=±÷c¿Ì4¿Z`‚¾{To¾‰Ë›?åc€@gú©¿?¤–@B¸˜@ƒw¶¾QĞoÀ”¤Æ¿JÇô?’$¾õ¾oÍ¿]Ø?]
-?¬ôç¾ßÓŞ½za >)Á³>Ø~>‰}?3ù“¾gê>l×t=cÔ$>_¹²>Ô?Æ =Ÿ™?=m?ÚÆ¼éÑS?l¸½ï*€>üœi?½Ée?0¾´v@cß¾½ï‡>”nä=/Úé?fH?Ä]@©4>c9lÀ›¡À:æö¾L„@›ÀF³ı<É~%@+5@/ƒ@˜jŠ>L%@¿~ˆ¿v¡†¾èÒX?>×?DÂ¥>kX¾\Î?¹²ğ>ä1?^ g@ßX¥¿8u¿½|k=9¾ç¨—=¢±_?H•ÀYBÀµ
-¦½¥®¿˜¤¥¿_:>N>ÏãuÀsíÀpÿ1À²?¿¾ğ!¿1’¿Å›P½œô¦¾ê*?§g=¿¾¦C¿V~O?o-?kì§>ğÊ¿û3ÀY2G>—voÀ¢‘¥¾GJ€>ëÇÊ?VÑ…@–@á£?õÛ@Æƒ¾åL³@Äú¾ßİ ¾c¤>®8GÀîê¿‰%â¾Ì=ã?ôÅŠÀìËˆÀwT?>5	“À¸Ÿd¿é\+=Š"¿ò€¾»¯c>à?ôÀ™àñ¿§«<9@õ>?Aû@C¾áÛ¿Æ.¸?ÈÍ>üÑ®=§,=Ç–=ÃÒ¦@o¯w@_x«=g¶¯>£¨-@]£°?‡>_ê¸?D ¿1’r?+—?,Ò?eí¿R	ß>2cæ@ïÉo¿Û^À›Û
-¾f’<?†	¤½å¦>Õ%¿ÍDè>O§„>#[ü>?§=.>µ> £¾xC¡<ú”?Gs½‰(¿êÎ—?üYZ¿]Ü¾LÔ/?*º”>Æ>¾ôÕä>Zğm?•B ¾Qù¾¢ø²>Lí¼¯Ï¾Ï{Ó½ÌÁO¾aî>ƒá>‹‰>N–Õ=5(W>Ú\ëº’¨Ò¾ºÕl>Kê†=ğ•¿/Ûq¿zk´¾ˆd¾Ãe%¿ã¾=}H¿WÇ¿È@ ¾ÒÅ>¹Z¤¾¥ä~À\@Âê?úÊ=Şc=•ã–?J5)?*«šÀ·LD½‚ )¿¿›œ¿?Àü=‰©Z@3Ù”¿&áº@ÒaÌ¿x“ƒ¿×=À†½­ì¾¯$(@ì­â?S¢'?ó?ŸùÛ?ÆF¾ˆœˆ?.Ğ?ê2Á<SFg?øş?ï÷±?K§´>Ñ›@Å VÀì“ºs›3?åPL?_|ü¿{öm>¥Ì?sE‰@›¾©2-¿|;UÀ&öŸÀî%]>› Ê=ı«9¼î?»E?/QŸ¾÷±=îF,¿A~â>Q,J?oß>DÛX¾¸…³½ô½–8><dğ>ßxk»İJi½ïŸ¾N§Ö¾Y1µ=¿z>­LP¿L¿ô¾ºú¾µ‰n>Ñ:6>°r?7Á0¿‡g‰?¡Qr¾ç>Ä¿lØ$¿¹u¾“ñ&¿á «>Á±0<j‚á¾Ëió¾Ğ”L¾Oè‹¾Ü›Ç?ğ¡p>6E=Yg8?hõ½–hu?á"?„™e?§t†?\{KÀCŒt?k~½<Dw¿RÌÅÀ!¶‰½èä?D´Â>½U€@îÉ­?ö?…>Ğf¿À”ÀÛ¦\@ÒPÓ¾Ú1@¢…@u–½îÖå¿/wÀWˆK?h³°½ş ¿ô€"¿]õ=r¹Ì¾Ë[½Ö ¿Ôç@¬¶¿"8¢Àq·›¾?–-ÀjA™ş¾ö|U=Ky·>TıÀZıí¿Á´¿„Æn¾{Ê¾¼Sò?CÅ÷¿í:Ì¿ïí:½@|"¾;mş¾G¡D?U "¿´	>`ğe? ê^¿½ÛÊ¾İÄ»lµ>«e?vfÖ¾HC½ê®½¬£q=_&¾ºgt>¢m8¿»2¿	fõ=H¿®¾]Ì>âbÒ¿g»?¾Gş<ÿÓ¾ä/1¿6‹a¾/„¾İ«¿½óß¾Š…¾‰‹Q¿R?>Ci>#„>¤Ã¾×"?§pò¾2ï5¾üp5¾€“‘¾[4=‘¹¾Tı¾”¨¾BÀ>GSU¾Uu–¾{B	À'­Ì@a?OÄ¾9?@j@‘¾?º¿?>¾ành¿¿0b¾<-?BvÄÀ½\V¿rÎõ¾n@N5?ÙZß>‘‡µ>·†?—\Àc¾?Äø=!X“>7Îæ=ÓqC¾IÇ=Gİ½è[*>‘NÌ=Jö
->f‘>U§Ü=£ü¾êó½$>^M¼!îv¾˜Ü…>%=Åk¾Ş˜¿v=7¾Œ€¾—äŞ½#¤œ=T?ÒK²>V^‹¿ï$Z¿An„>ôµë¼üÜ?ˆ*@qK¢¾ª¢í¿ş0}>yR ¾Ä	‡À\]£<ámÀmˆ4Àù^ç@>J,ÀÆw7¿`í¾±Ã–¾ë?ˆÜè¿ßÿ6?‚‡>0>p%>ÂÀ’½ó“P½n‘`»o’¾"“İ½Íµ>6ù>=×*o>a_>¬l†½Rk¾fqÎ½¢>O3f½*Jr½G>9¸‡=*sù=†mÌ>ÊFN=q
-0=Óõ–>?È1><“¿¾	?Ù1Ã>ˆ:¿¥r=Ï¿«òÔ½¬›Š½Y]>­Ğa>|[W½;!>˜Ñ-¾•J?h°>8q–½+–¿áà>o˜¿l=¿¾?¶3>l®¿ûïî¾­>¾&~*¾»-I¿Ï‰>j×>¡”ÀMKº@Nz@À\ö½£¥ ÀÙb/?plØ<ß›°=¯Œ?â‘¿õi{?_¿Ù€?
-Q8?1<‚@wŸ¿­&‹ÀÇ“?¥ Õ>*zBfeatures.25.weightJ`Cö¬?•ÿå?o™?DÂ?#GÑ?Y!@TØ?J.¼?$BÏ?Q}Œ¾l¿
-@eÛ©?³Z#>ï^=Ú\¶?{tÌ?"Â¿w§>½ß@5/¬?F«@Æ²Ÿ?F$á=@…?*xBfeatures.25.biasJ`÷íÿ?P‹­?¤éÀ¾ÿ/@]F@º®@ğ6?@#ğr?wff>TM¨?G{ó?C/@–‘³¿ã¹¿iG@ğ@‘ª?W¤`¿Äl1¿öìµ=§½¿ŸF=ºÁi¿j(4@*€Bfeatures.25.running_meanJ`‰ËÀÈT'AéAğpA½5'Â’ßA6ÁÂXãAÚ/Ç?µµÁÂOsAÖXÁof:?0FÀ>ı1çAÃ0ÂDÅõÀª;‡À^Uè¿®?£|Á@“ô?¨@,‰@*Bfeatures.25.running_varJ`¾÷CZg…ChƒA½áC¡]¹Cˆ‰nCî†´CÚu…C‰<ï@ŒkSA=óÌCO°Cœˆ5AqÚ£A‹#­CRç	D5¯AÄÎó@Î¼C2|@^Cù´™?‚J¼@‹ëÀC*ƒBfeatures.27.0.weightJàÏxÅ¿UšÍ=¦?Õ“À6’ã@yI¿‰@€¾,@›k¯¿
->¦?¢Àyã¤¿ˆİŠ?GÑÚ@œ^Ò>®Ü>À'2>¿uE?ïoE>	:?-+<Ö«¾ûò–?¼4?;ã?QL?ÎıT>ùÚÌ¾Í‘3@WäÀ°E@l0Æ@ŸÄ¿499¾2vÖ?ƒàJ¿<<@#Œ*@Æo@µ•×?Ôà¿e3Àƒ@â?ÈÜ€ÀË>‚ÀF @ÁW@«º@=)"pÀÀü×À£8ú¿®î?Å¿ÑÂ>óŸã?x@·Jd?RÈ¿Æ™#Àß0>@û(À.¬ZÀ]OˆÀıî¿—¯=Àğ‰¿¢®¸Àø§QÀƒ±G¾©¬@Ä&@ü™Õ¾ê {¿àq£>ñô¿ÌäK¾QÑ_¿2ºÆ¾cá=¿èA€¾uè½Kn¾ı~h¿ìä
-¿=ü>	ú=£~‘=è×8?xiÛ>•ÑN?:ûZ¾Ëç4¿¥7¿¿æÎ-@O…Ñ¿ávVÀ÷†M@£l@ó#&À“ì!?@4Àp×XÀ
-ôÁ?qÊÜ?šZTÀ<QÚ>išK@z¶K@¢/©=š£ú=¢#>mú7>À­>W-»<Dµ=y¯?)(7?¡Á‡?™s?¡zY¿’<)Û?C‚5¿ıy:¿=t¨=°†Y>¹YÀÆ«:ÀZHÎ¿+øÀ¡¬f¿º¤¿™JB¾Å9@@‘¥?Ôµ·?÷Ü>|º¿wQ?¾Û=@g•À¤ì?}f¹?˜¿•À¹1f¿E¡â¾ç.>çB¿86x¿Ôğì>~Ù7¿«¿}(¾}¥¾Œl–=&¼?#9>!ì¡¾»>ºla=Êj¾§ë)?÷œş¿gbmÀ<Û#Àìš?Ğ@o…•@.Š=ù>Í~ó?:c\>n >É]½†
-k>_òà>l:>Å£Ë=‰½F>³–>Ûk&À¾·À»¯i¿\—¿O”ÀG"¿õŞU<(í—ÀH-¾?r0±=Ê w=Í¹=áI¿'>|u >–¨ı¾a\o¾âÓÖ½`$_>pMØ½„/›>©Òƒ?‰G´>¾'Ì½U*!>í?‘¾~½?óP»¿½ÚB¿ğÈŠ@Ì¼À!L?Âv¡¾-yì?´ã¿*|Bfeatures.27.1.weightJ`ô§ù?ã°ı?›>Zºï?6@_&@ÉY@ÁÀ@’&>caS>µ¾!@Äò@Üo?8d¯?_“ë?1\Ç?Ã†>6Š†?V™?A3=A’p?¨ôç=_BŠ?Sg$@*zBfeatures.27.1.biasJ`4,Ş?5†±½—ß¡¿µl@ã©>ôßÖ?„Î‹?2G|?,¿ 1¿W‡o¾‘7N>1¿lœ½ÓÖİ?cT‘@Àµ¿±¨ A“U>º2©¾†G°@ÿŠ&¿…æ	¿fã&?*‚Bfeatures.27.1.running_meanJ`4iWA§—@‡€?QÉA7±åÀ/5¦Á$$ºÁÏ2ÁØ©&ÀÚTˆ?2‰@¿ì&H@      gIöÁŸQ>À>¬À   ) @i {?–ºÈÀIÆ™¾   rÍ§À*Bfeatures.27.1.running_varJ`í£ëBí:¸B?i^@s+CÊ5>Cë½ˆC
-Ğ–C¹ Cz¨Ì@E›“?0Y!Cè>ÙB      Ÿ‘}CEóC§Î@   Ş‚sBË@<?T¯½B{ø?   ozSB*£Bfeatures.27.3.weightJ€rJ³¿×.•@äó‚?kR£@dŸ¾NWÀM¸¿%´ü¿šk½uÌ7>-™¯?ª¡6@d½½hÄ{?Rã¿Ğ}i@ÀÔ%¿@zÀ¥?³}ö<@W>ˆøF½ö.Ú½EL? íğ¾ÖMXÀĞÕ˜=g2¿?3Ç¿(l@®p<¿XU¦½‚p6?0‡å¾nüq½£¿?‡
-)¿Vc ½¥æÀ|mÁı§Ñ¿ø?@¦ @à–½õEæ¿ºÌ>3VÊ¾hÆ¿‰WÀDS%@¨¯¿ıãL¿ŞFˆ¿é³X¿<_wÀ„Â¹? ?à*¿ësƒ¾)Î¿Ñ–À¾èT­>[ KÀ­e†@»t¿
-¿.¸¿^´½ëØ£Àpû¾Û¶Ò¾Z2@(d½‹>ûM	>-f5½…5—¾Gó¾¡¾ëß¾½,8¾63T;—L8½‰¥¾Ñ9É=Öf[¿û!g½¯×=™b‡=z_ƒ<Y$–¼·mé½?„l=o²¾ké>ÙlÃ¾%PÀ@~–’?^p–=VN@ŸşÀ%\á½§‚9@²­Àb¹>ía‡¿ò10@0¡?5™º¾5¥‹>É"¿½gƒ@`¦?¿)¬ÇÀ¹Í=÷¿õ=Ö?³Œ½¿'¿€g—¿şë/¿‚€Àuöˆ=5|4@Ãr@eÄù¿ª À[Ñ9ÀÕ¥³½_€N?ºÉ?¿gò?À‹¾fŞ±?JŠq¾:†î?#…W?=~•À%aÀ—bF¾]8iÀ> X>ìÈ‹¾=ÒKÀ¨ ÀZ%¥?"C”¾ Q	½¦ÑÀ±À'P?¢NÍ@PÓy¼ÁUN¾¿êq¾©šÀğI¿Å%ó¾àK$À¿f˜?ğ.Í>Ec¿¸¯¿eó=±Q¡¿“‚²<³ƒĞ¾Mdc> ´º¾Mn?|F>§ß¿Ô³ˆ>4@Â/¿åiİ?«Z¾Îî>hıŠ?Áì—¿úa=\@>Õ‡Y>B\¾¨ŸF¾Ô,ö¾Ô»¾)˜°¾#t¿2Cb½i\Ù>m¢>hzö?á?s/µ>@Qƒ@à3Ü¾Ï§œ¿îØ?ïß.Àêh¾@ËL>ÒöÎ½‡s†? Êë½±L#?ğ|?…à?hÃ‘¾×¬”ÀE@Ûğ;=’KdÀR—ë½ªpÒ½Ÿ¯£@;PG?N¿Ÿ>N‡?ŒåG?ùBñ¿I¥¿rK¿É! >íA‰¾Ø™½øK?iŞ:? 2¬¾Øk >Z£¿Ğpj>÷å7<ÁlÃ½Î_ì?Š‘ƒ>·ßà½:Å¼=ÖÓ:¿óô?Äˆã¿"Mf@ê[!? ¹E¿õ~W?¾yœÀs’À‹8;@Šè¾<²w‚@°Ş?tê?+
-t?•À‰œ¿£
-¿ò¤¿r}0¿2mb=Æµ¿‹›>Gx?cª£¾Kdv¿Ê•­À¢¯Ì¾Òf…@5ŸjÀä }@Ë•…@ÊË9Àj–"¿æ¤=ñÄ?÷Å~¿Fî?¢é¶¾Z1Ô¼XSœ>²€>nn¥¿¡Á‘¿ÇŸ>"ÊÛ?^>ös6¿°­¾tŒ¿Æ ¤@)è¾¯ @ªï‘¾x%Á¿KŒİ>¼§ÀK²¾°¹½¨€@Ò*˜?ãn9>‡ˆÂ¾í#À†ÍßÀM¾N&Ş?™!ÀM/'¾ìÓ¨¾“dÏ<‘6¾ĞØ@øä¾Zæƒ½™Q±¾œ6û>H:J=™ŸÈ¾/j¾Ó. =î¾vÑÉ9_Zİ½šç÷½Ï)>‹G+>óyÑ½@Iª>*]K¾dÑÍ¾š¤¯½
-È; >z½"÷¶½\Â=F+ÿ>Û+?e+À5B¸¾œE©@Ö“N@j9ÀÔ¾ğå‰¿¹¾5½Ã½ş|>ÜÀO½£?‚‡ÀQQJÀ,û0>ø¦¿P £À[âS¾ùÑ¯¿ª	&¾.mÂ¾K>ÈæÜ¿pC@Q¾Q¾İÀ>À?Ä£@¨’‹>“B@qüD¿*Š½Ùk>:bˆ?âwi>è¼µ¾ABó>$+¡¾|L†>ŸeÎ=ac?f<F¾4˜?ú»{¾xV¾‰—¿±Û¿cw‰@t,M?ìõ+ÀOHN¿‰Nx¿ÏX @¦ÀÀÉ)\¾öa>}ØT@’r¦@P§¾é?¼Ê[À£fà?¹÷m>¹çeÀ†W±¿Uñk>`í+@a÷Z½O>W¼Ø?Ñ>`>s€L¾ó¿>ÿ,ñ½ãE>L?>öa°>yÉ%¾Ç·e¾8->¼[Œ¾ÃOÍ¾ö->·HE>H¿‚>,Ò >[}ù½ày¦¾|îm=øA>œyK½<ëh¾D!½ƒ³Ÿ¾LÅÇ>ªæè¿Xo™>GEœÀµVÖ¿O³[@ZB@Í¡¿á†Ú>Üë»!4ÑÀÉşp¿RûN?oØè>Øáà?,–JÀV<Ø¾ªÕÿ>)¿hŠ6¾ÙJ>™X&¾ÅYŒ¼SÙ¿mÍ¸¿'TÎ¿áêÎ½ı³.>Ú;@²Hl¾Â½·¿7Æ<?Áš¿z‡t¿7×¿éª¾ç
-k>Û‚ş¾UŞ3?AùÁ“½¯¾ˆ@¥4@Æ—à½2ÚÀÊx‰¾"ş¾ÉÆú¿Ÿ±Ó¾^øã¾) ï¾½ë÷¹"O7?”Ûù>9[¶½à¬=Nº§½Ö"?ØÙ½{(J¾øê½31>Ø†€¾ŞÅ¿wñ4>ˆ„í=ÚŠ¾çÅN»³©5¾ü\=÷¾Rù¼ïrÀĞWÀÂ$=ƒrÀ]ª3?j.s¿myN@ QÀÑ­ô¾¼•7¿ıØB?Mä<?®»¾ï?>`G9ÀkiÀÌä¸¿ä=p?Qó?Ÿã)¾}ù?"½£ü‚>#íŸ¿Fû>Ñ_¼I‰>ºòç>¬*¾<®İ¼aÍN¾÷/¿-§>šìn>ùJ¢=ó0Æ<7u¿Šñ¢>O&´¾l¢¬½Úv£½÷~ê>›E>ó³µ>2î•½€¹>šø>Txs?3Qê@p)Ù¿üóŒ>èy‚¼kí[?|*ß¿*DAÀ×C>;D¿“ÑÎ?G¼¿õö?9b>ƒ¹=D™+ÀºFÎ?Š®z>a ÀİD›@“§¹½¤\V>ï…½&|V¾•¤Á¿*|Bfeatures.27.4.weightJ`}Á?ÉsÇ?$›?r$?HR@n6@†˜@6@÷Ø?¦À-@kjc@¨]*@eb«?Ç_š?_+ú?šM÷?Ä.Å?†Å~½FQ–@;@@Hï·?\@TÇ?eÕ£?*zBfeatures.27.4.biasJ`|¶§?ñ´4@š??{Ï>1òP¿ï<_@DL>–°ƒ¾ •ã?ñÂ?ÆÁ½F5•¿CB@Ò²ƒ>ñšº>Âş¯?Æ³?+,£?u½¿Dc@Ä„7>à=¼¾zg‡¼·ş@*‚Bfeatures.27.4.running_meanJ`ì¿' ÂÁú›ğÁi_¿ĞêÀÑ¼lÂ31¢ÁÔ’ÀñŞÁ°ï‚@íD+Â:ùˆA8TLÁdÛÇ¿à—ÙÁ‰³Û¿]Á!jæ¿cY»Á6õÁÓwÑÀ¾.ÌÁX<‡@‚°¸À*Bfeatures.27.4.running_varJ`ÊˆŒC³æyC^ù(C5Ñ*?êÜ™CÿüEC"CQ%B§_‰Cä¹B·ü‘Cº7©Cñ¯]CÁ½G@••YCˆå°CPT,Ckõü?×¡·C•½aCÿ{ÿ@ó…}Cl‘›@ÅC*ƒBfeatures.28.0.weightJà¥‚@»Z¿µV*À2o"@Åâ…À4¶x¿}ÿ@!Ãƒ¿÷Cz¿Íl…ÀºY†ÀÔÆâ¿‘”ÀóA×¿ükŞ¿ŒiT?Š‡?¯¨->}ş$Àüé|?©ÊÉ?/Ö/ÀëÃª@Ğú@s–@Õ @ÛN³?ÛÒË=Cñ¾¡(Ç¾r\½KA<ÃF¼°Ÿ=
-dF=Gvı¾Ta?I?Z†E@m‡=I5•@0‚ ?‡@X3 ÀË9dÀƒ¸½åÅ¾ĞÑ®¿™Û@6t?}`Ù¿&vv@É£‰?»Ì‚¿H>(Ùé@ujÆ?LS^?í?kº>­¹q>»®º?·¢ @Dux?£È_?"R?­K¿íø¿l=q¿±!¨¿<OÖ¿M^¿7@.<ğ\“À£×9?q¥e@C×ø=bãÃ¿5/2?†Gs@[…ó½)­ë¾z—ù>WÉî¿¯Ë¨¿:,‹?9Ü¿W€/¾ÌóŒ¿<î@Ô‰½`AÊ¾Ñ¼!@pÃ@æÖ3@[8¿mv™¿T9¯?Ğô¿$Ê˜¿…®ã?V@‚Àì…Àx.š@J#ì¿XD?Ô@Â°ª¾O»¦?ÁèŠ¾äŞ6À¬×ÌÀ†,g¾*#²¿¬¬À"G?o‹¿ÒL{¿?O=å}Ú¾{Ã¾Ñ6¾WC½44áºäX>1ÚÒ¿/.‰@=[@Øy7¿ª¤}@]ä)@DÉµ?«ì ?œ¡j?!H+Àºqè¿·À©ó¤¾÷O$?Ök—?Ryõ¼ê/¯@¹Gh@ya@æN€@ds?Û¬­?4SR?©g¥?±A@Ò-Ì?wc@ÑËg¿8FY¿SŞ›¾;Â`>,ÿ½3™Í=:E¾ƒ÷¯=K¾*m£?Óô¿}A@––ÀÙ·? ûÏ@WÊï¿tàÖ?4@k@íkJ@f¹¤À±	À0 @æ¾Æ¿²„ş=¶Ñ½|Ÿ@è¾ï¿ÏUL¾ `K?¥U>‡öY¾çTÚ>?Á/±<İ½ñ¹ı>{pDÀ®‚i¿”­gÀs$À %s¿Ø•¿¢IcÀ¯¾@çp‚<^""¿×€¾Z²¾z¯ü¾{G¿Å¬¹½Ñ!á¾Jùõ¾h@?ï¤?_›ù¿ñ£ğ¿‚•š>…YÂÀ!/ÀÜÊ¼g«À2
-¿*|Bfeatures.28.1.weightJ`‹£
-@a%@¥È¬?ÍB>7¬¿?9@ï?'£>ş¼ò?µ>4>ñ?®cç?õÆ@oz–>Š@û3@É9@Šl»|;@yÚ!@ğBÌ½ÁÎã?stŞ¼‹ê	@*zBfeatures.28.1.biasJ`áÌ@2m!@Í!g?¦u¿B,@A{R¿ÄK„¾@£º¿<—)? ù¾öê´¾g¨õ¾Kó@Â^¿¢¼8¿ª3€¾Ã¥­>á¿Û<8@ÿ:?Eºˆ¿×6”?*p…¿¥èš@*‚Bfeatures.28.1.running_meanJ`èõŒÀ-3Â¾0A³Y¿P*‚@õŸáA0±SAbSmÀÎ$AâÿŸÀ
-–ˆAˆ=û\,Âi©¿™«TAG@‡VËAÍd%À¾ÛSAÓ¢ÁõØ¥?ô£mÁğ#Æ¿§VÂ*Bfeatures.28.1.running_varJ`Æ~ãB~øºC<¥B—5‘>VŸBæÓDÉ}
-CŸA:B!·qB±ĞBf»C}~ZB¿‡CW@u!CBC¿é@C7†!?ÄÙC· ˜CÑÊü?‚V‡C¢‰@Ì)C*£Bfeatures.28.3.weightJ€›\)¾ÄD˜>–F½ù§å=vÕk¾`¸€½ÿ¶ç½ú#õ=4t¾GÂ¾ÜÏ½ÒøÇ¾…„Ä>Y$†>ó-}>sfc½–-‡>ùã¾‰î>äj>0è>¨¡ƒ=ñÚ¾E¾CÙ?–Aó¿‘sE@Îª¼Øâd@[WÀ
-ú¾ÓM}=,Şñ?6\˜¾)e@›H@;,?"+Á=<^ÀÀğ”¿®>Q¸O?ÕGş¿P5¾}½ç?º?¾ëR¶@^¿Ö?˜@À1f> ö	¿’²¸¿ıöÀ™ï¥¾—£A¤X?G6¬¿£¯Ï¿qæı¿;‚½V”tÀro?šs3?Âİ&>àÛ'¿¤&@—ä‘¾ãø>¿‰;#fj?ò³e>iáh>ïE	>ª~¾>Í?¹*s>r³?õ¾Q½`ËØ½+0K>:‰>ÕIÏ½TT8¾´Ãr½3XÜ½¥8€¾é„=L/=@¼K½6…=É>ş=6pG>¦š<>êÄ¦¾Ç:¾Å3>MY­>.<A‰¼€f>&+>^¯>_ÕÂ?‰©¾*Tv=[Í&>E	É>Ğu½J„>…©ò¾Úİ>] Ö½ØÎ¥½‹ŒÍ½<æ=0+¾
-.ê>µ¯Ö½\ç¿Œ¿@*Ÿ@Êg€¾rë—?íãä½ 4´¿xº¾°ˆD>_Ù½KFÀBR?¶İº@Âmc>Yö?ˆÆ…=v† ½‡¶>ê9Â¿øé?Ó§#½9 µ¿2T¾óÀ|ó4À´ï†@oã@w;ë-@#õ>LÈ¿Y±>õ”À.l&?©ÿÀˆ¬¿%Œ¿³¼<j=@9ÇEÀÿ:ù>
-p½ËÀŸ@Üò3>«øG@:î’¾^&N¾B2@jŸ¿Á¿„@|#½mè?²Vï¿¤ N?èe=P£T@&6¾ËK*Àö4=¿|æƒÀç$¿>Âß¿À¤È¿m¬ï>Q­5¿å‰@é‘¾¬j¡¿…8R¾¨@²ÑÀû»–¿¸d¿FvÅ½«¤G@Fè¿cóı¿£*µ>%j§¾Zı¤=@	?Š(Í@5p	¿=‘Æ=©¡9Àõ?ÀW¬>÷âÅ½˜hø¿€Ğ¿mŞ’=:¡ÀW}¾¶ Àìü>Vñ¶>¿„(˜½‰âA;ZC»Ò3>êJÁ¾\Ø#¿Y0¤>Uş¦>øI>ÿà?Œï,>®6T¿†‹=˜™h>Ÿ´(¿0%M?ÃJq¾·y<¾*ÅM¾Ì½a¾`¢>Û#L@V,½À«Ìö¿=ÿ¼Û¾7§‹ÀaNQ?Ô ¿ó }Àóis¿Atû?ì9À>Ãëè½(*uÀŸIV@5d@~‘(> u?À}¾=¡>×–’¿ÂÔ¿”ÛZ¿*¼‡?¦µ?ß7Ë?Óà	=Jx¸¾oC§>˜K÷?Í”?î$ï=‘Äó>¶%?Úï$¿©Èy@ü¿}¿öyŞ?“™½*)¿×á&@Ñ“Ü¾Ù¡û=&äí?í½|ø@,P@ñ2wÀÄM!@l½ëEàÀ?|¬&¿O+¿ @a´>‚x@!Æm¿Gë¿sù¼ò°?‚¾× ÀÏT=æ%ÀbsØ¾ˆÂj=>›o¾—f2?&g…?”Ÿl¿hÁT¾"C„?÷F¼ùƒ>/2›¿)Ó7?8D¿òx?ª =Û†Õ>óÄE?é6ı¾?4æ=Ê”=öÎÑ¾Ü€¾<1X>áR¾›.?¶‰>$» ¾?ÿ£¿·Äv¿ PÓ¿+o"@›CÀ¾0„1?©¦g@ì9ÀF¶¿PŠsÀò$¾[€;Àƒ@;úf½.$<2Â@ëÀÂˆ©@È>§ŞÀEïyÀ“n½Ïy¥¾¼b¥½Î‹?¡ŒšÀú?¶?à|BÀ”åL¾cîÇ?a‹Ü?q½!@šxL¿ÌšÀ/=¶¼üå
-À¸it@ Ê“?\™>Eù@?ö¬—>‹ÀÒºq¾d@†)é¿\8·>Óé‹À6@3>¡f@--Ç½ÿë¿¹¢ÀrØ³¾øŠA<W”¿ÁB±?éQy¾èéø¿ßÀ¾¨=[>ÇÖÌ¿é¿Û‡¾7Àöu¿a’TÀwt?ûò•=«áu?ÛŒã>
-«*¿H½Ù¾' É¿–¿Ö )=u8À>ÚXt¼ğÄ/¿e.¼¿ypœ<;´Z?Æ.>ÎÌ˜½ø™İ½ÂØã=äœä¾B¢S¾²éº¾Ú“™¿8š¿?J]¾ú«‹¿š?a¹ğ¾qæ¸½ú6¹>9©x¿úÜ>ƒDµ»ÆB>'Ã¼¬»>â—>Š(¿zr ¾uy¿8 Ò¾S	¿
-½ª½ÍÎ>”Ê<±E?Ô-½¥}ƒ>¯GA;iÔ¼êå€>ob>/ª9=D1{½ùı?z„`¿N7?Ù¾²>®ÆÏ=¡>À–£†@ÒË*ÀĞ
-Î>Ša6¾ğT?dû1À™Ëó?ô"Ö?£Ë(½¯×L@ˆÀw¾=@œÚ®>–
-Àj«xÀş¾®½úù @äÑ>Aõ@ 5ÀøIÀÍ?ÊWV>ÇBÀÍ¶Ù¿ÓB	@Ï,¿=ën@Šá½Á@¾¾{Ûò?ªr5À—§;=L;DÀ&ÛÈÀÑşÀ}¯>õŒÀ$Õß>VpÂ½ë¦÷¿Î‘*?´•á¿"eĞ=Wæõ=C‹'>(]¦>ÆEW<4ôœ>ôi§¾¿”¾[ş†¾u¢½><¤½Ä-<¿ij‹>\½U>|÷_?Á«¾áæÛ½]â»½¨ó¾lŒ¾‘¤>6>¾èzŸ¾aç?~æ¿“È>|Aâ(!½£”*À€I¾!Y›¾v0¾Zø¤?î†‘¿¬'@Å£´¿W"¹¿‰=«¹½¿*¨¿¹Nµ¿zç4¼ÆK¿W•@ğË<½çúm?îÀ<D“'¿ ¨ÀuU8ÀÆ…u@hp9>ÏÄÀ¿+çC¿ ÁZ>/?F]ï?ûšh¾!ƒÿ?ßpÃ>Ú^8¿}?¥ÎW¿ÍÙ3?ôï?¹J>Ê9GÀa³@´f¾ À~á»¾¬%ò¿*|Bfeatures.28.4.weightJ`A‹?»,¡¿ø,ù?×£—?°÷?Šs@Emc@ŸÁ@6Mû?Äø³?A.@xë@=È0@Ò«¾Œ2’?&U“?—&.@V#œ?Ìj„>Oö@ì?ú'¸?[‚ª?6±?*zBfeatures.28.4.biasJ`!Ü1¾ˆl@`‚Š?B{5¾Ã{¾
-íÀ¿)Çî=æ ¿H+X>~˜>Éå™>¡9@Ä?µ¿.0©@Û\a@ïHÀqûD>8u†¿è¹?,®)?ğÃ§¾|÷‹¾j¾*‚Bfeatures.28.4.running_meanJ`œ¬?ØrBB1l@$¼/@6á®?DŞ{Á¬î¤ÁŠï‚Açò)Â`Ù«@r5ÀcÆBÇ×+Á8e6Á8ŞDÁ&(Á´=¦¿Qa…Á=Mã@UR1Á;ŸÂlqò?ş\4Á¸	LÂ*Bfeatures.28.4.running_varJ`­] @²±IC«i›Clpj@A ñ@1SlCméD”ûsCÑ”CıÏkAÓûCVDo°C”úB ViC—áCÚŒCPèBÿÙÂ@ÄzC•!"Di‰‰@î¹Ct¬ D*ƒBfeatures.29.0.weightJàì3>LŒ¸¼Uèà¾bÂ¾¬=ó¾M+²¾êbö¾bêY»L.¾,z¿óÓª¿./Ó?ëÙÆ?­Å@^Ìu@ê‡ÀäÕcÀÂV.ÀüY¿Ã‚sÀèä^Àş¨•¾³X4Àï@zò¿–ì0À÷ñ¿LY½ãj¾Œ¹&¿Ş>_¾MèÈ¾~]¿=NôŠ¾é:¿_ùå¾}P¿ïKG¾Š$Ü¾6!V½mUÕ¼a¿ÒĞ¢¾Üê¿i`¿óÿŒ@&Ÿî¾i¾Í?¶[@«“¿(‚ö>dº9@•œ@ªık=QtSÀ´€’:D7˜¿O¿–?Ÿ¹Å¼?mK¿ƒâÚ@ÏŒğ¾9°@,‰Ş?[‰@<×À¿Á¿´9–@;¾åÂê¾¤lo?8ğ—@•9ö??¾¤à:À›lw@ÅDş¾°Ò¾ŠHÍ@’‡—¿ÛğJ¾ú¯õ¾%´¿íG¿‘k½©‚¾ßà¿M!¾ÆXŠ>ºÑ>lÓ)ÀV£b¿ÿMô>Œ$Ò=“ë›?, p?ún?šÃ„@w!Ú@z?>LÒ?øÓ?,W¯?ãêQÀÙ“Àf*@Iì‹À–¿˜dÂ@wºÀ›¿ø|ª@álö?V†q?è½ñ>ˆq‰=Ã.È¾‚¿x¾@¸¾wfq?A5?*œ8>/P¬?‡?N|ã>z>8}<ÀÏk½7Ä¶À¢z¿ĞbŒ@w{¿N¼¿ÔF?"Gß¿‰ 8ÀW’¾	«H@ö•À_WÀ¾;$? BÀ’UË¿şˆ¹?óˆhÀ­±ÀSÔGÀ­Ò>Ld÷¿"Ñ>3ÚNÀÃÊ¿sk<ÀcÛƒ¿™ûÁ½Ÿ™>Ú•¿E!L¿aıi½|O¿U'Ğ¾ğ„+»yÙ·>0ò‰?avŸ¼Zı¶½r®Õ>ø–«=Wš¾YÉŸ=´?ö#a@\Åñ?r™=@H >?[ÓK@Ñ;<@Í³¾¹‡?æ4G?÷Û²¿áZX>åkO@(@×ë—@/³"¿Hoä?œŸ?@§ËÀàf¸>=Ï>hXj>œÛî>9×=T¯?™3k½X|s¾:?U`?ı<@3ÑÃ@³?ÂÑ*?èí)À“)ÀzÀF/‚¿jÛÀ ²rÀoê¿ù€†¿ùÄK@€ì¿ÅÉe?ÿ@ŸuÍ?*|Bfeatures.29.1.weightJ`Cæ­>\%
-@1¬/@úÈ>*?ˆ‡é?•ı?6£@İsı?áª>Ğ¨@L@@s­?|ô^?¼‚J@ô@-í?kHÒ<ØÛp>E¬æ?q¨@%Š•=—‰? Y @*zBfeatures.29.1.biasJ` 7¿Úò?¹%@ pB¿¿ê,Ó¿»ˆ>Ñ}?’•>?­¿5€Ó?BĞ·@y?Wš.½öÊ>Æí?p@¸¶¿'¿îdé?›d¿m^L¿¥æ•>ğ(è¿*‚Bfeatures.29.1.running_meanJ`+¿”}Á4mÁ¢]‚¿_N’¿}» @Ş]@!šè@OÏ§@ŞÅ¿)1aA~‹Á+uA   1ÆÂ±ÂK~ÛÀa»À   ù­A·¹DAr]?ƒmĞ?5¡À*Bfeatures.29.1.running_varJ`é€?äkòB*HC4`Ş?Œ–@ÇÅBı.Cå{=CÚ)ACälc@$­CdºCV¤C   ÓCÉânC¦ôCÌLª@   h}C<9CË’©?\ĞB¿(B*£Bfeatures.29.3.weightJ€súë½!X…@q½Àİ®º½ÛÖ¾À…‚¾ÊJk?rŠ›?ƒ¼,@v¦¾W³Ò¿_™’?ìÙ¦¼¤>?"@®å¿B†£ÀƒĞ›¾1¢¶>Î*Á?F?9@Ç£¾¹ío@ª@8±¶>ÛN¿î6À6ó—>
-Í˜¾@F”À
-<€@Ò)@ñZ@Ë¾Q9À½=ë>1 ÀUh>bÀÚÔı½qSÀ¯_‚¾Ğ<>,Uø½Ë¥@VqØ=Ÿe>¿ ¨@j~!=ÿ?g¦¿D,¾Ë€¾[E:À§B?<Â?Ì%%ÀÂŞ>[±‘¿eŸôÀxãyÀ¥aA¿ëºî?Üç¿:&b@Ñƒ½éö>W¯¿@|>¢0š½5*‘¾-Ğ@Vzé>ª3¯¿äş¬½áG|½ø6¾ùƒâ>v¯½`nù>ˆ¾Ã¿Ñ	¾wBã¾†ø€¿pç¾RÏ’>#ª¿ÀÍ+?Ä3µ¿u×ñ½§¾$ºÑ¾)Ô¾*¾}‡8¿lŒ?Çv˜½şéÆ¾æ¾Æ>ßhK¾p|Û>‚Â>¡-¿Tì @ş5¿ç‚5>ÕR¿À¸u‰¿ Æ˜½cÃ¿¿ºÂ?s=Î¿e ‰>,¥¿t~‡¿]‡ƒ>­Òğ>†ƒî¿F»¨?Hİ½Ì¥Ş?B%À­½:¼İ>x(ÀôÙ@8¥>w?‘?„H¤¾TŠ3ÀVŸÀZN À'ï¾ä£`@P]?d³¯?ô.B?TV¾Ì,¡? nÀ`sÖ=Ù­Àó‚º¾Â/3¾GÙ@@ª?a Ò=
-Ã½¾ß4>—Ò¿ \HÀâr°¾èĞ.=°øa?óÂ³@Û@;@8qÔ=H!@ÖµÀ`)¿ò&Í>Ìı.¿ÒÜÀMúö?8'>ƒ9‚?;@Šğ=²4l?œçÑ>é‡ú½Eæ¾6·¿·ô~>K[?ª-?rÑõ½~sXÀ°YO¾‚9?ØšŸ>ô%*?È|_>%À¿Ú,=*m¹¾O”G¿]}?NM¾Ø €?R™Ï?¹*>½¤¾Â2?×<=¾Çò>%³¾i¡=^›¾(½>öĞ½‚ƒÜ=\ì‹¾ø91½`¾ªõø=,ñZ¿kÉÖ>À‚»=õ€ƒ>J¿“â’¾¥Ûh>_Ì¾«Öü¾¨¸Ö=[Íw¾™N>÷pC=_-5>gÈa>A¦«¾šÆ«>2	ù=ö3=”!½\Ü‡¿§k¾¾üXd>+›?½•õ>òñI>Ë‹Ì½¦z:¾Œø†¾ìÕ¤> âq¾ªÅ„¾Õ9¾ğÌ-¼¨¿ş#Ü>Ê
-=,…$?R(	¿iÿ.¿lPì¾á¥.¿Àón¼İô?#3‘=ìÇÁ¾æ2ë¾"g¿)XÜ>­¨€½`?K!<Ï¿”½”¿VÜ?iR9¿°Vª¾(%¾}KJ@ÓŞñ¿Ú“>SÍœ¾u¡Ş?c{5¿ÛŒ¿ğ9@@Pi½½&ƒÀı´À$gR¿KJ­¾µg?p@bÅÀ+‹~¾t+¾a•#?ˆËÀ‘—é¼FYX>H?½¤¾Y|¢?tn?/\:> ¹Š¾Ç˜?ˆ€2¿É…?¯@ÒoÂ>ñBÑ½(Ùö¿XºL?}û”>á6N¾QQÍ¿¸_?ğà‘=å¸¾Š@êš?[M5>=·@×cT¿/E¾÷¿z8¯¾i™½L|¾³€,ÀÍÌ3ÀJşA?-°ÀJŸ=v˜¿üĞp@¨J@fø¶¾Lƒ@né&@ÎX?{P¾ce½_ñ’ÀY›‚@Dåg¾ª#@ï^#@±Ù¸½t:¿Ò9T¿³¢]¼‚%1¼·ªš@URÔ>Ê¿Ù<C+@Xc¿ù†?|ë6?­2À*”¾a$¾3CÜ¿O¨F?ƒck½åEÖ=‹@¡í@ìÿ¿@'ÑÀ9¡\Àa„¾òËÎ?~Ë?9>`ü½ºÀÕ¨E¿Úí¿È
-À ¿ÂÔÀÑ½ıS0¾N¯â¾XzP?J,H?N/>@×Š£>]G†¾‰ŞÖ?¼±ë¿dñƒ½£H¿¦ù¿ß²>ò#Ô?y¦I¾­]@>2Yé¾Ä‡ ½•À´aå?bí?H`}¾DBÀğ«ô¿úÇ/@»ã?—ø¾SÃ
-¿FÑ ?6î¿‘±½õx?ò@½pe¾²ÖÖ@iŞ´@Y"¾~ß>®7{ÀûŒÌ=»\‹¾øÜ¿vÉ¾A±¿æÄº¿û/÷>÷¯Ô?aÖ@?İ5@8×²>=€>Àíıy?‚/@HE>BÚ»¾°¼@L¡²¿Ò–¾Xó,?z¥ı?7W8>Ò›½:¦|>«u”>y®²½SBc½·=>pl?¼C…>ôí½Äe¾÷mc>0p>X†§¾Ò½ªLt?¾ 1¿R¶§¾®u¾­£¿!§¾ª¾<Ÿ>cwµ>òû>>–¿;ì»¾'_=’ˆE?	?ëíß?#Éı?®Q´¾A™'¿bÍX¾h$¿xş9¿›³¿é8u½2l»¿b¿0ã>_¨:>¿V=€¤¿S+*>¿`Û…?GAê½)‚ú?6®1@Ú_L¾½	L½íKh?'í¿Ñÿ¿*ñ4¿A¿#R†À³8—@Ã%@ –¸¾ÿĞ
-ÀÂ7C@£‚ß?ƒê=¿r÷@¸`°¾W>3¾„÷«?…:Àñ~	¾é™>Ü0Ÿ>ãÄ‡¾cn¥;¹…M¿Ç©/?ª‹â¾Ed±>vé­=H‹¿ ÖÓ½v.?ğ@Ì¾Öşg>!m¿Ğ1×=íl >VÄÏ>¨úK¾Ä¡¿&2š>Å—ü<‰ÕŒ¾ñä‚½Š@ä¾?lr>†ÿå=nQ
-ÀÜ÷,ÀİÁ‘ÀÎ¿¾À¿¶"¿,KÙ?Õ€6>0mÜ¿rD¨¾yÜ•@°k?V¸+¿ŞÜ€¾BÖ¾àÚ’?e%àÀ@U½¾.tŸ?*aÀã">ZşÌ?ºjÀŞeÉ¾Óí<ÇoÏ¿%ÕMÀM»?ÄMy?Fâ½÷Œ@á™V@®å?æ7¿À¸Ó?Hl@MÒ¿;Vœ>7`µ¾Ø”¿`ÀdÈ‰½u–	?oèŒ¿*|Bfeatures.29.4.weightJ`Pù?	Rê?WÄ3@xT±?Oš?ò%@S@=@š&>w‹@‰?*‡?[I@Û¨>…¢@D%À?™â>Z£?³æ?‚­?@â=`	9@É[…?Øµ±@óù?*zBfeatures.29.4.biasJ`JfC¾½¹?Ş¿Iî’½,£n?İÆŞ¿È¿¤ïÜ¿ã¡5>tím¾i1h?¡—o¾"Àwó²=ÇÉu?v§Àœ´ˆ¾Sl5@aä<|)°¿¡â?Ã>÷ Æ=ÓS>*‚Bfeatures.29.4.running_meanJ`ÿ¤?R2‡Á	.Â·^{Áä –ÁµÜçÁÎFÕA*	À;64À®ÜÀĞwmÀÂDÂ,_@¥h®A[H¡@Æ£AÃÕ‰¿­¿ B€@W…Á©$BaBè¿á£#@˜à•A*Bfeatures.29.4.running_varJ`fÀC‚óC¬üÎC	·AğÉyBä¸ĞCÑ{©CpÛ£BôU.A.Adø¤Ay˜ÂCBğ¥BoƒİCâ¸ZC› =CíÈ+CLÉCo‡&AÓ"&B™J½C§¦A×	DD$ëC*ƒBfeatures.30.0.weightJàæ1Àµ
-R>Æ¾Ï?YD¾8¢@&íT@EL¦? @ÒN@ü½ûM—?‚mq@á%‘?0?@yšu@{¼;@³Tö??¯D+@«v+@¸äÉ?ÕèÔ@-qÈ?¶¿‘:>@¬ÛŸ¾Y&¿Ó…€¾R’¿£½¼¿šÉr>‡Æñ>ç:„¿Ö¢t?‰’Ì>šØ:¿<Xc¿@^HÀ–c>6}q?K8š¿†dR¾ÀmX?€*¿¡m/ÀçÑ‘@ò(µ?=Ñ¿¿ğ‡@~»'@N.š¿a×ÀÓ±3@n“È?HÜú¾1 Y?2·WÀ*-@Á?<¿@ÀrnŸ@—Û@ºƒà¿cÇ?9‚”¾|¯?©4>©×½¾+¿‡?Š1V¾šr¤?<ãi>¾¤{¿TµZ=b….¿aó½öœõ=	&¼@N5>ı#´¾(=¿Ñuß»š×(?0C»<q£€¼¶KÅ>Ìç¾Òü(¿–JË>­ñ¿ÉX;¿8»¾…X¾¼Ü¿v ;¾©¾ä¾¿8…1¿p¨Ñ¾‰¢–¿A {@ÿ3ç¾ İÔ¿Ah¿Ê¯ı?áî|>Y¿ã<Í@pì?\ ½ZÆj@#ó?@Z«¿Ú¹—¾`(?&œš¿OÜ½Õ“?}XÒ¼	]¥¾c¤×@e,È?ğÕ
-@»Ò·?8¦¿áÕ@`Å%?kÏ¶@\Ì•@qhÌ¾ò7%?"ÏE?¦úÇ?vøo?ş@ÒñŸ¿­C<¾›­?¤ZSÀÃñ¿½¿ú2ÀAş“¿ŞŠ¿„J@±ô%@4ÿ°@È ¾yöÀ?¼=ß¿;ãq?7.K@F¿Eş1À®vÀw&¾‰³BÀs «¿n:9@O{ÀšXÛ>?èZm»c>­ã¸½O\r½J<…?-º=¢ĞM?^›?q/¢¾Î=½QLß>iSö?^p¾¦å’?¶šú?Ñ—¿·Ø–½tDß¾±5í?<ã9@./~@Os‰?ãA5@¾á?…Ü@L*@ K¿ŒóÚ¾T—c¿Ôsœ½ºÎ¬¾Ãèb¿Àì?î†~>Np[½ºD?1«'ÀnhœÀj*?\Šâ¿[ğÀ!¿ˆ‹_¿üX½¿ü«cÀÔˆu@6úì?°o¿Šå@tı@¤É@¥@`Y@şãA?*|Bfeatures.30.1.weightJ`DÆ?¶ŸÖ?{<ä?lİ=|Â>œúÔ?ñù?²š?†Ô»>;0»:@Ö>Çó?±­q?ãGÿ?l­@hÒ«>	r?ˆÄ?İ>7\’?€jè?r4‚=]ª?|’Ä?*zBfeatures.30.1.biasJ`õ]¿{jğ?«g??¿‚rÛ¿Xûù½"Ì?Ö/‹@F#¿é›t¾üg¿[Tt?˜Ô¼¿¼¬7¾Pì½ˆrp@¥Å?9@Uõ’¿4iÕ¾i@Áº¾ë	@—~ø>*‚Bfeatures.30.1.running_meanJ`.yAüÇ‰AGAÿN§¿ƒÓÀ†‚@•™@   	æó¿t>T>uB†À=|M@Yat»^AòÑ•A  €j0 @Ş‡ëÁ)Ÿ?    QÌA‹¿ °ÂûvkA*Bfeatures.30.1.running_varJ`Í½0CRÒ|CK9¡Cw]¸@ò‰B«.zBR%+C   méŸ@M?n´ä@ŞÛƒBÈYt ¶C.ºBC   ˜‚B·ºÂCSô,@   ş¡ÒCöÿ?{˜]D¦vZC*£Bfeatures.30.3.weightJ€&@«?f%L¿ÿ_?Ì—¾;şË>P€?çï¤>jç;=nÅá=ÊİÅ=–Ã>)^?”nc?iÅ½ä)æ>´3¿Ú o?®aÆ>ö’8¾éz¿¦³®>	yî=ÀdÔ¿íj?†è“@lEB@Ì?Ø?ÎYÉ=Ã¼½Ï}1@‡:y@äÀé¡>³¾Ğ‰>Äú?x!P@ %ä?:‘Ó¿²º@À‰úA@Å{?æû´=“j¿ÂeX¿½å@¾¯P+@
-×¿¦ÀÁ¾Ìis@˜{ˆÀ_¡	¿°ÿ—¿nrü=ªbo?ò¦_@OV6>7êf>ç]¾¸d.¾Ä|?ëŒ@œÒmÀ'#ş>ãTé?{ıÀš~›¾ş»&>¼L?–#Ö<í„@ò@¨D3?:éÇ¿Üüh=ğ¿»?67×?EY)ÀJ±@BØ•¾x*¾¯z?A›	@ğQ¿Œ
-AÀ`R@¼ı@ls¿ßuô@Ê5£¾.K¿‚z6@ê¾Dÿº¿…á”À«øœ@Ãj?@A;À¿?¶T?]5¢À‰aI@¾/ÀÀ¡$>×¹+¾MD>AN?¼¿@l#€@Ri–>á‚Ç¿
-à:@Q½¶¾>,¼™¾ú˜‘?ëS
-<F¡å?èw…¿§ ?¶@H€rÀ–ø’?Iv@k@ì¾HÀöÛÑ½ñµf>†—?ğ®K>« r@£µ¿œ¿)@y½?ñòê?ÂfÀÿ×¿ºF?);¿­ì­?ö^?xTm@ñ3í¿æ¿ˆCjÀ#ÑÂÀ¿@?k–¡¿GıIÀÜ4Á?“ë>İj¾Ì¥'¾J$*>aĞÀêX?c·D@ëwä?ıŒª¿à]ù½åı>¾ÜÃ–>f\Ç>nt‰¾¾Pƒ>–"¿{‡?÷¿?tg¾½z>×yC=0è'?·£¿¿Ø‡¯¾ÛíÀŸ[¶>¨"½’v°=Ñ§¦¿ZŸí@³¶À1lm> ¾Ä{ì@;ˆ?@ŸÕâ¾‰Šë>7¹õ>GI*?ª¢@@b›?Ç8â¿vvH?Œmä?@¿z=I>²*¾û&¾?Ò=³¿®™]>Bø]¼ |>Ø%x?:À£À!™§À(@uÃ‘¾,®Ù¿	­à>èvë>[\ğ½L@×èA= ©ì=ÕÀó<Ê@vË¾Ç,5¿uºµ=Jü>%æœ¿› R?U·<ÀÁnT>QWÇ¼µ41¾Öz?HF¨@TY@‘!Àñh&À]‰@&ëx¿¹uå½39´¿hp¾;î ½<)@z[>àı‹¿Ø{¿Bün¾8'’>™v½¼R
-¿~T?äÆ3¿ÿ3»š	4½èü<?£á<¿EÌv¿[¾Ò¿Wôô>á§¼‘yĞ¿=¼ò¿ô¾"z?æ!;?¿B_¼¿¹Å¿ĞK¨?¡¯@Ù‡À´÷w=
-Ÿ¿šñ>†j@¥z@vvB>š¾ùJ§¿Z¨À¾‹Ì>ƒÒê¼ö¼*??án>yÃ¿Tf¯?PÖx¾¡"?éî?'=2?2·F@Ò¶
-¾˜Ì ¾[‚ÀÛÛÀ½Í¾šW¢>zü¼¿|mÀ+†Àrì¿^£q½pgK¼¬”@©8 @!¿t@h{‰À2@œN6À´ú@¿ã.¾fœ•@Ì”Ÿ>íxÅ=/ƒ@ ŸÙ?ge¾¿©	½¸‘ğ=†²?ìÎÔ>‰—?Ù=?”‚¾Ù|î=£ít½İxÒ?Dyo@Ò±¿¤úÀºñ©>x‚ô?àV?Ã­ ¾0…ë¿p -@¸‚ë>h¢6¿<uS?\=ÀíR#@ÚÇÅ¿›Óƒ¿ŸÑˆ?úŒ?ó‰)@²¾Õ¿jM¢>6È¾xºó½Ë¨7@v¸ƒ½ÍúDÀíÇ…@”²#?‡3?·…LÀN£G¾œbÑ?"Û?À¤½Aó?ß‹³?™³?/0’?ø¿gq(<ğô½ ©&¿ø*§?¬"?ä?>,á½@ğ÷¼øp?'ß	@L×‘>7•¬¿T‰?˜õ™?ÄÅ¿z=z‹ ¿±K¿î4m>=ú?İ¿sOa@1Ù©¿!)N>jj@¿d=?ªm?p„?I—‹¿iQ´¾ø«¼Ş¦}¼IÇÜ?ì¥@²rì>r÷’À¨œÀ;Ğï@ÑÕ?ãø¬¾¹¼¿‹Lo?çÇ¿‰>[?{ú>Õ¾ €¿óŸˆ>Şˆ!¾ÔÁ¾ş7I¾?y?¹µ¾ÑfY½´N¾ê€½Mw5¿¡ùâ=$r>Áş/¿¤z?¿§´ö<Œi?¦ho>xÀÊ>E„)¾’?ƒ’µ<±i?}ë´>™D—>yÔ™¾$3L¿âŒ€¿ÉxÎ½éQ?†ËÆ;fŠÜ=÷PV¾ö’]>Ä?ÂI?ê?e¯[¾:|ú¾Ú	>ÎØ¾•§¾,…=®l,>)mÆ=¢,ğ¾•0¿˜TC¿.™i¿ó??,Ş‚¾ŸÖp¾í>Â›Æ=‡´%½2É=Å4S¾¹Ú>Šİ„¾æ½¾ç¡>wŞ@…‰+¿$v¿½›=¬ê…½Ô¸'¾úâB¿›2¼¼ ;ƒª¾öµ•?ækZ¿	4 ?(Ü2¿Z÷b¾…g>k?¶s!?÷	?°½í½ŒR?{c…?£@¸ÜÂ¾0¾2Ş'½ú6y?¸”?Zèx=‘¿¶s?ó
- =5°Š¿œ%S¿À›?ôáÌ;¨Æ>} ?ñ
-Œ>™V¤¾ø>*®–?àşŸ>ÆBi¾ÜAÚ>W³Ñ¾6‹?©zN?1A½Á—>/ ?*Ü>ŸÅI¾É}¦¾’ËŸ¾“Ü?{ê°>?»9]?pu@/<@¶Ñ¹¾p¾Õ?ó@´@¨0¿¸É?J?œ¾©@•½ö6@¿.Ë›ÀÙBÀÕh¥?ÿ“¿_%¿2¾@]Ô¿îÜL>G¾ò>èW€?{¿aĞBÀ,FÀålJ¿]Wì¾}@?½\¯=÷ñ¾%Ù>Z®å½`>mĞ½+Ì¾®³±>ÀÀà½—;$¾a0¿`¾v¿¿:Ê>µ14?bİ›¾ÌÇŸ>½?½³ ?¢d9¿æå¿*|Bfeatures.30.4.weightJ`×Bª>…äe?iÊ€@¨?@¤Ù‹?˜@Œ²?†•¯?`´@Øµ„?Eû¿?.¡ó?¯¥@†*l>/:¯?˜vã?KÃ?Ş^Ş?úT>!	u>™L¶=æp!¾²°?m!ñ?*zBfeatures.30.4.biasJ`SŒÔ¿z±?qÎZ>İ¼¿mü@š[…=Á5d@0æÚ¾øš5@/+f?èqY?ï,@“„ğ?*×
-Àjz@ã³¹½–¾}‰½È‚º¿hœ¿²>è¿º²«¿y"Ä?Ó$=*‚Bfeatures.30.4.running_meanJ`oG†¿´™ãÀÌA›B[váÀQ{A ú”ÁÑá@_aŠ@ÜíuÁÄâgÁ›é×AêçÂ7)A4¢À4Ì¢@UA+ÀèCwÀfSº¿ÖC„Àì¿@Ùó!Aê?=éÀ*Bfeatures.30.4.running_varJ`3v™AÑî€C!D0mÎC?öÚCp…Cî!SCdÚ˜B¯$}C~˜nC°OBÊÃ¤CÌT‹CH=@B jCCsBtÓ"C ±AÄÜÎ@|‹ÁA°O—A5ı@”øtCâ¾¦A*ƒBfeatures.31.0.weightJà´ƒà>³ @–Óg> 9-?]£?oıé½µ0­¼ÊØ=ĞX¿Q8v@Zª]?)Q>›+Û?-{?úé‹?!h‡?ÆH³?(÷Ÿ@È§œÀ62@',À«5ÀÀEV¿44À&¾¿5PA?’¾·Z@ğm@‰€?Ëšk@ÚÔ®? Ã¿(œ@J‰e>º*¯¿‡Û@›	„@]„Ã¿‘D@Óş»@‰Í(ÀØ?zk#@‹·Ü¿²± ?–aÀbP_À‹^Ã@‚Z+?45(¾Nµ??VT?Š4?š¿=yô?ÔjÇ¿äÀUqJÀ	«¦Àu§À Q6Àºõ­¿	 Ì@SÂ®¾Ú7"ÀÄø@Û+2¿%†¿µÒC@>8½½¾€öÃ¾qh
-@±ä+¿©2[Àí„G¿ÙÔ=>RëÀØÀ‚ L>}©€?úN?iF?½(¿^@·Î#@j? -@ÍÈŠ@aÆ¿¯6>HÆ¿Šm.¿r\ê>¬
-À™ºq¿G†å½L)˜¿`kY¿ı1ä>\84¿Ÿ8AÀ+ÌÀÎÃÇ¿¡ÈWÀùYÀ^”ÀÃÉN@©ÅÀ<ÕM¤?!*€@¥4?-^@Bó?¼ù??E·I@Ş4@T3@!|ö?F­j?´¢@jõ?Z¤©¾„tì?B®?(•»2½X?¦Ü@Ø>z(¨?„À@ÿş=eD‡?&@ÌÖº½ĞÙ?´e?yŸË>ûªÏ?Ğ_„?óa¡>8J?!x?Ã:@ƒÇ@Ò@:¿Ë¸ÿ¿Œ:`@eî ÀÅA#?²’Ñ?¿ï=ÊÜ>¨ >"}¿s¨¾x>¾Vª¿*T¿R¹¿ÀKg><³ ?•É½‹Î½ÙÈ­?20?ÿš½Z?‡ ?ôê?Úlš?†kB?¤"õ>â(¹>ëœk¾×½ÌG?©?·±_?ÀÉ?&Êc?L”ú>„;ê>&âö?ÛÇ>Iz.?š¨?§ŒÇ>5¿¾EU¾=öe¾¯¿r…>#¿–A\¾2M?hd§¿‰G@Á4‡?‰†À4†¿\n@[Àùb
-Àq7P@ˆÀ,¾[Ó¿Ûl¥¿U%/¾¯+¾Ùn†¾í<¿(I³¾­°¹½*|Bfeatures.31.1.weightJ`â(?}ºš?µ8@tBî?©©Î?
-æ§?Ù@’îˆ?Æß?S˜?sßë=w½@=6÷?ÇFI?ûğè?×s»½o?ë7 >AR,?Á×T?Î‹0?½J>-@z·ä>*zBfeatures.31.1.biasJ`]Ñ¿„Ø?pË‰? ¬®¾Ëş@½½–I@¨´f¿Ìvx¿¡…¶?å„¯?yr¶¿ğ:@½@@üÄV¿>3@E@¾äöÛ>lÒô¾ĞM¿sT\¿Û[‘¿éL@![¾äë¾*‚Bfeatures.31.1.running_meanJ`   ¶¤¡AbdÁ\ˆş@ÎĞ¿AÌí¥@Ï!lÂŠH@?_#Â‡ftAÁ#øÀÂSÂB   ,"Bİ©@çQ.@¬í¿           €òUÀÉ…À*Bfeatures.31.1.running_varJ`   °÷íBœàCÅˆ%CCC4±CäÇC"lBgK:DÅÉ?ChÍøAGdmD=™D   ,×DÓZB¡õ%B°LÅ@            ş¨ãB©A*£Bfeatures.31.3.weightJ€$|u>Ç¬?;ëÄ¿s®À¿=†t¾N!@Lœ…>®kä?lüÀ¿8‡*¿‚³4?SáÀy¿ê¾—6ÀÙ$ï>
-ÃÂ¿ÏÌx>fÉ¾°>¿9K@?±Aú?kF²½Tb>;Ô?‡å“@/„YÀ'='@r¡Û?ú¿ …E>u¹¥@ñB¿ƒ	¸@ƒÔ¿ÜÁ>Æş¾kh§?•–?‡É?œ÷@ûış¾¯šI>½’	>6}	?NÜBÀ¨ Ì?»—=òB¿æ®?0.4@Æ«?‹‡v¿š>¬À[®
-@"’¿aÂ£¾®1À‚†¿qTã@"›Ñ¿‰T;¿‘sš?	mê¾ôSŸ?M$¿IP¾û@>wÎ¹¾¢–±@( ?(ñ
-¾sûP>Şå@‰ÕAÀÂ>y@­4Àäwò¾øSH@vAÀğp¶?°jM=‹o3Àm¹ä¿´· @“>¾>Ì¡¨¾:@Xï’½Qê?Şdç½f¼>…ÀOäq@ow>›a?æö¶?İ(À_÷?<7W>6•œ?…ÿL¿RîÚ@fĞnÀeı’¿R	¿t	?&í@
-U¾?¢ÿ?v“?œİõ?…:=¾n M½aÌ¿|ù>_•ÀK×?x¬¾İˆ¿`@¢’“½P÷¡¾’,À?şÖÀSÉŒ@º¨½_ş¿h¤„¿Ä«1?¶æ&@ï3ØÀsà¿^Ï­¿´º?Ôe¿ÙÖZ=£c„¾Š8˜¿Ææ<w†@o_Q?ÅŞß¾PK“¿]kÆ¿÷êAµí
-? 7”ÀàLà¿–9,@"›™=&SÀrûó¿7ı?Ww@Z^Àp³m>˜ó¾åÎ½^@5Â>uÇ ¾Br£>iö«½´@£P?Ÿ:„¾d:?×÷©¾YÿUÀ)(?æØ"?V¾ü,À¤-‹@²®t>´] @U\?È±¿ıËW@¿P@ø¿™_Ñ½IÑ›@p0>'‚ >{š¿#í	¾ĞT™?	s?cgZ>¡?F@ÓšDÀ\Rt?5@‘Æ²¿DÚT>×c@(œ:¾0º@6`*¿rãF?Ë8¿ŸN_?Á~İ?²M>Õœ@‡¼>pJ?Ğ,]¿nKÈ>	bó>UpÀT€½“„=Î­÷@>¹¿#v¿î±-@bı¿ª Ô?ØŞ¿‡M¨¿JÎ?ßç‹¾X/;Àw¿sÀıZ7?Õ	Ä¾‡a¾,Áü=Ê÷ö>Êíá>›'?=I?ßÅ“¿¶İ—@Ãı‹½KŒ¿‹…°<ºz,À‘QÆ@X¬¿ºfô¿éÁ‚¿Âè8Àıê…À¦vñ¿ ‘D¿«ÍÀêşN¿ÒWï¿ÿšN@Ü¶[¾C,À»¦¿x¿T#Ï½˜b…¿?ûî¿øTë=g+d?dİÏ¼,²_À±QÀŸší¿†<7Àd@¨¿(ü¸@?Lˆ?{=¶>FdH¿»äT@ÁH@7X¿?x/@	‘>Y0‰@ÑÈ¥>ÒE$?4ã$¾¸X2½·º	À1’?Î7”>Wu2½XÜó¾èˆy¿íÅÙ¿a«e?ÿ>êzj?•!Àg›@hà?wÇ%¿À†°?`ÀùÕ¿¶É›À?˜<¿À›½Œ~Ï¾\<½èP§¿ïX¿rz@Ô¹…À²´(>¼>~ó¾€Ìñ>,:ƒ½½/¿¤.¿îs½=Qæ~>]Bõ½Îz¿Ñ_>×ş´>?/!¿®A¿Ñd]½²q8¿<å¿Ú£Ì½pdí=«~¾í ´»_??³ï´½Ğïİ>ùÏ¤¾M/‹¿š°n¾Æs@w[Ô¿ãYœÀ½!µ?ªN’@^‚ÉÀ&Ì¿Øäv¾w§6@¡c&ÀN%¾‹ØŸ>v|?!`|?Ï2Ã>q8§<[`¿Ë˜›¾¹È4ÀçÂ|¿èté=sË>|ÿ>MÓ‹?	—ñ>	Q±¿â*	?ÿ¶+@zü?ûh@oŠ€@3!¢<V?Î²ÀI•^¿mÉoÀŒ»0½ÁKj@.n
->^Y0?nûü½xñ>ÖAı¿†~D@¿åê½ç=~>ccR¾l@ ?¸tC@G@\À‚+l?ªWÀB¦.À)÷ˆ@”|ö¾#^A¿¾9¾Ä#¸¿dƒ?Ù©@Zê>h@’bz¾TÚ½Ñd§¾ğÂ½h@|'à¾]ä¨>Ë8®> u:¿e¼z>q?D5Œ¿ÇK}?¨j¶¾şv@O ¶¿ød²>%¥Ç>_FÊ=]ïÍ¿Ùû…@ ›.ÁÛiO<1?Ø„Ş>¾çè>Ï*Ÿ¿»?›°@Œm­¿ÅÌ¾;2î=£Qô@‘»¿Õb—¿?`p?šzş?Âë
-¿£ÆK@…bó>Rä—@½›´>ªû9ÀfóÀ‚·?’1?•š­=ÛtC@ãTÚ=ã;>Õ´¿PK:?c2bÀÊ¸4@èã½0lÖ?Aüm?VÉ·¾²ÓÀ¾à)?«Pô>3wƒ=Ú?@‘¾Ò'?†Qe¿†^š¿_´f?Y¶#@«p:>a7Æ>8=?Y/¦;ÚåÆ>Í(!¿–	Ø?Èdg¿I1¿$7>½.‹¾‰#ÀLü	@õİÄ>µ‘¿àÀ„-?§€„@â˜æ¾uo¤> >ª\s@|Õ{@²6@wí¾CÛP>Etä?Éy>Õ–"¿Ğ€W?„~:?ÜE@ëéé¿óĞ0?…œ ?0ó{>)ü„>sP>?û¿¾ÿË¿<Në>;µL?ìËó¾Zî²¾¥ÿ>km?$B¿$^–=@$¾Òl>]K4¿ÁI ¾cË±?Õ2É¾Ò4½>Â>âg¾å>•·¾ÛÂ’¾RÜ©>Å¾ü–»=ªX>¢SÈ=
-Û»½!çj¾ä­¾+¡†>°F¼‡ğµ¼EŸf½a¿Üºx¾À‚<S«“½…Î‰¾&İL>‹L½ß„¹=g%?Õÿ4>ª;=1€?Ô¶¾ü¨¿óbšÀR0@«-?a„j¾ûİ¿}£®Àj!d¿xÅE¿HÀÇµ>k)ÀQ|z¿lEÀ	Û8>í3¿Ş€K=-*¿îrİ?v_Ÿ@ŞK¶¾*|Bfeatures.31.4.weightJ`4?„R?IJ†?Â§?nT÷?¯&Y@6ÙÙ?X“Ë?ÜÅ?ÇS½?´@ëÏ¶?şKM@·¥<¹úí?ª„Q?ü’Ğ?”®?FŠ?%"]>„@¡$A;Ù„»>g	ñ?*zBfeatures.31.4.biasJ`†Èd@7'á?ÚI^@ûX¼œ«¾ZôJ¾ñ@ïL™?‚Íû@NŞ´=Mî>˜‘<¥@j®?ö,@ ¼&ÀÏ¾=@‘>z@@ğ½?Eÿè¿@R¿Í™¿‰mk¿¼B?*‚Bfeatures.31.4.running_meanJ`d¨ÁŞ â@ÛáA¹¿ÁÊ‚Ø@ÅŒZÁ¥|AZz\@ÈK!Av°xÁ§÷›Á³­‹@äáÁ(¶ÀEÂUèL?Ò(ÈA>YİÁZv7@®¼¿êõ}AÔöà¿T»µ¾KÆÀ*Bfeatures.31.4.running_varJ`!ºCõîCèBDEÃáCcG3C;ÖÙCâãZDU2C1F‰CÛ†œC“|‡CŠû5C—¤Cıõ«Aá‹‹Cšä^CÛ\C?LÚC’ÿ	Dì^5Bp§RCã2™AU„@¥h“C*á0Bfeatures.32.weightJÀ¥ƒ¾ 0@Š2@—RÀæ€T¾ºŸ?ÖÀàny¿½ ?73¦?K¿¸KÄ?O}ı?<v?Ï”?TS@lã<@R@W@M„/À·g3À…qeÀŞ¦VÀìLÀ<j2ÀÚAÀkeä¿3z¿Ài@õY,@N¯?¡zl¾M,‘@ãŸ’@Éƒ¿Y:‘>åÆÊ?ôá“>¥!€=™µ=Í6˜>Ññ¿L7¤¼Ö?ã·c?ì”?e´¿\n	À=1”¿€ Á¿I!ğ¿jø:¿T±½Àİ%ÀA©¿Œ@@ù9A¿Xp`À|¾@ÛÑ?D®¿1n´>€½¶™h¿5Í@xV	@‹>øîc?{H‘@GŒ@’¿Äú©?£<Ù?t£X?”à¾”ŞÊ?¹‚?Yï¾Í(?¤ë¿îR¯>‰º:¾¿Òâ?Ü¦‘@ê{C?dPs?s@4Ş@wn|¿|¿#Ê¿K#í>< D¿â@Ñ®?>s§@3^Ú@r¦¿~¿;~R??&¿8À÷­C¿.ò@tzY@` @«ı5@z5r@š/Ş?ôaO¿CÀüæß¿ôw¿|şÀí.¿‚cÀø€aÀaOÀkÕŒÀè>Ú?ec@­ÔdÀ":?ãx,@£Ö®¿[„“¾Œ°?n6ˆ@´ü¥@zu@J¥1¿ª­„>ìà£?}
-&À±–¿ÀÚÎ¿|E?7î`@q| @õšÄ¿_L@‰¯@==ÀT»?éã?S»?bÑÕ¿{^ ÀhX@nÖ?îlä>á©-@ƒÂ¿C‹¾Ùu"À„ ˜À¯^•À7 ~?|ES>ß…¿¼<ˆ?	¥ñ>®[?ˆl@òš@ìé>Á…˜½0I@I-†?Q>8ÀØÈÌ½X§?º³?$R@R€Û¾6XŸ¿¾(„>w›ÀBéÓÀĞ³ÀÕØˆÀµÕ\>V¡Â?¨s¿-½•çÛ>ü¸í¿à™•¿º&æ¿»îÀRS@´Ï÷?‰¿lne@#Õ.@&7ÿ?QÃï?=™H@ Ù+@õsU@š
-?ˆçÖ¾U6@±®'@ı‰?š[?íÄl@a÷@øw†À#+ƒÀl)À_Áè¿©#â¿˜Àz=ÀÊ6l¿Pì´?Ø¹¿kÙ)¿q¿|¢¾ÎQ?ûc?Òo½·ş¨=çh?=+@L]P@ˆì»@& @õê<@Ëç5@  c>á¿>Ùód?Ï!>ç‡`?2Í¿?Ÿ¿Ä8¿ÛÛ·>IÔ’¾WÊà¾ü>ÚL,¿ex¿ÆµV¾Šs²¾£ã<_—?ğ[5>Š?Ú‡?“Ø?òe?›#¯>EÅ¡?îæ¾Ï™¾C7‹?94¿ğ2÷=ıT@Jv]@n{?¢(F@ãNş?g•¿a)¿=Àx¨?À¥Z?õÇü>Fİ¾=ú`?âR?ÉÆË<¶0V>üšŠ?g`b;¸0ÀWNÀO~Å¿25W¿5Ş?rä?U~²¿qõ~@Å@”@4Å”=š8¿éêÜ¿Q†$¿õàä¾ï“Ì¾¡ş¿ìp­¿³ÿè>M­¿½‹¿Ã¼Àº?õÙX?…(Àİ%<@Ô€@¯5€?¨ï@I…v?–(Àkq?‰U%¾B¸ÏÀØZÌ¾
-’=Àÿ À-KÄ>6Š˜ÀØüÀAØ³?•ÕZ¿8îÀ¼Ú×>‹D?q°)?bùI¿-i¥?WL
-@ğÆ¿î>@'û‰@æŠ¿½j¼@ñê©@ïg¾/ÉK¾H#µ¾¾º€@.˜6@ÀÓ>}@~=W@Ç¶??àÙ?‰=j?Wë?ËÊ?M—Ë>N¥â?I²?¾†³è=y·?ŸL?„?*ôo>Ğ1?¼ág?ÈÕ#>ˆ~?>ÍG8½İ*ö>0H…¾r0E¾G8»<S¿±–¾Ã¶‰¾•YB¿	5>/X>Ïê¹>½óÁ?†8@6ßß¾Ø§ï?ïQ@y3@–Hˆ@zé@‹>æ‡š=#¾²rB?…2ô?4›?ìİó>Ô?³D?ğ’¡>ã9©¾rµ >é#]¾Mß¾qÒ½£ß=(¤¾ÒmY¿ğ¡	?J;>=t¹>µÓŠ½ø˜?¡›e>H>qğ¾0‚ƒ=QÓ¿nk’¾É—½¾Iù¾Ï ¾È)3=–½Òt²>CóŸ>II@OÌ8@óø)@yM¿Cf@—‘@q“À‡×Ø=B#@‰Ğ>
-jW@v¼¿Ÿsä¾h;‰@&/¿j‚ @ı9p@íG¿>*Û0Bfeatures.33.weightJÀ±¬\@¹EO?á¾‚@‚$¹?½[¢>Üä(@T×+?bq?cz¾6Ş?¾3'@”È@Ê¸<?ş¤@Œß?öbÕ?G¤L>ĞË?—²Ä?5´"@µ!k>ZÍå?6>Ü?¦]@a÷=Ó"@ğ ?±ş“>lÇõ=ï<°?ıÑƒ¾ƒ\”?¼/¾--@³iø?Xõ#@Ç?İWÂ?ıu(?bg ¾-$§> }
-@+dD?BÚÛ>Ğüy?Òª?¾hØ?[UM?*Ù0Bfeatures.33.biasJÀm(<?ÆQÀ2µ»?ÚgÙ>1Z¨¿„$@Y)T¿gß>m£¿«Z‚¿(Ì=Ê-?Øÿ¿Ïz?Ô«¢¼éâ;:çÑ¾­õ¿®ğ¬¿mQX?Y9š¿>š@Âd*Àâ¼ê?AÆ¿Øv»9ùQ¿gŒ¿İ¿›;×?¥®¨¿?t¬¿A4a¿dÕ?8G>j@2#i?ã÷£?dé¥¾„yu¿ka_¿1Ùq¿É‰¿]¿Q¹ë½î~<¿MáI?ß•?*á0Bfeatures.33.running_meanJÀ µ:ÁÖWB$ÂıµÚAñ¡A¥ËiÂáÂä?zÁç@É>é?ˆ6é@¼R–A.AVÄ!Â¡İD@½[.A­9A—BÍASuÂr¼Ö@ûçÀß;ÜÀßÄ¥AYA¥l Á—§ò?ü2B»ïK?š«ù>i|ø@W72Adú.;¨3P; ÿ™Á½Ş³?»bÂOw#Â¹È»AGû¶A      µUz¿Ü A     €     €ŒaAGZ\A*à0Bfeatures.33.running_varJÀ}èC8‹uCêóDÏ™ClİÜ@4C¤bB9C°9ARCC÷<DZd2DÒşD‚},C“²KC÷a›Cj:ÀCáİaDXøBÃ4CIÃ“B,¯åCf8C5aCï‰BˆƒwD*À”?˜€?ı¤BL\{C:e;®X£<¤¾„BØ-rC¤ÖC¿ÕîC)¬‚C|JŒC      ³ü?äÌC            &ü2Cp5C*¡H00Bfeatures.35.weightJ€H¶ƒŒÀˆÎ>­î?–GÀ¡V½=…!Àz2¿ı×/ÀÔ>u¸À„ì(¿e˜?ú ¿©‰0¿_J¿p9À Â @ÒÆƒ?=–“?—é?³·½Ë˜–¿­œ?_@ÛÒ¾3¼ˆ@ù€H=çx==¾,¼õ>`}>È¢¾4Û¼¾ÂN­@d›ÀVõĞ¿¹zÀù£?
-­¿>ğ[¾ê]¡<1€+@â½HıÕ=æÂû>ó7“>Ï¾]Y¿Ü4²> ¦?óNƒ@Ja÷¿I­£>ù¬Ì¿Ñó$ÀºrĞ¿!kN¾Öº?êu†>ÑO¿‰KU=q»±À6 #ÀÀ>¤œß>â†°ÀÉ€¿Ë×°@ô9¿V±ï½…G6À|i“@+Ÿ¤¾¸W-@’“^?ıóâ>ËÃ¢?Ùî?×Ö>¶‡À¨ õ?\¦˜?„¿/ÿÀˆAY¿ƒ|
-À‹²¾3„
-¾‘ˆÃ¼sP›?DŒÇ¾ÂO¡=o¡¾âŒ>1¯Ò?M’ê¿…ÅÉ¿µK¹¼ CÀšßÁ?³ä><@.¿åÆ¾ü?›ç*@öXÌ¿ˆ>iô?¬À¥Ó@º©@Ş·¨¿jæD=¼àü¿Áü2>äšÓ>âšÀw…???^¾‡ºÖ?f¢¸?wvT¿&>ö\NÀ›ù¾ĞK@ñV9¿Ÿ“&À	àgÀm‚À¥Zü?µŸ”?`â¶?4æ×¾^
-¡=@æºE¿E†¾x½3?ƒ[>[wÀ8›¾¨³¡=Ğg¿Ib&>æ&¶>tœƒ¾02>fÍ>E:>ëõ>¬i¾+Jg¾mßâ¾i‚¾‰W½eà>Ó[>ü‰½$W>_”L¾d‰>ES¾lÆ¿Á¹?œ›d¾†à[?3#¾ÀÌ¦½5$"<?_8¾ÈÄÍ¾ŠÉN¾—?î ³»Üif=®û½Êzœ¾ ñt>4Ì>:=>èN›>Àf¬½c´Å¾­B?Ô†=·^ö=^A‰=@º€<Ö= ûD>Î|ö¾¼’¿Geé>È|L>‡Âi¾5!W>j<(?¼¿Û¥>Õø&>w>/·=ûG8½6WÎ>šÎÉ>Y“Ã¾óRö½Šc?”’*¿¿(?>ê|¾¥øê=$¾wÒõ¾ŠT6=Ğ‚=wä¨¾è¢_¾:¨{>û¾š½Áº?5Æ”¾/¾OÛd¾jı$?Ì`Ğ>H{]?¢>]<¾|mZ¾i‡`¿Št²¾ñ=½q2²¾F¡½¥'2¿ş?>%WI?².T@òr€@à-À5|œ>ü(Àø4…¿äYÀ­ü#¿Vc$À_b@ÒİŒ@§I?¬P@UTH?T·%@±©ÀÅï¾âNš>­¥?[±?¢ô8ÀdÀGï?@Œ«&?1@C—¨>‰>
-$4?é,˜¿‡“™¾´j_À¯)7¾æ·ÀÇô”¾(Æ¿¼ËÀKx$¿¯
-=8²>¢›a¾xéo@ª›(?çd¾>¼Ö¢¾S6>ÏF@ã`\@1E@l¾¾ÔÔ¨½=£¿E	ğ¾pÁ~½îw/¿}o¿’m4¾BRò?Ş{D>œJ?QŸc:+AÏ?ÿ[Q½Ø	?üÂÅ¿
-Nˆ¾ÎÈ‚=GÈ‹?j	¿ìŸ?Wg'>Àš?Ø@?±^'?ÉB? Ö¾z÷ >B©V>¿Y†=îY¾«Î¯¼PÏ>¸`¾ø-¿üÕÌ¾œ?¿qŒ¿åJá>UÑl½øŒ¾«*d¾ÖéL>ak‚¾U„½Ä¬¶½4½i¿p"¿eçÕ?Ïà—@ïÀƒ!l?GÀ&R®ÀŒcÀ­‡s¿H™À®+3@-±­@Ó¦¢¿<SÀÒ„À>oô¿™=ÔKˆ>lêHÀM±T@ßéŒ½söŒ¿H0pÀ¢B@¹%Æ½ZØo?(Öê=ÿœÏ¾—ˆ'¾Z=.>u´U=P=*>ô=¿]ÀıvU@øÑ&>±QAÀè|ÀÀ†µ›¿­Ó¾šj‘¾MÕ=ãšK¼à”¾9^?X+Ø½ªåÇ<ŠiË>ZÀaÿŠ?§RL@óã„?ã. ?Ü’À€t‘>a?©Ú6¿dr{@:àŒ?ˆÓ›>®S›¿h¨ÀÈ¶F?ˆ?ÅâQ@IÓò?!»=?fI@Ùö>j§KÀ®¿t’?u>„¿¨B@ º¾¿@µl¾à+¿ósÕ>eëŒÀóa¾?62@LÀD;K¿ ‰Ì¿Óï¿Ş¨s¾.‹¾5¡¸¾ÅË<@ı/¾ç$š=¬H5?RŸ²>2StÀ¨œ®ÀE@òŸ0@‰C@«ú¨À|q@¾¬Õ¾XeùÀÂM¤À“½¾‰N9¿)u¡¿Æ1Á¿²KÀ¿à¸¯¿tÄ¿<=?Æ 6ÀŠ\^¿ãÉiÀ½ş?@S´´?Ñ;­>-®ÀÀ«Às@É„»½‡¸¾µõ>:ƒŒ>èl›=ÚÜ@O) ?ñC™¿—ˆ»¾Ï(h¿7F©¿­7·¿jã¿rñÀ±!¬¿g[ü¾YR’>úê¾….½ÇÎ˜>U>¿tŞ<á2U¿[,¶¿bØ‚@I½‰>n¡@@_?&ïZ½†m=ÀH÷a?ê¿7ÙÏ?4_0¿‰B»?Ècê¿{q@şš`?rŞ4?MYDÀc_…À¬¥¡>…é–?(z…¾èšÀœ¿P”‡?òt6?Ò:5@xA¿ã—¾„Ö	>(dß¿ %!¿HÖ?Ê‹¿÷qO@j æ¿ÀŒ£À°^>é&†ÀÂr‘¾Õ®Â½éŞÑ=›¶?Ş™¿½9©	¾e’¿IÀm>»¯^¿¦vZÀ¨yEÀÄ¥$@UÔÈ½ÑM¶?8wê>¥ÊÛÀ¬Ÿ&?¢=ÁJŞ=ÉÀÔéª@…j£@ÑA4À‹şÀç¾pÍ3Àü²>Ÿ ¦¿ıÜË?Le?¶;?dÜ¿/C$?ÛÆÀ‚UU?ş~@¡å¾©Æ? Ç‚¿]•²¿!Š?ÉíŠ?‚;?r'!¿†I†ÀXm-¿,7ğ¾Ğ¾/Ï^>wÍ=ÈSW¾[3À%Ùú¾ÂK¾“dÀÆc½‹Æ¾=ó¾väS?Ö½¯P¯?õcÀİ	½¾°Uº?­Í¿f¡¿-?kD¿8uƒ¾I
-¿êİŠ¿>J2@¶€Ï¿P|m?$©¾ ¨=lèÎ¿Oø>?=Ìh?¦+@\=å?¸Èƒ¿­ÂX>ßöÃ?”Óc¾sò>Ü'?RY?ûî?‘×KÀ’}Å>Î> @»úÿ?Ùõ¿?d’ƒ¿ªg¬¿ßóÛ?”Íƒ>¡a¹<’Ió?¨ÖC¾õD=0ÇG?²"D¾´»P?©Ï<>şŒ¾¸Ê5¿[ğ¯>j¬¬¿ìp½½°Ü½ÕÑƒ¾ø¿G0*¿4Ç&?j¿¾p¸¾ÁÈÆ½YŞd¾c…¿Ãÿ½Z½>tjI¾sn­¾ÑŒÑ½_ZE>s@&>qŸA¾7H>?|‚Ã¾Àgè=4.d½çkÚ½õ]G?Ïe‚¾M£‰>:A7¾·åE¾¯£¾[åY½a¸¤>^Ïj¿YÛ>°©å¾ák{¾v*`¾ßïN>•xµ¾~¨ ¾Ğ{/¾›Eä>~9´>JÙ1¾›ÀÕ°b?ƒ­ÀÌÑQ@¸ˆÿ¾ŞËÀXnˆ@“r:@Ş*>­6¿a–v>¾˜¹¼¯Õë¿óŠì@×÷¦@ÕL„?!ë)?J4¿`¸?cyÀÂ}[¿Ü~?Ëu†@m4ÀíÖ¯¾0´	¿£?Îƒ¾<ä;å$‹¾õq—><ÇŞ¾¦\…>Gœş¿›’>á0í¿ğ§I@^£Î>Q: ?^ –¼c;½V*5ÀüAá>(`«¼­Î¿-úÿ=s1æ?J¨<Ùç$Àø¶»¿ğ—?Sc¹¿aå:¾Ìâ,À”FbÀ¤\Àê“¾_àÀÁSÀoõØ¿ì„»¿Ï^AÀZÛ%?Z”~? I@¿¼UvÀ*î@1C'?Õ½^À˜à@«`ß¿/4j¾Õ+~¿IáY¾K‡>==İˆÀ!!¨¾9S¿èñ)¾´E¿†`Ÿ?g@@
-ßì¿×|ÀÅ£Ê>#ÍZ>	¤V½Â@¼Ü"¿Qëõ½}Wë¿Â‚M¾n~À¯8yÀ¶''¿I/?°l?²UÊ½1,?H¿¼Ã7¾ËH…¾µ¿°÷¾¼?B?{7¿>Ğ—=¸sÔ¾]É¾‹š=ŞüÄ=o¢^¾¬äƒ?Ù§<² ¾×Ç>‹å?&“ù¾İö¹>ÉkÈ¾ÌĞÌ>zrd¾ËÎm½É ?Ó˜ã>Co?²76?üKE¿H˜1¿ûM>Ft¿÷°>//=
-–½è°²=k ?ÕB=á×N½ª=3[,¿•'¿>4¾+Q=‹‚/ÀÄŸ?L	¾’[÷?“@C¶ˆ@.¢¼½&tï¿¬˜-@âaù?y'N¾-¡?àGî½CnÀgjî<Ô±Å@q›¢@YˆÀƒk,=0ê1@Û‘¾fğY@¬¦Z>éeO?]0¿ô´e¾Pî’>Nş~¿;õ…>s3@·JÑ¿ya¿<j?è‡?< é@İ*’@z=?ŸÕ=Cñ½Ä¹›ÀÏĞ®>÷ÆÆ=o|¿¾°ŸU=q
-,?-Ÿ¿ÕÔØ½y>3 <†¹K¾^³Z½ÕÒë¼èG¾#Õ¾ª>\­(¿ÏP ?eó?—=#*¦>ÚÃ¾Ac"¿).<É%?>‚¯¾ bB½L~¾¡ø=ï#>ğ¥¾@º>A_l>+ÿ
->T}>gı;<»A¿)z¾$‘¾ŠŞ‰¾2ú:¾B’Ã¾—z€¾·rÍ¾(BË¼Š‘š¾Î>æ<Å<_¾‰†š>F©,>Np¾è¾—È>8?;kĞ>xø»>G¥ä>[–ˆ¾TÏ»—Yœ¾Õdï=%Î³½n~@=qu£>
-Vo?¾`?9ú¾Ùë½‚â£¾FrŒ=À¿Ã¾H¼"?\¤·>–¤Ë={¤>M8x?à'¾ÒBf¾×&Ó>­‹?=í¿0?ï»½Ñá>Å™=p©`>-¦½àX.¾šã²¾‚}í¾cŒ¾Ú'?#[Ÿ=<÷ƒ½g{¾ÁX=“¦Ì>Áë¨¾|"6¾T¾à&¿DÊÈ¾tv>ÕB¾¸D7¿·‹²>YáĞ½Ù?İ>pÚ¼>ç[?êÍs=Şÿ>·¿L3¨¾E¦S?ÔÈ¾ÀT=Õú?bÖ=kå¾ìg?§Â@¿ÛŸÖ½–½?Å—>Ğ­ö¾0=Û à½2j“>XûÌ>>>wÑ¿5>]|Å=¡&¾]‡”¾¼‘>ro#½Aµß=ò‹!?07C<J5d=Ü‚=‚—÷<—Î¾>#õ½<ro¾¬Ù¼Ÿ¡¾â`ƒ½UÑÀ…xÀë¾c®¿ê’>§ƒ¿O@¿½o>+‰@¿êWô>ı3@¬]˜@‰‰?Cü¿ÔÍ$? o?GÑ!@X8‘@‰V–¾ªøq¿m„¿¨>?¨¿2W@Ü??ú ÀIoì>ã¥?\O¿­°¿2J¤¾Ÿ@Óç?ûIƒ?Mh¾¶õ?:œ‡¾ÇLİ?WN9?‘ñå¾\¾ÿÏ_>Şª>¸‰½g–¿:a=FTÀ°Æ¿ˆiÉ?ñ“±?ÌÊ‡>”íD?=¾Ö¾·6”?/V¿Öqà½ÿz?Bˆ\@ÄÜ?Yã?:ßœ?	ò¬?\@à?Fõ @`Êˆ¿áÁ~?-ÑO¾ãP@…ı7?Uè	¿.z
-@k”’?/:R?@IÀ‘2ù¾×xŸ¾L´¾l`¿(.j¾áÛ‹? W¿V¼V@Y(!¿³g¿Á?´?ì??Ò@Z`>³æS½?æM@‡¾}e·>6Y?'“©>S;‰?‹Lb@Ÿ¶=¾Ä ¾ñÎ?hä9>KÒF>[T³¾•)½Ì|]½eÙ>ëa~¾<Z?î™É>æş‘>O^h>»tÇ½ñ[<æù@=“|N½ŠCÇ½ğºŞ=µ¼Ö*†½d‰L¾o³j<ø™ï¾Øã—>òy¾æh¾#®>«œş=T…¼ñá˜¾±®I>ü½L‹V=OÛP¾¨©¾æ¶€¾»”b¾ºÓ->ñe®½Q>>êÒ¾~›¾²5=Ñ`G<ªËÖ>DÔ<?Ç…?–.ª½¡3¬?¥Ì´>ôlö=ĞÀ\tÀ¿Üõ?%ŞR>å°SÀ	Õ	@Y@„PÓ>@tÔÀçµ¿Vİş¾âí¿hOJ¿„,—?d0Ø½­øŠ?+[@êÀÍ ?#½¾í¹?¿ó½}Â>	?ù4¨@HÏû¾A]º?ß²@ˆÇh@ÄÕ©¿h•–¿r`í?VØ¿ĞCp<´LB>Ô–Œ>‰İ¦>}iÄ¾Ë*Ø½¥qè?6¿¿FâA¾0şa?å‡ÀDWÒ>Ì¾m‹±@KC>HÖ¿Ør•¿‹+?ÓŸ,¾Ñ™@çšH@4c@?‘¿Š©¿¼a¸?²á%@&Ó¯>9+>ä¶?'´¿5Ó>ë`NÀOãŒ@([³¿|J$¿Ç?‘â¿#|?İÌ?Øç¹?á¨<v²@€K¾¬f‚¿1B¦¿ÄCÅ?ğË†@¡Ä-@°¸œ? =¾>ô³s¾e!¿Ú[?‚¯?]M¿gèª=f	Àx‘?y5˜?:°÷¿"Ì¿CÖ>¿¼f»*ãö¿ÕÑ@Eøã?ë„¼¢v&À  ¿‰G¾îSÏ¾Àp¦@ÚµÀ\!•ÀO,	¿ë?êa@š„¿Òr°¿ò½'@ĞDú¾zF×=",?¡Õ¿÷¼Î½DÆ?:²¾â¥&À5°%?êmŞ?xÃ­¿Ÿ-@Bÿ?G0Àß?‘¾?EW¿9§,?`ºP==¿ró>¤Mn>û(¿Úc>vVş@yØ?”Yœ»?‚=¾vG«<å§½FÓ¼=E=e¾$nA¾q`½@ÄU¾<z–<Wé>>'6—>ğŠñ½ ZW» FÂ¾Ï=ıÊÚ½jR0¾/Wµ=&¢¾~¾>Qv5=®.½B 1<>š?®)Ÿ½—¦Ä¾©h>Zª¾ÒåĞ½NÜ0<à<£O@=~O=Ğ?Á ³>ø•Q¾%>¶Yœ<ËŸ¼×ÑÓ¾î®¿³ıC¾Ü·÷<‘L¾­,¸½=)¦½f”'¾¡qf?õ>¶Ê¾@2k¾ù>ü«¾'×¶¾eå¾°m¿Ÿé¤½“;Û>r?>HZ¾ïV¿eÚ«¾Ğ¦¾š»%¾Æ<¿œ8®¾eú½ >¹3\>ºÔ‘½8ßË½·g±>g€3¾s‹A¿¼"¾39¿'nË=5‡¾n÷¾º÷;¾şb<>³ ¢>Œ3˜=—Â¿Ş{%¿o¿¯¿â^½½ >#>“È¾1Z8½¥I=&¤‡>ˆß'¿xÌ(¿˜l?©õ“¿)?ZÀµÊ@°Î >ÎÌ?èÛV@î1^@7ÿ¼İ›+?5—+¿DÆ•?›(?-•@Ïš?LW@™Vh=ü+Â>HÔk?6Ú³ÀºÅc?ñM	À Tt@
-Ü™ÀÌ2Õ½E¿£¿'ø½A¬”¾‰•»hBÀA{·¾õ/µ?Ïì¿¹ÍÀö%@ît7=Ë €@Ç?ô?=~?Œ™ñ>%Bà½dÜ?Œ€?ÎÎ¾Â¼ÀÓºÈ½/j
-@'@»E@×bi?™ßN?İÍn>÷y€¾uÀl=Jl¿wÊˆ¿±Ym½5g?‘š£?_Äw?t«
-¾Ë™™¾¿íQ@”Ê^@¤‡ô>‚­"¾ìÓk¾óZ›?l?L¾t¬,@å£Ø¾¾Ê£>µñ¾tıÁ>„ƒ?Qé2?/?çÆ?Sï¾“ ‡¿g@½kµŸ¿Å
-ÀzÎNÀM¨¿y
-¤¿uT?š¸¾d¹.¾	ët?y°=?ù2¾!pD?Ïá—>1V¿„à¸?ÔÏ@B0Ô>!˜*@MjH¿¿ìŞ¾â|V?&Æ¿<°¿¿â:Ì¾™„¿}lJ@yFË?nzÇ¿ÚØ+@8·³ÀŠı.ÀvK2½é#Û>ö3á¿€²>¯œe¿‰:@š¿?ÎÒ?lÙ—?–U¿"#Â;h^`¾M­ñ¾)Ö*>ëMÀ¾=À÷ ¡¿ä	“?”Vó¿V1À+ß¿¿õ°ã¾Z•¿t-¼Iô¾ÁÅ?¸6¾QÑ$=vC?'aÑ>T°@€©(@ZÀ?ÂA1¿Æ7ÀJ¥4?ö›¼ßQ@,£?næÇ=Ê”¾‘—¡@ağĞ¿ÂÀüø4@ó†ÀÎ°@_f@i$=’²Ç¿I
-À7NÜ?¥Gt?©}@V‚-@\GÀÍ7‚¿„è~¿&…ƒ¿wpê>âc@~€@ßÂƒ¾D…ú¿©ß¶¿: Àid
-@- '@¹;¿>i? ’.¿˜M¾f.¾­{á?Ôô>"À¾x¡x>sn¾ó³?Óä´¿}…Ì?Îô@Q(lÀÉiù¾#$á>òĞ‹À„ZÓ¿ñáË¾ág2<Y—)@=–’@Œ@Î^¼¿Gg?ä—?W<Ñ>S$ÀnZ¿tÏ<À`èK>äZñ>æ÷¹?‰æ%¿‹·vÀ.ª¦>^?Fy“¿Şı¾p(>E»¹@,Œ¢>ñk{?»”¯¾š¾¡¾Lri@m!@Ç8N¿í¿'Ï²¾æó‘<è*à¾‹?Üï¾¯3c>GÛö¿‰Ö<><ÊÔ¿M”?Sı’¿È/ÀšA–ÀR”Ak?¿làª¿=U@÷)J@È­µ½4­ë?®%ñ¿…ÁNÀ<ÉX¿|E£?M¥À@[E}@À°?ÿ®&@*°@$³$ÀB¡”¿U(À—™V@Û&BÀHÜî¾”¡¿9å?oe¬¾'I?Ù3¾ìgÖ>áï?†•?¿Ã>ÊVµ½üA>%aÈ@	³i@Ñº[¿“Î±=ˆÌ‘=¹d¿¥Ë$>L@;>&ë¿Nçß>ÚR‹=¾]¾òÿ @|­8>•‘ú¿ô›¿é8¬¾Ã*¿ÿ²ù¾atVÀ_¬‹¾ı …?ß`À|…¿™‘ÀAe@Â¿p>ÈêÇ¾Ë×¾¿ùKÖÀÆ‡²À€&—?Én¾ ç>Q®@
-Àİ1^?Jé‚Àì¼’¿~éX>6ˆ¾™?@ä"?›(^Àõ>‹wÀ?¼ş¿× ¯À½¦¾Mî²¿ó¼¾SMû<Ùª@İ™Š<«´–¾œ§w>\T =…Ì?¹í>Õ¿¿Şœ>+ï*?­S>…"©¾“ç>:¢>½Ä±>\€? A5?Æ!‘¾}¥¥¾×rË;t»Å>ïP?é´>jæ=¿8™²>º‹>Ëğ|?Åë±¾pÍ±>áü¯>]ñ·¾kÕ=bÍ¿iè¾¿Ù®¾½e¿o9—¾i&ó¾û$Å>y±¤¾ùıü¾h]Î½d(ù>3|?çü>Ä?ÇÛ>Cß
-½­b>{>Ñİ<Â‚`=¡H1¾Ëw¿,¿…/Í½a{‹¾k°½Ÿ-Œ>UB)>pò=7nh;ÔŠ¼´;?ÉC½gmÔ>;×Ü>ÙT,= ¾vë ?ÛÜ¾´Fè>ã6>y¯½òõÜ=jÎ=%G½¾Õå>¦ƒ¾ÖÜÏ<oúœ>¥oé¾.5‘¾ZCî<™úÒ=Á÷³½²Ğ¯¼×ó–=úã\¾x6¾uş?¾£¯d>¢›ê>A§½Àµ>ÄñË½Sn=n$§¾œD?>°Ì;½µ›;¾<y ½vdO¾*l¯¿‹†?¾ É?Àß¾©í>{¥À4œ‚¿#Ãó¿R;)¾%¿IÀÆËF@ÙşN@zërÀÖÃ=@ØpIÀ&ÀÙzà?;ıˆ¿«@ùà?qœ<?’™˜¿ÀÀ¼ô|Àø@¿Ä^gÀßW¾½í<@“¾cå À’0­?L¥Á¿(
-¿Ct:Àˆ†?á}?ÁD,Àñ’ÀHÆj¿m?g=y@p¾ƒ>Nã¾È=krÀ¿{¯;@Mæ?¨o?ZJh?XÙ.¿KŒ£>q9¼¾ŞÆ—=ås¿•š’>kß?öQ?Â:u?)¨>?Ì5?ˆáY¿O3æ> ½È4> ¿–íù>öP½™M?µ¼B¾åó?ˆğ<¬y?2?MĞ£>/Õ+¿×ª2?•,?QU¤>ÃO>s~n>+o›>»²e½äĞö¾Ø>—§ø½m#?31¶>tÈB¾°)#<F¯U?;’y?Ó±¾&o
-==á=İ÷z¿³O¿ãBŒ>Çr¾½I$½//¾nßø¾Ò^Ø½Ëÿ&>m]=¯q>û[b¾7ƒ‡½WZ¾J¯¾§ä˜=×Ù>$+m¾P=Üûˆ=¾=¥Êú=q8'¾–d¿1j´>0íc>°Q>ëÑ&>„}—½E¾j…>(î½BÄd= o–<fš=T€¾Œ¥U¾L¬¾”'ş>TÖq½÷*>§î›>î(¾x -¾úÂ¦¾²ñ*<ÔÈ½¦Ö›=XÛ¨>y9?-*»À4Ïu>7"ú¿¥†å>+š'?Œ>8À§;
-?¤	‰?Ém¦½Èª½Ã—ı?†l)@ÅŒg¿%ÀSœ?àas¿Ş+®?/Á[?€—@ëg‚Àé?6£?“h‘À~‚¿F‚q>!ñÀ[M#¾°ş¿JòŞ¾Á%†¿ƒ½r©¿ú6Q¾†0À0·@EÛÃ@å›ä¾àª>ñ_û¿•D‘¾j°à¾P&À@1¿¦fN=4='?~·Ÿ¾ÌÒO@û,œ?K?%Á+?ÜÎo¾‹ñB@?†¾©n¿¥	@À‚¡@À^â½w²\@V™<@8&@%ã›¿fä”¾WI@(Ú?X)Ğ¾å>¾D6•@(µ?_ab?£á@u·?±3¾¢²½¥7ò?-“¾2B>(µ=rè¿kÌ=>ÏÀÌd¿¯ãb@‚—A@7ØÀ1L@Ñá7?/À?ëŠu½A~U¾çN@0Â™>şÆ>¿µÑ	¾Iş³?£µÀ¨Uk?3à‹¾:–¿ŸU(>·v>/g¤¾¸Í¾·_û½\}÷½X¼T¿‘Ï¿U%q¿`ÈÅ>ÓŠ‹¾h¯>Cy–>ıõÑ¾mà‰¾UG¿´Eğ>—N¾w"¿WÎ¾r©è>Ÿ?(n·¿S
-?ä½V¼s[¿k Ÿ¾†`I¾ò)¾¾?<<Å¡‰¾‡f¡>ÌÍ¿³ºµ¾Á²>¿KğÈ¾d ‘¾àYV¾ß&%=ßµ­¾ôğ»¸/š>7‰¾ˆˆ¾Ó‰¿£F>¤fû¿FˆN¿d2Ü@É†B¿1Ö?u@¨>í¨—?ºu7>ïMŸ?İAÀëICÀ¿ER>‘2W?Qö?ök$@ë€?i±X@:->=Òç?ä~8?İAOÀŸx°@k	9¿ÇS¾¯ä¿$…]¿âü=4Û¿gÈ?¿–¼½ÿ›’@rÜ?ã}@p½¡æ‹?(4’@ç[@Ÿ•?(7@½¨9€¾t%-@3üª>‰§=ªª®¾u.N?‚×¿¦u¡>-v½''†¾-Kñ>/õ>/³>}à¾ÓãE¾z:Í=å·>ßLå>#ò>/3?¿¿kûæ=0“>”O¿ô?l&‘¾Î‰¿È¯æ>€¸’¼ÁŠ¿ûdV>U€²=U\¯>r»¢>,Éì¾Ì´?ÿĞ•½íŒé= ]\=±»¾a8>¼;å¼¿Ê†?Ÿ>èœª½±™ˆ¿Øˆo½‚–ç¾
-+â<—t¾wšÇ¼µ¾Y>,D(½<¨ó¼W`¿ ã¾‹M¶½å4C¾	Y¼>[uæ=4C=¯›ò¾¾ãì=.M%>ÂÜ>Óh™;„¾kÿ¾j!(>ò&¾ôT¿>¯¶+>Û'>êÆ?jeY>n4½<¨n>ÒNz¾Û?Ä«¾iR¸<s=½Ó½¬E=Wé½Û)A>ıã½Bş>¾´Â<.p¾èO>% À¾ß1>Hw<8T6>dC?ÄU#=A±Â½?G½-:ë<’Æü=yê<¯>L>ìf’>[e!@‰xT¿)4?ë„¿¿âÂ¾ªĞ¥?~}¿4è„¿Ùd=½¦G¬¿;`Ä>˜[¾ëvj½ç—??sn¿ı6)ÀüÈ–>÷RÀÿt¿±@ƒN÷½îRn>02Ö>Şô§>L‹Æ>Ñ"B?]z¿ò(>?M1İ½éOd¿{ú>ªó,>‡BF>‡RÁ>ëÀ¿~Š"ÀwB6¿9O¿0Z¿ÄO
-¾åK‡½Ì?È.½D0R¾Œç¿nlæ<„Î<Èêî¾*Û0Bfeatures.36.weightJÀÎ»?wk@ò‹?=‰&¿?q-j@×Äì?ûéd@/Uc@]'«½ÉQE@¨YÓ?@ØÜ>éÌ>os:@Ï@ú?•ÿ=aè?f)c?büÕ?3)½?Ÿj>Ÿş%>ïø?D™‹@³¼‹?ô`/@ÑP>¥8
-@Íú@~‡·=€8@ƒ|L@Y¿?"°ˆ@(¯l@ {×?­‡z?ÙQ¼?„yA>X*«?Fß?å‚»?O¤?6¼ò?'Ç<_Ä>¨Ú?*Ù0Bfeatures.36.biasJÀC@H¾ŸŸ@Zs“¿eå½¹g=Ô¾Æ&?í¹>‘áÕ@©Z±¿˜m@ÿ1Àæ2Œ?4ÊD@(?àÖ…¿™Ğb?/=-¿Sšz=£Ì–>ã4Æ@+#À”á >úÉ?‡¥*@{}>âü„¿)‹É¼Õñà>)‘À°ÿ½+]3¿{+@¹>d•!@Ø<Í¾uEÂ>Š„}@;<¸¿³jX=28 ?Í¹¿ãº?>áC¿>²À¿İ e¿sB?*á0Bfeatures.36.running_meanJÀ?uÀb_ÀBMõÁ)è¬¿Ü°z¿çX"A\;=A¥õ¿ç¦íÀıôÌÀ —?m£Â  ÇAÖ‡¿ˆ]’ÁÿØ$Â_Öe?LeçAók³¿ŠbN@Õn†À“7Aû¡B‚æ#@º/A%8@›Hè@¯¿¢İ”ÀEÁ>¾AÛ#ûAÉA·Õ?Œ$Á¸ÌòÁeF=@2_>ƒäÁ®ò@Ã*¸¾W…Á$æAËÒÁO3eAğ\½_šÀ
-ò@*à0Bfeatures.36.running_varJÀHõŸDr¤¿DP qDsAòPB¡ÌDŸW-C©rE
-µŠD#¬«DBğ€D	˜´D
-U6C·ïÙAø’Di¼tDg—’BÔ‘Dƒ•şA‚‰A
-ÛLBìƒND;;Cå~¶Azu‹DŒ_Dc	UDñŞœ@ˆ£SAAµ©D©‡|C0¹DhV¼DÏD*{EjótD›çAs ®@¶eDqqñA(Ô@O6©DExîC†$bBY¬}DtÃåAÏ,‘@¶¦®C*ã0Bfeatures.38.0.weightJÀR¦Ë?Œü?+ßÍÀÜ«>#y¾­{SÀ¥§Ç?=c@’a¯?¥H@Ğ0S@xn†@…)¾¦oÀ)êŸ¿*9
-@=1°¿ÿïŠ¿Uí¦@ÛÅŞ?hj@rÇ^¿	K¿uŒ¿BWÀ@ÿ×¿ò$ÀIS²¾>°&½ãw?»½C‡¿šœ?jvt¾nş
-¿z¾€$u¿÷”F¿¦±Í=<G¿[ğº<^1 ?lQ¿Úş¾\Q½9q¿îL>WÙ¿º|¶?j¤ë?®ª¡ÀÔÆ=@µi?æ>¦À2“ƒ¾"<æ¿[»…?×D‹¿0¨u¿C&¾÷ÀÇL‰?8°'¿Ò¶@
-°¾š¬?Ÿ˜ï?/¥NÀ#….ÀÕÃ@niC¿k|2?H	î?ÓöCÀ›´À"@O®#?æéÀÕ2Ô>C4@îœá>ıí‡¿f´&?¦7¾ÉÀ„”Ï¼Ñ³ó¿“\LÀƒ-U@ÄÙ@ÊÂ@İßÀ?´²¿˜uo?‡Ì¹¾—Ü¿k?ß¸G?É{À&’7ÀšäÎ¿q0<^Â²>Õ‡ÿ=1¼?@j?*$?'ú@Óñï¾YÍé¿¹j3À¢&n¿×5;e¿ånç¿m‚„?™ãš?™Á>¹=Ñ–K=Hí?¤Öÿ>×9Ê¼H?Ú”?ü¨Õ¾š®•ÀR÷‹>Î–À€#Á=Ø?3a–¾fÀ·¿c‰&ÀIÙaÀ&N¿èÕ+ÀvGÀ’+¾ß´¼î¬ä?TÈ¬@K
-@1‰Ë½u¿,gö>Hª³={Š¿Bs??íü¾Bµl>ßÀŸ?ïÖ¿˜@ Ó,ÀU]¿¹ƒë?Ëa„¿o†IÀ5lÀm‹ÀJİ¿C¿¸™ú»]Š7¿şU,¿`¥>5` >İ?²½OX>eÙe¾D*¿Ú‹â¾¥
-¿ü†±¾šAI¿÷È>RS²½0ª¿Èõ¿ç9f¿U‰>_ŒÁ¾¯‘ƒ¿ø°¿øî¾øËQ¾Ø¾#/iÀîl•À³ÊtÀó=@…<(@z@?™?<šÀ K?ÆÚ?¯Q>@ËB]@¨‡¾ãW@d”@ä”A¿Y@>+mi?Ğ¿½½Ó?=F¾DÔ½»§˜>üĞ>2õÓ=°Y?W¿M²À°Èğ¿õ•F@á&aÀ«}¿§~à?¤úÀîg¯?;xœ? aF@©NÕ¿!8E@ÚÚ‡@ğü2= Œ‰@R†G?ù¤¿¥bn?°yE¿TÛ¿GDnÀ‹Ø.¿=-”?75I¾hõ-@mq¸?md«@É/½áIZ¿¦°ê¾á"ö>|O½K.¾zÁ¾jÿ\¾7¿4dÿ¿º>EıB<r³¾’ÿ>¾°¾qz¾<º¿Ğ§¾1U©¿4èwÀ0êuÀÇ>o?`9[¿-­¿x€@@×:@œ
-O>IV¼¿/7Í¿ËŒÀ¥¾$?RˆÀF">Âçi½/’n¿éª~ÀK¢è>£MhÀt²¿K‘b¿nxiÀS5@—´*?O®ˆ¿:tÀFI5@gYæ¿¯ƒè¿ŒP0@í¿jğ4¿èİ¼@ÌŒ=?óë¼ÀŸè¿\äFÀ£$2¿¦â?|®ò¾N&I@n³?Óún>+ˆ’ÀÉğ>¤/À^.¿@|œS>j4ÀdÕ|¿_¯‚À§MY@R;@Ã§Ğ@Çœ=wX½°8H@G[¿oS†¾Ï6@Ãô$?xl²?tö=·½->8°>>ë¿÷ôŒ¿¾A¾Åa‰¿¾2á½ò=J¾÷·Â>¯Š¥¾<?Ÿğ>õ ½”¾Ä™>õób=Ğ!K@@ù@sĞ¿×FE¿ÿ+?˜ã8À{À”wÀó¾¼t¥]¾»õ=’äj?V,¿MUf?:~”?¼*¿µ5w¾Q,¢¾ER>õÜM>÷'¿¦½üNœ>AÂ¾—¾¸«q>ÅF¦?Ùwã¿f–”À‘@@Ì$V¾u¾VQ¾?.À(@LÜe@1…ÀyÔ¿Œlˆ@ôË«¿…J¿Ô’	?òö?QD@nK@—ø?A	=€,¾=jÏü<‰Ï#¿=q¿µ¼2?¥Ûg¾ˆå£:3y·@;^Ò¿ğz@ü&@mN¿I‰ì?&ì5¿ò ¿MdÃ¿?ò¸½rş%¿¢-¿?K·¾#ÍÅ¾dÛ°¾+¸¾Ki&¿õ”¿¤f=p@‘¾Ä˜•¾]V½ı™Õ¾¹§¾8‹6¿<œ¾)Òò¾†kÙ¿|?
-‚~¿³–L¿ Nˆ?‡¾¦¿¸³	ÀL© ?^mµ¿*İ0Bfeatures.38.1.weightJÀ‹-<@Ô2@uB@º+.?Pº=ş@Ììò=¢‚4@¹íı?Èp@…¦ã?2–@Oõù>bd¾»ã‰@]»í?¼-‰?{Ò%@‰Á=o7ƒ=i,9>>®s@,¸›?ÿ£n¾˜Ú¸?Y @£ó>@1UC?Ÿ‹y½¤~@jË)?¨· @£í?óæ:@˜Z@—@¼$= ¬€=ùÙ‡@W“?ĞY=2@ÀŒ?“=<­@YEr?³si?³Î¨>*Û0Bfeatures.38.1.biasJÀY$¾À¬‰¾%%:?1µ¨¾|x8¿"ñ–?fÚÂ¿æÈ#@ãY?·7¿wJm?>“å?GC<@Ôâr¿P“À@>%•¾|††@áF7¿‡’‚¾8Ì|¿›E¿Ãß¾R>‚¿µz6>F±?OV¿º‘‚½B"¿ f¿‹ş)@F’€? ,¿5™‘?U®G?Êsâ@@Ü¿Ã6¿"|œ?:i¿½³ë¾k:ê>#Ò >¡dÈ¾çd]?‚vq@a£¾%ê}¿*ã0Bfeatures.38.1.running_meanJÀ˜çÁä'Ó@iƒ?  €Â©¿¶<À•'À{¿‹@
-†ÀÛ	IÁ˜ı~@UŞhA  €â«6@¬)	ÂÎ„—?   üÿ5ÁŒ0ª¾¾ÿ ÀğoMÀÎÁ   … ¤?ùÕÁğ,õA–Y@  €°2
-ÀnöÀ  €ôZ¯ÀUj¦@eşOÁ½–Áü»'BÀS¾/>?i:¨Á   eÑæ¾3_¬@ç»[?R?j`>@  €s¡Ïº
-—gÀ*â0Bfeatures.38.1.running_varJÀ–}C4$™CX+C   ;¸@³=`CzVªAiïqC-‘CÑpMCzÅãB¬¶•C   ´à?Ë&Dî˜C   eİ5C ßæ>õoé@}4PAÅ/D   fó(@>Œ1DûCä¯C   ´åÕ@ŒÃC   «¯ƒBƒ'CH˜uC.ÛCnèDFM@Z??™I¶C   =t?ıëBÓ‰åAtİ?Yç‰B   ›ğÎ:l\B*£H00Bfeatures.38.3.weightJ€H2w>c!€½¨rÕ½Çcö½¬8<?Q0>ÆØ?e‰<D÷ş¾ô›¾ãb”¾ì®t>s• >Mp=È­;¿»un¾ÙpJ>óë¾îP>áÒ½âKÄ¼ø>>ĞÑ¼ïQ>GïÛ=¢f˜>­€ì>S=Ù=FtY>©å½ı@†>üàÜ½3ı¾5Wº¼?Èï¾î¾É¾³ >¯³>´"ô¾ˆßÆ=‘ø‚¾3t/¾Võ¸;wr>Ğk?9V¿e)¿·$¾2‡ÀY\ ¿	B“?Å])¾:§><À8óZ¿ÿ@:n¤ÀSË@aŒ ¾¤º@Åó¿·c¿ñöY@Âñ?ŞÉ¾ºªß>M7ö¾.„Ó>¡¤ï=¡-Â¿9ÀÒp>¿†'À_ÀD¿>?¶Ac¿—_ò?ãpk>=Àë‡I@;}¨@D$<>æD¿ô½ÏH¨¿= ?|ù“½u¥p¿ÁEÀ5†Ÿ½J\Ààş‘¿¡®°½şÉŞ>¯ÆDÀˆÎH¿·&õ?„Ø#?Ôj¿õIÀz×?š)á¿Õ‡?¥¿G²?È	O¿lqyÀç–÷;Y1¨?VAÀëÄş>±OE?%¤2>bév½Ø¥å=€"½µcH@'6G>u.n¿·?Kà’ÀÂ¬=üu>‘ÀÏ¿¥%	ÀÍ›.¿Æ;?¿OF%À3ù>iº8@‰Gû>p£>•Íb¿f³¿Qù¾ ³æ?5[m?Ä_X¿õ@VG[ÀÚ{>@+¢>º#@ÖØ€?ğe?^vï>@AG>9uK@C(†¾lM-@ˆÁ@KG¿‚?
-lT¿£­?ˆ>àt•¿{($Àö¾İ¾(ëü¾7Ø€>İ<¾ê.¼1<¥?¯Á¡¿÷ş¾@ĞÔ¾OÕK¿1Ö<«Ü>µ‘V>&âü¾€òŒ»{5@ñ¼@Ğ;µ?q|¿¿›êÒ=Péù¾•‘´?ÓH¢>¥†¼øKâ½Å.?§+s> ¢¿=’¬¿\,L>¬p§¾ê>Ámä='×0?»Úì½šG…¾^€½H¶m>çß¯>?‰Ñ>P"‰¾[ €½ÂÉË½%3‰¾ÖKĞ¾º-6¿²è¯¼½Y0>ù™3¿ĞJ;ìš¾Ñ¢>KL¿S(h¾\V)=1¿½A¿a€?‹ê‰¾š~À¾‡ÿ–?·wœ¿®»û>|Kz¾Ç¯Ñ½kúG¾pßq>œœ€¼6=¶¾_>z‡¾}•¾VÏğ>Õ%‡?ù>¬h¿=Ç¾éßˆ¾ví¾ÁŒA¿FÂÕ?nÚÀö7>Z<…>S^"À¿?­j@¤B°@g(?N8À1]o¾ÌB? tA¾J
-T¿ˆãP¿z½¾»0I?[ˆ½*xt>[£g¾¯§¿gËå¼XÅ”=¬EE@¡4Ä¿u†¾¿WN‡=wŞ|=Ï%n¾rƒ?ã]`@.k@«âĞ?0OÀØbË>K“F¾Á€Ğ>µıø? +¿‹A¯»Aº]»s?%Qç>Ç´­?Á@¦‡=‡¿ñ¿7À8c–¿óÀÁbş>^n¾Ó(¼«‘µ<ıÏƒ¿©Ş?³¾1,Àd;¾âD@DAr¾L&ÌÀµÊ°À¤¦?ïëÀË?qÈ¾TÌ•>ZÇÎ¾.%ÀWÔÚ=p¿Ú¿ærm¾}–„@C©´=HÎÖ½'êÃ=¿÷@CÒŒ¿0Lö¿•¿gwMÀÍTÀğIõ>Òà<?>ÉÀ8:>!áú=È @1ã3@MşE½†Ï‹¿Ë?ÒŠ=¿Î-?¿ï6“?VœfÀƒÆÂ@şó‚>°£²¾5h-@€«¿BAt¾:ÿ#¿±{V@Õ@-Ï?Æ©‹¾ŸDº=$Yy?“%À—¾¨>Ö=¿Ç¤©=l±û=2Œ¼d„¼ÀP!À®T¾_ã?éÀ’Å¾{p9¾ŒE¿nj}¿VÀæL@w'–¿ËÂ@ûHú?œŒÀµ˜><-¡¾ùï¿|WA?û2…¾OÙ“½\@!!?*)Àw9À«·=jù­¿åíŸ@×ğ.?×ÛÀââ7¾³Ş*½S0?íÄl¿}pÀ¾æøw@Î˜˜ÀëG@…ùŸÀ&ô?ŒSè>„y5¾ËÎ¿NÚ–=:¿ÕUp?-2??aã>ÍƒÀ³±¾9…¿Ó9“¿dôƒ¿‘ƒÀT“ë¾Rh>K[/@}i@Í²¾ÀÅµÀ~jÀ’ì?NÁc¿g+Ğ¾ÎÛé=Šâ@ÌÓX?bÕ¾â‘À¢×e?—i’¾ÆŞ†¿ë?´ Ÿ¾
-j*¿iqB@ŞùE@f??›>9*Ù½æAéo8¿a8•@Ë1æ?r¾]¿@Ms'¿(š¿Ê‚	¿Øè6¿ò?Â>O¤z?	LU¿@¼®à|½|»ÿ½‡é?ßÈ¯¿¡Z¾ğ¸>¿ïÑÛ¿Ó"„@
-·>tsB¾Ã•Ò?¥@É€)@KØA¿$ÿ@k³‚?`´¿oA>}‹>€9ÀyyB¾Ø ½ï@€?dˆ?˜î¾àœ¸¿R‡ÀĞç¤½õEn?Á¾/Â‚>|`X¿£íe¾•_ˆ¾9>ññ@qâÅ=ÅDÀ¼)Ó¾bt¿~'¯¿=<ì¿é£½Ã?ÿx4?#^=°r?³½¥q#¾\Yû½¿X:Â¿³ò¾ÿ©•¾§(õ¿»Ø×¿ë¿™Ê=ÂšÁ¿.›=ÊÔ=­DÑ?y¡:¿Øî…>‰íƒ>¢X>ÀU¤=ğÂ•?XÒó¾7†¹<cï…¿Ô²%¿ÁÎ¿Ş·¿ßĞ½ÿğ;>ïP¿-d²=Aäª¼Å]½rs¾GÍ€¾	D<¹>ÑÿÖ>¾Ä¾EX¾âÛ"½ŒÓ¯½q$=2r¾ñX>xÖ<¯`”<ÉW¨½mÖ =}
-ê=l	Ğ= >?E^T¾½²4½.ú­=%µ=›©‰¾ŸùÆ½û !>¿Ú&<º§=÷>3ï†>ùüî=“,,>4’=Â³];Q§¹½Bÿµ>Åzï<Ò2¾¶Ç„>Y›>îÚ½X¨¾{!ã¾§ô9>P‰ˆ>òâ;¾2½R”»>Ÿ½ãT˜>™U¿Àˆ>dNÖ¿¶¾$²U½|4¾y¿/ç ¿5T+?ı~)?î?vU½OW?´·>ô3”=‹64¾
-f¿?–4‚¿¥Ù‡>-Øz?ş€¡>Û¾˜4»>óü=2k_¿—Ÿ ? 3¿´Ë³¾}46?ª™?ù÷™>7îÁ½®Ó‰>gûÒ> d¿ÓŸ½&[¿†]‚¿DÀº¾é1¿û¾X}¡>şQ
-¿)ù;>¦Œ¾|3?S>{F…½€ò?ÊÕ¼ŠJm?ç‘z?!¿Lòn>ú²{¿cş3?h ¾˜;“¿Ÿ9„¾-©I?½+¿Wîç<æÿ«¾‰]ï½±aM¿ ¤?bô¼U?/	(?|ğU?—™=†UÍ¾­­Í½,x»=ª‘>mS­>%¦?+¿W”>×hH½ö¼ğ=Ï¿´¿†p£>=Ha?å…?¶$e>«i‚=h¥³½X¸¾âb¼r .@ÿ¤±¿˜6•¿–Í>£¤ >$•„@D/>‡@¢¯@±ôSÀ¼
-ì?|&ÀâÒ?U&§¾K—N¿Nğ¹>'.ğ¾ç±À”ãp>µ×ÿ¾²óß½Áõ„@kj>Wß½Â¾>sg
-À§*ô¿àä¸>ÿR¥¾:§Œ@7~\¾°åR@³Tî¾JùÈ?ßg^ÀØA“À^4¿ÉdV=ú.GÀpr—¾ğ6n¾JvÔ?ÀÄ|@åE¾.]¿mèKÀµ¸¿Ñ50¿)6>û:~;ı\¿/Ó4>'eÚ½²Úº¾Õ8ä¾–ÿÍ¿É,m¾ñ ÿ>«Ít¿Ó¤¿#¼'Çl>’»ã¾‚ø¾§À$¼‘"¿Ì°×=Èu€¿·8!¾¬uÓ¾ª>‡Ğ¬>ê~¾8om?êİ?œÉ=x¼>Ü6’?»G¾1¿‹“Á¿÷¾{$’>È¾"¿â•c=Pö->‰@Õ:h<µÈ½¼b+À$îİ?1S½NÏĞ>Zob¾§d¾o?T½?¬$a¾æË¼¾Ë¯Û½MJ_¾â»>šª½I´'@uÌ{?ëûÀ‘ø·¿ÌÏ?cS°=®PD¾ø’,@(W\?Ó=ÀYË?Â‹ >Ò¨N?0ß¿îÓ7ÀƒO¨?¢MÒ>'´¿u<ÀAï‹¿ùÅ^=ëª½æì‡ÀûC¼?¼• ?ù²†>c+¾½6ô?q*@‚¾°Õ:[ÃĞÀe®•>fŠh>IyÀÀLJ¿ñö >KLÀ­$\@Î"¹>gÛ¿Ö6sÀÍßº? d¦ÀcÁ$¾¿&ñ>‰,²¾ †ˆ?^×T?Ÿ;Àí›=>*AŠ½„Q ÀÔ˜ë¿«3½?èZP?ÿe¼Ó.¿Yëå½šqô<¸Cê¾K¡¼?ãLÀ¸M­½ûŠÀ0TÀ@Ÿv%¾—é-?+äD@wsy½`¼À/¹4@ö„ş¿t²Š?Xî¿øâ=©5<ø%@¸“±¿³%³>Np¾“BB¿êæf¿Z÷¸ÀXË¾_]¾=ÜØ?kpG¾»²$@ƒ¾)@:
-±>»ÊH¾qëš¿”l#½¯P?—RÀŸÚ–½Î=­@ªQ>A7À„¿±¾Èè×?ø[ì¿›ú>aF«¿Ü?Á“‘¾¼œœ½ˆ	°¿""@Ê»]¾Q²?Z¥d@¨š¿¸€¯=ÜC2¾BÁ¿@`¿iÀï¡´¾Ÿò-À`oş¿L(Ó¿ÚK@âœ>Ğ£&>’E?÷¨>°¼>C¨¾h¢›@B­e>ïh@Ô’Àè}½ï»¾ëËù>åSo@r'wÀÌf‡¿âÇè¾M~	À¡Ë.?¥q¼?< À\ë?(m¢@Ìæ›@XŒÄ?}}½ãê@Ø(š¾Z=>nÏx¿ê¶¿í¹A?N?â&	@~ğ>Æ¿›,®¿áÌ¿tá:¿À²=È•¾P:·¿Ÿ8c@æö–¿½Q·¿C™¿]7Í@™FÀ,Ö*¿ü'š½I.Ë?j-2?aÚ¦¾áö¸>îÀQÂÅ>ğ€SÀBÛ@Ò?.+?İ\?ÉJ¿#ag;M•Î>X<ƒ·¾#]¿ëWò¿Ÿ?9ª¿)"(½SÊÀ
-…¿åpÑ=Êå†?»÷*A˜fL>R«>–ó¦¾›¿Îïÿ¼Iâ–?;º‘?åK#½ï¬¿İ²£¿lHí½o´=ÕÕ<l6sÀ˜@Ş½3BÜ?2¿ŸR¿[3ş>À™½ƒ9;¿ühèºyt ¿¢¾İÎõ½ØsÀ6'¿to=]j9¾û¿®¿fRz;Ø!3¿S¼ÀÑé@ÆÛ?À³ŞÓ>¢ï0½Æ«¤À¥&û>às?w?w¡Àúú'¿¬æ£@Éé³¾	–¾†Z7@é©-@ò2>ÃøI>jl8¿RÕ«½+œt=WŸ@@ŠÀ&üö½€ÀBÀCw?haØ?ë|]¾\«2?}=@x)@<rÀGÂ¾©„@N?éÈ¿_]½P=8'xÀ±®C?Ÿœ¼Ï’µ@C·g?´²¿d9©>Ûæ:Àq›‹>TƒF?lâú½ÃÙo¼ô;Oó=í)Ì¾éÍV>^¼Q«o=Æ ¾0­²¾‰w¥<bÑÉ»~—.¾ÙŸd=ş¶½‚ên>Š[	¾§úo¾¹ı¼#x¾‘üe=Áò…;ÌøÊ»õ0Å½tïã½u 2½â·æ¾º£½ ¾P½¢š½6’¾¾!²¾‘¾Ã[¾Ã“½3ô=ÂiÉ¾ÌÉ=4“½‰Qè<pø¾ü­Ã½Ó˜¾OÁ¾ÔÉÿ=|:¼;5è<ié“<k[¼Ñ¿>j›İ>ëì>mQ˜¾›Üˆ¾Ôƒ>?¤êt¾qğ½&&>ìó>Ô€‡=ªÙR¿uÌÿ¾‡ğÎ½Ac-¾zKN=¨¹¾±=6&?VÅÈ?ç¼U¾Û#_>‘Û?¯>?Œ¸B¼¯ˆ¾™U1¿¡O=úñû¼
-†j>óÅn¼‡¿´ƒ—>Í¼g¾@2¾Øû=ÕöÚ¾Ù`D½î á=/¢¾4„¾×: ?ûD=ˆÁ¾^[|>fk½éÛ=•¹¾»b¾»r=Øè<=Ø“>W¿ÂıI¾Zvj=e’±=5k»¶4ˆ¾|s`=–§ >Òs>Ã›!>,.?qı¾À¡>Lœ<œ¾.„Ç¾è¾OÍ¼>˜œ	¾í<QU>º ¤¾†+Ê=¶£’>îã>ï= Ù®>Ö’¯¾¨>@Øa¾2—í¾hí²>1Ü= dœ¼K5¦>½"¾	’†¾-Á¾g9Á>+ZÄ>„à4>r¿ÉÊ>?›RPÀ¢€O½“>µı¦>rÊ(¿}`dÀ¡ÀÒ? WÌ¿êæè?âùÀUËG@øı¾‘­n¿WL–@Ä È¾År’¾Äö6¿ÏD€½×û>„À™@dxà¿<¦¾Òı”¿™.%¿Å9?ûV=v©>coÀ@@JÕ?o…õ¿­@ãˆWÀR©¿7‡ş?à=c´¾³$@	K`¿”u¾¿Ç.À¿…²?~N'?Ö>úìu?\±¾®øG¿RR-?X/¿X53?Dº~¾í=ù=f©>œ˜z?"˜>?K²¾9¿¾Ø°À>­Y¿Ê¾À©í¾°ù–¾Æµ¾ˆ²]¾•†;< †X>°?³çã>+2>gÃ„¾·Œ7>F”¾xG·>õt¿v]¾Ï>•êd?{Ç²?äáT½PH¾Å=¾Š(¾Ï½z¿‚\…>Æ³ğ=´—½?#š"?–Är<?@R?¢U ?`A¾¾²2K¼‰‚=ü½µ»ß’³>€V7@f+¾µÁbÀ1½|C€=ùbŒ@ãåL?óÑ=
-~@€K*@¹A¿,,
-ÀÁ¶.Àá…İ>›÷EÀ?\@óRå>¹6†?†®£¾ªä÷>T;’>á
-e@zÀHQ<==vÂ¾hÀ«fŠ@û@’½>Ü?úÕƒÀ5ETÀ‘µ×¾(I\@	åœ?5ø'@êkz?óŞ¿j¨Ü½×pÀ½àW>œa4½xõ£À,Ùp?c>æRÅ¿0­'>M£À>éÊD?ÓJ¾NÕÇ¼mÎ1¼²™÷½­
->N¥>séÃ¾ˆğj½Ú|=Pe`=å!.¼>,½	!‡½ã¸¾¸œa½ q>Zh£½ıì²½U~D==—>µ¾ÄY)¾æÜÎ½º~]½qt‡9
-|¦¾D+>‰?U¾dD½®ò>Â£½ºV˜½Eãç=Œ÷¾óv<€ÉU=.Q4<ñ—Ş=+¼Æ=”Cè=W¶5=¨—¼>šX<Œ$½üW=Ş«Ò=|Àª>€øb>›²Ø¿"{µ?!P»½€h>ÊÍ>µ>à¨›¿ğÆo¿Ä KÀsš³¾‰–İ?3">ÀàÂ)¾~½_‹?Ş9ÑÀQB:>ö*§ÀÒ@·>¶Ó¾¾IÄ%¿¿S¾³ó?¼:
-¾lš¾AŸ@³%2Àö‚>ÍaÑ>„T@šÖaÀ€A<½P'ÿ?Ã–ÀxºgÀøL‘¾Z	?ÂÒ=–½@ª2ó=a ı½lÈ¿ZJ@*½½.@ÌT×?€ç»¼r”¹?¸?Îûæ½ÎPC?Ÿ 6>!D¾\xŸ¾ê2Ÿ<G÷J¿ò#(¿ÍUR?R•ª>ûƒ>S”¼$wp>9„=›´=¸M/¿¢KE¼n\æ>>›æ‘>#Õ6¿#/O>¾íÌ>xÔ>m¥>o¿øƒG>şW©>±!J>ÀB¯?,´¾f­Æ=E~7=ãŒ?ù	¿÷¯>V"¾¥‹K?¡".¾ã½AT¾2şç¾ºı+¿ÒÂ…<“O-½öèï>&d?š°?t?Pc ?º\[>ib¾/S…?_—¿ÈÃš@EÈ?Š¼71ü?DPÀ 6x¿nŞ=Û—@ÜÏ>à í;x]vÀ(®<? ÒÏ¾ğ:¢<„¾À™Ğ @ÄK+½wÚ@ò·?£/@¸tQ>	¿#ë£¿ú"_ÀÀ9Aµ?8KO@Sô@¥1@ìS>\ák=ÇÊÄ?	.½.â>=”ê½ùŞ³@0“?'šl¾•’ÀÆ¬€¾<Óa¿-0¾å˜Ì¿§É¿@ÿ£Ğ>3P =ø#ÀÜ)×>zækÀÁã^Àóö?¹Ì?x1å>Cæ@û…¼“Ê?À•¿`À”Œğ>¾É¿ôä¼µk£½Íµ]¾Ã/v?Áç?½3>Jô…?Tq¿¬\a?Àèú=S„ó½ğ‰¼/É¾á@Y@$‹R¿ HJ@³qD¿¹ï/ÀòÓ¡>×øª½|%²À^®¾¤0¥=^.@üI@›$¾¸E?–±—?pÁ­½\İ|?½r¿Ç¥Q?e„@•Õ%¾s>=åW=¥›î>òkv?õIš?+ÌÕÀ“Ã4À›C€¾w‘)??ƒç;üN;@¹Õ¼ãB‡>'·@W¿æ)–>«¼Æ¼¡@ÀÀHSCÀy¾ È7?RÕ¿ó	m¿‹ê]>?ñù¾`—À„İ¾?qš@sĞPÀ©M@ÔÜ@£xœ¾¨×µ¾R Ô¾³rf?ka>=i<_QUÀª¸ƒÀÖU<‘.¿°Üø¿VÍ%>‹Ú¨¿Ğ–B?À¤¾X¿9¾ÉÎ>³8?à)x>-¿%­>uì¾hO7¿áÜK>û.»­Y ¾Ò„–>[Û>¯¶à>¥¤¾ªâ?ŸÕ!¿˜5¾¾£¿_|?'‰§¾·F>mZ"?……Ç¾×S¾ïş÷½¸?á¿š=ş`›¾kÜ>“¿-³¾gtç»T`‰¾†¹¤>Î†V½V¾d`š>k=/>"«€¿¶†j½X€(» š ?e>½N,?Uº½€u}>*Ÿ>Çbn>r³p>]k¢½¦t´>mÉŒ>Sì?¾§'L>¿W×+½u˜¼¾ÅŒ5¾J}œ¾Õß>@å¾‰¿½íÔ¿LŒ¾	z_?óÈ=#x£>½C#=Ğâ¡>gª¾úM,<³Q?S=¿•§¾ÃUÄ¾Çg¾ë1Ã¾­éÇ¾w>>ûbŒ>¤Ï=7Î½ô7¾*…<$Ùh½Í»…÷Ì¾—i>âN¾Y^x¾(~¾Ù#ÀìÜ{?+¡¿ê¥?‘y¸>Ãõë¿È6´>Ó¸;¿{¡ÚÀ.ß†@ì¿5w?¢5‘@d§¾wX_ÀVºp¾\-è¾O&¨À“œä¾–T?S©>?¾	)À!æ^ÀÍfá¼/r„@ÿVÀK½?pU%>iÆ?q=²@Am@Äyã¿Š£œ?¦_D¿üÀ`ğ0¿´µs==©¾ÑÍSÀ3dÍ>“œ^;ıØÀ(«@H	â>å¶Ü?·¯@%3Ï=H‰W¿‹VN>ÇlR½¡¨[¾-nÌ;)õS>B#…¾s>í×Q¾‹Í=å[—:%j“¾¾ä¼abQ¾,k·¼„l>0·=>b e=Â“&>ÆTŸ½a¹>ü®O>5~N?‹õ½µ†¾½Ãß‘=J¥>æ‚½ëj}½;Ü>xö¥½
-¾ƒ/¾oa€>dy™>€¸c¾Šª>ÇBö½DxÈ½Ô×j¾*¸>>Å>v ½}= ¾™¢f¾Ë÷½v¾2Õ$>ku>,p¾—î:}aÓ>¦'Ì<=pˆÅ¼lŒè>=`Ø>óeb¾JY;¾şu¾Ö‡¿>6}[¾…¡¾y­w>¥”>…’½‘Ép:”oÏ»ãï½<„T?u!¼QVr¾ÒğŞ¾œb¼=.EH=/É–¼ß×¥½á†•>Pw>XÅV?Òş¾Ü/7=	r¾¾Â¾¿‡¾è(¾í–ó<FŠˆ¼âD=ÓD"?n’ğ>Ör…½½´¢½ü+×¾Ã#‡¾—mz¾¨d@¼=G@æ@}g÷>,Ø>RüM¿Ú9ª¿ıs?Ûì$Àœ3@#LÚ?ÔØ•¾F…?€©ì½y¥X@T7À2˜>*øCÀvoà>+ş¾İ¬ >îÀæE@Ï¦>äÈ’ÀNx	À+@Ïc¾­•Ä¾Ù¦@:(Ë¾C…?Æ[Ì?‡¾@ÿl?ï§Â?ÓŸ ?kO½HÇ?	²»?Mı»FdÖ¾Y¹æ@]‰U>Dz¿dú?Ğ²Ï¾V,¿/GI?vİ?Xhì¿¼eR¾ïö³¾®Ç ¿¢¯?ß¶ @€+@»Q¢½ï$šÀ«9:@}[ÀÖyX>0'ù?B@Şv.?@ü@HÌÇ>°ï­>qÚ«>Ã&j?İ)$@
-j¸¾Ì³ŒÀÜ^Ô?i¬ìÀ—a¯¼1¾~¯|ÀìsfÀ`›¿µƒk@Ô§Ä=l_Š¿"Á@íÄ4¿;(>Dl‚¿øKB¾¨8¾Èz @lu¦?]…>Ñgk??š¿)Fg>)¬+?ölÜ¾é¤P¾³¿ÍÅ>Ìg£>K‡'¾'7r¾;µ½«ù½ÿ$Û¾Ü½">)¾P=‹=<»Rê="Çî>7À>&(Ñ½™¹>˜WG>1¸I>)Å”=¹š>¨ƒg¾Ün½I$ˆ¾8—¾:Á%¾’"Ô½'a¿ŞÃÅ¾y52½ì<Ï‡>L¼;¾ìlÈ>Ò4†¾µf=ø¾Ü½”F?˜>Æ*¢=fãÔ>>úÍ¾×­¾(ñú¾€r>NÛ<V£@>ºD<Hü²½_¼Î=tæV> {€¾¤M?óÏ–=·;½Né>K&†=SÔS;0†L½I0•=ÛÇƒ¾Pø*¾9=Eåı½…<x½è¨?ø¹N<ÙÓÏ=İåÎ=}vp½³$¾ÿü½Ew‡>ë¼‘,¾‚ˆ½¥Fn>9ã–>Õ¸¾aÕ†>õö½Ç:˜½˜#Œ¾u4N¾İıÓ½åòÁ=®Û€>$¯q>½Ãñ„º`,¾1¥¼:->³¨€=õ…=g¾$•?#—?N(Q¿Ú"f>9}=J¿÷íë=)®¾S±C>‰oà>ÿv?‘	¿†ı¿Ïòí½iœ?Â^¿M¸v>{Ôg¿ËËs½.Şj¾£˜?Tf½jÀ>¨?½7$?Oœì=9æ¾µj?F¿5½å¼>îm>XjŸ>c›¿õŒ>–Ğ?§r>šuJ¿ú2>^•^¼T—ñ¾¼Ñ<?Ò´Ì>Ü-f?–Šé¾ÙƒF¾óp=­'¾òB¤> XÀXT’¾NÅ<ÒÃ@ğù¿\¿î…¿Q¼s¿a­¾@Û²ÀfÖÀ[p’<Ÿ…±=¥'@¯fÊ¾FYu?Ñôr»Ïb>;ä$¾Í'½,Àp.&=?C®?>éäÀ¬ÈÊÀ*ä½`UÏ="?>?=)?z¼¬=m³:>p¨ ?…se?³¾@]N ¾„m¼ïäÀ*Ğ†¿ØFN¼ L»¾·Âœ¿×¾Ÿ€ÀX‡”¿úŒ8>9. ¾™9}?Cæ¾Úöï¾W&¤¾šR=ë,?0&¿yÉ>uP?–]¿EvŠ?ÕP>Ü”C¿¸!µ¼ßTğ>›%=¿³6î¼F/q?¡E˜<t>—c¤½3¼¾-?V@>s3>ıæl?p!‹=bè½¶›·:SüØ½¦Ç>e—=ŠÁ>_Â©½*Ÿ"?Õ ¿vRo½O:Ë½â«ƒ?'§K>ò0¾®®?qcŠ½•I(¾J+?nÑ=ç£3>?¦Ù>ïc@¼áè@S?è?î¥‘½|CB?h’÷>/W\?×F?5Õ¼~M¿“¾¿WqG?s¾ë 2¿VD­?jÄ½Ì§3ÀÒX>ër-½ ò¾ŞÃÀ}ã“?RÿÚ¾ÌP£½FèÑ½¡P%À2†¾"·#¿®zÀKp?)GÁ¿¼®@Ç/—?ò2¸?òå¨¿Pó=Ò¬¾r"”@Šø;¿†ƒu=ÿ]À;º˜@–9†½„%¿¬û>„£¨=Kv¾ºbE¾ˆ”f?¸¬>Xdû=ãÊ¿m„¾c ¿,!Ğ?T£*?I»Ğ>yÉš¿*n¬?ú½¼ƒöi½î?¼7?¶;¿šÿ¤?U³¤½Ä=ŒÌ'>ÇVí½“>”=væƒ>E>¾‹:¿	êÀ¾ƒWc½ˆ2½hâÅ¿Äq¾¾#õ,?æT?Á\¾ëÙÈ>…ï¿¶ ^=ùV•>¿
-À$B¾P¶Û½x>!¾—x¿3"T>ZN?ï>EÏ?œy¨¿*İ0Bfeatures.38.4.weightJÀ¯Š?ˆ@Ñ¼@Pñ?NM¶>îİ@î#@İdÄ?=Ÿ@ƒ˜'@çy”=Íó²=ù°ã>PB’?şÒ@.fü=‰¾P@îÆ/@¶&	@«k@„Ñ?\c*@£à±?—÷y?aY’?×@‡ø±?ËŸ@jÎÇ=áy‘@¾Î>Õ6@i@-g@.ô?Ø„>z2@ó|Œ?6=’•ó?ô[C@Ş³=’H=äú±;Ú‡?@¯‹‚?¼
-@¼Í	?*Û0Bfeatures.38.4.biasJÀ	H‰>mq@SÄ“¿ıÀŠ=?Tx @+~%@¶ê>%sX¾Šñ¿ñ“¿Ç2¿ö‚Í¿âÓ÷>¿ø>ru×¿è€?Ù|@—“*?±uÆ?:^¦¿ééş>Rr…<~)É;à‰Ë>)¸¿â¿»l[?YŒ¿ôF3?¨å¿³7¿ñı÷¾íe|¾!¬¢»×8‡¿™?U,*¾Yi|¿ÄØÌ>¶>+‡¿nû5¿ìİ¿°@Ûd¾Ñëç?¨ï?*ã0Bfeatures.38.4.running_meanJÀê,ÛÀ:k@àGœÁl‹ALÚ©ÀÁ½A‰‚ÂÓš½ÁâEìÀ¥FœAŒå8Á.Âh?~+@;uç@lGXÂI€ÁyĞ™A«˜HÂ«”DÁX4ËA¹÷¡ÁÄ•%ÁJIŠÀÕf”@ùkH@ÂÅA $@£+¡Àİ2~¿Bz2Â˜J@…İ1?L ÁYÍA‚Ô@Z³.¿ØÌ±Á]
-À‚N”?$ì„A®9wAä;q?¯×
-¿Äë†¿.İáÁ±%A`?"UÀ*â0Bfeatures.38.4.running_varJÀÅqA’mDä-DØ•[C0w±A1ˆ®CÉ‘DU€DÁD¹ü†DµdC'×L@@™ BÂE~B‡®D1ĞC Á–D9³UD-Ü-DTsDÍ|•C|ÜÃD$†@š}pA9ÙAÈåC»$BºMlDL—§?„ò¡D.¦ûA¬m4D3éADˆ•D©QLAOGAKZiDşàmAJAzuµCinSDoÄ)A›‘C@rÜeB¾¬QD°æÛAÑÊ„D_ôB*ã0Bfeatures.39.0.weightJÀ&?¹½ƒ}Ò¾˜ú¼ûFœ¾:º¾2u¾ˆQŠ¿¿Lí¾©°>OM^@B ş?Atı¿bk,@Ê¡¯?L?JÀÚ€A>$•Õ¿çKÀeŒ5@RB¨?=¬
-ÀV*\@CĞ@£H?(XS¾Kc{¿Ÿ¶>»Ş¾Q\\?ôz¿Dá”¿º­¶?·çR¿­d¾1=@'¶¾¶§©>‰´?$™?¼ª?’\×>ü#*¾•õ¾YÆ£¾>ßñ¾‰< ¿+”‰¿f1ò<Fù:@ªşˆ?Üä‡@â&Ğ¿-ÔOÀòÏ-À%›^¿!»Ö¾ÆÍı¿æ¢!ÀRˆm>RZÀ? ÀñŠR¾¾¬¡ÀgÊD@D…?ô‰J@Oı£¿P¡¾­Q?–"w@lX@ó@¡ë½¿BZr?œn€@şì?¿'9ñ>ÃÓ`@®ìû?Š£?2Ÿ|@K eÀî&ÀÇÀkB¿³9?‹ĞÔ=ÆÍu?…÷£@Ğä?)9@WcW?Vçá>0ç…>]\¿_€2<ŒE?‘İ¿äêQ¾L”ú¾µ‰¾”Oí; –±¾œJ:UU¼ªÚ5½0Iß>uæZ¾:;¿‘¾+Ä¿ı?áÊÂ>Z°?Ø‹J¿ÆP±>Tšâ¾HXİ¾–<u?îş„>¸§¨¿€Æ=Ã¾Úş¨¿º8K¾ºíD¿…b@Ü×@;Q¿Eè7@èş?´pÖ¿ˆÒú¾÷‰vÀX‰dÀÔˆ¾	~¿†æ9¿7› ??İƒ¿‹X­¿tqô?}yW?\ ¾ÁÒX¿S1ş?/â?É~OÀSx =i²@ĞOáÀAp9¿nI@šÁ¹ÀmN¹À5–QÀô´LÀ¶é­¿ØQ?'¿[Õ ¾3A•?“O¿SÓA3îÀ?tÃÀ„Ç?‰¯å¿Q¯å¾@§3>Ñş?0hC¾ºj_À\6ÄÀµ!Î?Kº >{m ÀÍ¹<@‰4@b´k?U#°?ò(À}Ø¿ÓH4@Nß¨¿}@¾@A†‚>ù·˜@×Çº?–+$@åör@D·ã¾Èt¾¡iü?¬eÿ?’¨¾|oÉ@PóØ¾Pl\>Òú§¾c!=¿JJ>Ô=³®È¾EÜ½uÌ$>¿	ƒ¿¯È9¿Öü¿Ïœ¿Kˆ{>¾R>)¦>O‚-?èÍ¼oÜ=¾AÎï>BÌ¾>Í0Ä>DÑ>Æ—	?-§†<­>D&@À-İ¸>ú¥t@·"Àbp‰?Ÿe„@ ë¾NÕ?Ğ@yI;¿aVª¾._¿Ù°¤¿	Z¿â"F¿_Še<ĞÊö>Ëiâ=ÎÀ­€ğ?,¶›>DäŞÀ°?	? ‡?YsÀÛ@?a\‡>İ7b>w˜U¾g•
-¾rÖ½¸Ki>SÎé>åş»îZ>?Ø˜>ò&>N£Ÿ>‚ªŸ¾9ı$¿¿‰ ¾iy4ÀKvJÀIBó¿u'ÖÀ^®0¾K\¥¾¸‰¿nÇB?+å?À÷´>w¤Ñ¾—íg¾íÿL¿‡İ@v@r5À›?s±x?NÁA¿×„-ÀzwÏ¿9—Ñ> ­¿Zo;¿)À&©@¯¦x?é+¿¡(e@pØ¾>mä1@˜CFÀw³??E`@Ø©4À2=Ş?ø„Ë?¿~`ÀL$9?.Ä@•¾¨i¿X-¿læÕ¾—Ç[?½­?‘[.=^Â¿h˜T>1*p>•f¨¾¦>ï	¾a[¾d?öï
-?²lö>š)?„;À~ÿÛ?\V´?á9ÀJÎJ?ÕL—@Ä\Àñ!ÀïÄš?
-Ëı¾Rä¾h ¿1@“¾sG5¿â?0¾M¼€½cïk¾=–;:1<¼3jğ¾n5g¾™¨à>õ„¾Àñ½J#?¯ú‡½!:!?¥_ï¾ííÏ>U_µ@½ÒÏ>×a?ç½Ä?ì‘*@F;¿?âÿK@¶GÉ>osî?1%ò?MşFÀ ğV>ËP>IjÁ2dª¾ÂÃ¾Éªˆ¿q9Â¾>â‘¾?Ã¾@­<>0K ¾—ò§¼Tƒ®¼|4¾L¾Ğ¾(½¦>%9ğ>+²>š)¾;Ã >­ºâ½õS>ÓÁi½BG¿.€ï¾†#¿¦µ¾şÌè>4µ6¾æ!±¿k¨l>˜¬D¿”[?	>ç0 ¾r‰ÀöÉÀIáOÀı4ªÀ¨_eÀIº˜¿9´‚¿¸ÒU?)`…?4V
-½ÁóÖ>t>ÛÉ>A³e¿´N[¾M ­À =ë¿CŒ?}’<À‚¿â<é?Şôé¾İ> @ø0À€¶¿±¿e•@¿#¬?#–„>-J:>âÖ–?gû=*İ0Bfeatures.39.1.weightJÀ_\ø=‘+†@ú‰º?iª¥?À>1õı?[Ñ—@¢ö%@¦Ø/@pŸ@¨“Â?Ñ?ôa‡?Œ9>&ö'@Jy?vA@@L`@]¦?Ûv@™×?Nçf@•*É=1R>¼(>)Ì?áX>[2à?ß’?\Í÷?:‡?æ‡&@¥j@d=@Œ–ü=ûË¬?ÎĞ<@Ø=2Ÿ?ëÃ@¾ì¦?Mš6?Î,Œ?¼{a?ÿ @w€<Í\g@¾Ü†>*Û0Bfeatures.39.1.biasJÀC“¿†{á¾4Í½ÒËº¿O‘z¿Ëô+¿œ,?èg¥¿™Â¾Ì'ø¿Pò}@Sˆ¾DG­¾Ú[‚¿óug¾.Y¿Šÿí?‡t@¡É?´Ç@ª{İ¿|‹¿¿–×·¿™uw¿4?cÀ¿û¾j€@HV,¾k°‚@™ìY@ßå?ñõ’¿Üdÿ¿©-¿é9ÿ»B®u¿B£†¿¼š¡½qj7À~é`@®G@wÙƒ¾©˜@È +@fÚÚ¾¼Î@2Ôj¿*ã0Bfeatures.39.1.running_meanJÀ¿F¿í6@ñØµ@²G&Ê7?Çxâ¿g~Â8N!A¿Ú¼A?Õˆ¿     €   2^Û¿¶å?  €×À ÂÓ‘½@{p×ÀZàÌ?pAt¿_÷¿”?•ë@lw¿qÑDÁ   d÷Á   ’C@ìDo@ÑT~@‘¿   Ë:À>«H¿  €,'AˆİÁ  €     €ÖŸ1Â¿s>}ß…À•“IÀ*â0Bfeatures.39.1.running_varJÀt¤@É¡C,H8C²G&ˆ”?–HC—ëvDÁ÷˜B<èCèG+B         ëÁ@ÆªB   ÅFÎCúˆD=à,C›ÉCf6ByÍ”CP”?L†µ?÷öE?IºCB™Qa@× D   Ü‡D   ÃB÷XC1ºÈBïj@   ]QHCTmø?   e@ŞBL?ëC         œzkDK3?bœC²0ŒA*£H00Bfeatures.39.3.weightJ€HR)ğ:š ?~ ÀÓ‡ê?_—Ş½¯DÕ¿â¦°¿+m–¿a™@Ô;¿6½½P¼Õb±»„W#=‡r¶?ui:¾Kö¿‚C%@•Í¢¿ÑK@:)Àä(¢@±x„¼ß±=¸í½yÅÀXw¾±æ%À¹;–¼ñ?@q¨¿ïû$@çÁ¿T%Ç¿ç3®<—Ê? Y'¿€ƒ½D¼²>^Àn°&À.F÷¿*})>-·ö¿i›]@!-ä==HÀ~Óq¾Ÿ½ÁÆi¿B?‹Èƒ¾õ¼˜½AŒô¼Yœw¿Æ”ˆ¿å #>1°d¿šê¾É÷u=*6l¾kI³½î€¾ª‚¾ëV<?Á=¿~D·=¡}š¿¦dá¾uÅ¿¢£)¾úh£¾Ş#Ã½Âœ>]®>õÛr¾åv¾T	Í¾8‰¼v¡P?>¬ä>Œ™	?F¾½‘Ğ¾kŒ=lÍŒ=ç~`=×õ²¾[?C&Ÿ==Éå¾˜à„½TFB¿ğ¿j©’¿»¼¾Vã¾HÄÎ=ãú¾3À½—,Ó¾éŒ´½sFí=õÒ¾Æ-¾²›Ò¾buË=4nş=mÏƒ½X¦±½?¢½¶Ì=vÆ¾¢¡=| ¿$a¦¾îç¾ã‚6¾ Ar>0rß¾·Ü;¾¦u;İv>¨©¾R\Y¾0„(½ş•d>gŠ¾g™½‚½ÀÂ>ÿ" ¾wŞ¾îlF½ƒ­£½¼¢x¾Çı¾²~˜½öí«¾*ê'=•¼V¼ƒ„=Hc*;^~=¿00¼\o:¾¾èA?(¶3¿VìQ¾	<È>–e¾Iøs>§ê5¾{Ÿ3¿Ü
-¤¾d+è;<”½3¾_`Y?:ê¿Ò¢Ş>öı?^Òp?ZLM?`ÄJ<Æi>âe@½[Á¾q¾õ… ?‰IÆ<D?‚™Á¾Ã¿ù¾"Éé>×º$?$Ë=XA>0c½İW=‹Ò?W(=?s>åh>ğ½Z,S½†r¾¾ØŒ>¤ùÀ¾í?—®>@‹ï>úf¼©½´}Ï=›¿v?:½«=èXƒ>(¿©d½xnÈ¾‘•o½:ì½½Mq»XH¾}+u¾|@½Öúã<
-ğ‰>&Ã/½Cc¾•F]:g…·¾ËÒö½`–¾/%"='£4<Mwç={¼½#p²¾Öà÷<Ü×i½äxœ¾©U¾8î§¾O”½\Êi¾qt…¾¤Ê½Ç¨½Ğ®¾o
-X=×F>Êõ®¾1½8Ó½–6í=Ú€>’½Äñ©½»€M¾R¾Ïk½)°¾“ı>Î>À¾ºéV¿{-ï¾}ÎÁ¾¸A>ÄøQ½Àv—¾Øü<Fy"½Á+¿R]>?0¦¾vKÇ¾C“„>5l¿Ó¯¿Oå¼H-¶½¬>¾l<ç=¹æ¾=’¾Uy…¾¤ø¾qŠ=öW¾ì5 ¾MÚ<6G	½Ğ»â½g],¿?e•½Hª¾‰ñU¾‹C.¾JE¾òå¬¾õë§;®Ñ¾V	“½[-¿<lC>&x‹>gyÀ@œ¿˜@³¿dä=œ®Õ=¦ğÊ?š›
-ÀÏHÀ’IÀòh@c3T½Îb¿h¿†ÕÀg³¾×xÀêšÀ$<¾úd’À“üO@nk¿?î•Š=¾Ğn½¨<~pO?dØ½ì9PÀ€8œ¼pnc@@J“"@¾?LXAÀüƒ]¾Y˜	¾• ‘¿ÉSÆ;´{¾FSƒ¿¼CÀ_1@Ê¾ø>@4aDÀ¤E>­4lÀnuí¾ß$¾íÁó>ê_¡¾¡`¿kv¾¯hŠ¾y{–>X½Ù¾*Œœ¾7ÔL¾oş7¾\‡¾™cH½Fw½Ê¥Ç=’Å!¾’Ğ¼Ê`İ½»§¾¿¹R¾µâ†¾A[=€#‹½6‹¾ÀÈ¯¾á‹;õSz>I¡Ä¾m½‰¾‰ù7¾İ|>ô…¾[ún¾c æ< İ‰½ùÃ¾ú¾æ¾4>½Â½~’5¾[Çy¾Äy˜¼×Ğà¾Ñ×½Öû¾C–ë=ûM>=#•/¾ù0f>$z«½91ƒ½—h¡¾ã…½êi=òA•=Ò“³½p¡=çF?¾G:	=Ù"¾è9½Gï=çäC¼şS©½µˆ>âÔã½$ÖÈ¾­ˆ=GY=Õ0¿Ã¾¢¥½W„½°¢Œ=üèÂ<º`£¼úÙ¢¾µ¬½¯œ=à¾Œ™½Ôà]¾¯HE=“uÓ¾Âó‰¾w‘¼—­¨½	ñÇ¾¸Ó.¾´ı=mi2¾=çğ=}H½[¾Hû½+Q><Ä=+Œ•¾„Ò§¿I1E¿û\P¾åxä>Šf?Á¿åY-¿_‹©¾#Í]¾2ñZ;DBÕ>K‰=À¿é•Ò=›· >¿š°¾]
-¿Ëƒ¿E ª½‘¤u¿Æ¶Š<g;¿‰n>¾<bı;¹ã¼×;?…
-¿½S‘>°ÂY?s¦n¿5©;¿ù¾á8½7¾VÏ¼½ó?¼i×J>ë	¿Úmb>u?=n‹t¾ìAš>D”õ¾çé=­lä¾ÁéÖ=³'ø½†º‹¾×ƒ²¾÷6­¾ª¾OZ½ÏsÜ¾Ô\P¿-¢³=Ôe¿óD“>ød>5GO=Nh ½÷Ÿ¼wZ?½ÏL†>¯½I¿ÀFÀ¾mÖ’>–“½½©«¾SœD¾UÍR½×Åô½&ˆ=Æ¿Ã<…‹>Aÿ:¾~€½½é/½ ¾'Ô ¿İ³¾Çµ¤¼“kû½w»:1ş´½Æ5g½](¿[Dµ¾%üó½ ¿†=¸>9è6½Á¯µ>Õú»¾¦Tõ>ÊUÈ>Á¿yÀ¥¡¯¾T ¿)¹ù>~ï€@¾‚@ı>mk4À¶¸³¿qíé>	²˜¼‡Ö¿Ü‰W¿›7†ÀÔZ?#À±«*¾úa@¡mÀ—r«¾o/É?ˆÈ
-¼IÊ]>Ï{Ì=N]¿¡Š±<†ïo@Š>uñ @ı±Ø¾eZ=Àw7í½+§Àz,1½>.$=ˆgÀlM½G!†¾ã±²=<VSÀ8^+¾Ô½¾?-´>O3?ˆ9„¾¼Ó”À2>3‚•=ÅÙA½µš=WT•½5ê½–Âp¾ÂvÌ=$³¾¾QZØ¼bîÑ¾¹á~> õ:r½fÊ= ød½“¾ ¬@¾†>ºı¾$dx=ÚD:¾
-Ù¥¾* u½€HŒ¾@ŸJ¾Uò½òL¼$.
-¿†{Q¾Py<f¤=“.²½†sW=2¾Š==8”—=öH¿¿9¬½Ø'é½Si¾Ä[d¾f±D¾z#\¾e¹¿==šÌ=İæ=‹7â¾ğ¶¯½,>rL¸½§©½ä®¿Ï…>”i?qò˜¾™"Ù»[üÁ½>O¾¼ª3F¿)ì¾ÍH%>|ô=½"ŒA¾®È¿Æ}¾…÷@>±~6?…½QÈ¾÷5¤>º²½Ã°±¾ª“›¾ÁLì=Å*×<Õû¾ºÃÈ¾<½¾¸?6q‹>‡úÉ=CÛª½Õf¼@ä¼&"¸¾Ôåâ½}4>_Ç;F”Ò¼¶¢<<†¾¢ˆ4¾`§¾½*U4>¤ò¾%ã>)/>$ã
-¾ôëB<Í0è»ˆçs¾l˜;Şˆ¼Ëb˜¾Ñªº¼\+½(±,½¸Q¾²Ö<¥CĞ=¡ñ½Çö,¾’C¾†D¤=~ñv½K‰!>¢y6¾&u0¿$ÒÜ½ü.˜¾`¹Ï<¯¥0½}Q=ÓóÎ½¹X™¼^¾kñm¼kHA¾1ÿ1¾[$ñ½Ë».½Ù<k;<Ä ¼§!¾¦‡ûº†
-†¾q¹z¼½RÔ_¾¡ˆ=:×©=/âÄ=v+¾Ï¼,=¯÷]¾_ˆÜ¾/Ÿš¿ƒu@¿ˆÎâ=~y?"vºõKW¿ŞPa¾ Sƒ¿•r>İLï½Ğ~>dMÙ=ó‘n¾`N@?WLˆ>)ÖG¿IÜ¿Êác¿Q<ó¾Äû)¿H>e2Í¾
-Ó¾ œ?íÏ¯>¦[¼Ş‹ª¾¨½>;4~?!y¹¿/	+¿Åz9¿È*>HN'¾¶¬õ>Ñ¨à½KÔ“¾„üÅ¾_G¥¾u—Ã½×Ï¼ä~Ñ>â”½Rò‘=/^Â¾HûC= =ø½g–¾K Á=Ğ¿š!s=Ö=¾«è*½»Æ-<¹o=¿h£Ú¾ù>Æ“ç½µWU¾×±½_9.¾1§¾Ù¶T¾üÇø¼*”=¾j#½–V¾väò=¡€¦¼rãœ¾V¾¸Âm½‘hŒ¾û¯¿&¾Ù©ß½é¼ÿ­½XÌ†<9Oæ¾
-~¼22h¾¨Ón¾%‹Š½Èl=ë¿à%Ì¾²j‘¾€à×½ 4›»«:i>d:Š;f¿²í)¾ŞB¹¾†Ê>wÛà>ãú¾NE½Zñ>ˆWë>åm¿\ºù=Ö6)>êå#>¦üo=‚tj½•‚¾)4>L/œ½YNz>±¯b¾Ó?wê¬¾°.¿¥¹=¿›¼=y>¿ÂÄ<¾²»½[\—=¶Ş¿ÿ[‘¾ÂiÍ=0¾á è>BBn¾G£Ô=Yã½v›¾7P½"Æ¾Æøó½bIä¾–-=˜®¬½Ig½÷>”ç«>Á…ô½Êj ¼ç#ú¾b‚;é«¾
-É¾‹DÆ¾Åjt½XüÈ>‰bš>ş<¿å\>ã9¿Á¾<™¾uÎO½@$†=BÍ¾&Vg¾ƒ*¾>½Š9¿Öx¾6›¾v¨Æ¾Áâ¼´hà¾­Ü`¾ù™·=úÂW=A‚¾gÛ£¾ŒT=ëÚ½ù4¿P®¿AJ¾3ğP=°Ê«½t@¿oC¾îùş¼Wğ3¿ÈZx>,„Ø½3Lã¾˜q=Ü ¿/'=*R¿ÿ
-=>œÃ½ƒ–<~æ¿½4¿©‘¾yÇ:=ˆÌ¿¾€$¿NZH½F|‡¾1è†<ùX2½™ •¾_êb½T§‘½};¾ —½¿{¾–F½sM¾>ş¾1‡•<ùë;a·š¾‹U{¾K‹=ñÀ>OjĞ¾x¹÷¾g›<¯>3/œ¾6½F¾Y¾ÒVX½Uh‚=R>ñ½ ¸.½İî¼ÆN¾$x¾Gñ#¾•%¢¾n’½ï'â=SA¶>Fê‡¾<.(¾ì†ï½:>=+n°½b\[½Ù®Ë½ãE@¾ü›¾FÇ¾tò÷=Aİ‘¾Zğ¼¶{>àU¾âm>°q©=V_=ö×˜¼ÓB->Ez¾Ø,Œ¾¥h>áJK>4„Ê=Àv>uÊÒ<iã±¼¡"Ñ:ˆJ>0³½	•>Éo½0¿÷–&¾ã
-B=¼ü:¾l°:«z¡="ÃJ<->+½¬R@>õêC>p^>äÌè<P>ò	¾ä¸™¾¹?¾MR>D6=ˆ;¾\¿1Ş(¿±ø¾ÿÊˆ=³–?i(¿ó¦€>oè¥¾öéÇ>ğºU¾€K‘¼Bç;µüĞ=w×Š¾÷ÜÒ=+¶>•à*¿ç·¾´””½@É	¿hà¾»ç¿º¦¾Z‹¾N‰.¾ªÔ‰= DÚ½S2¼°˜­½ó1¾póĞ¾;‹¾.q<Z’I½¿§·<åâ@¾œN¿B¢½ıEI¾¾K?¾*Ú{>Ô"í>Ñõæ=µ>| *=öÎC½”ò-»Kñ¾l¿=®Ñ½¹^º4cÍ= ï¿@M¹<>6x½ª&K¼ˆP{¾xXû½Èõ<½Á:½BÎ=ö;ô½’Ad¾Y²Û»^tG½,”)¿ŠÖ½±È–¾-É"¾ı?<]:s>³°=Ëxˆ¾®õ6¾A9Ù¼ÕR¾9Îs=¤=›¬¨=°¢>=1¾Áê½™lŸ=Ú½½i™½ä‹Ù½ò¾¾`Á=˜:=*>·Ó½3‹'> 6@½ëÈ<6 ¿ƒQ¿sa¾[=ñğ?yÈ¾Šâ&>IĞ¿'X½M ½±È½t¾{3é¾ş½w¼ã?åüc>^¶¿ômV¾n—¿1±)¿‰„¾ĞÜ¾3m5¾ra¾†êÍ½ça>{n²¾
-ùx¾ƒ¶~½”` ¿ª/†=,éY¾7 Ï=Üª¾¿ÕÀü¼]—=×¾u­³¾¼Ù÷=Ã	¾wµ7=/ƒË¾_M=F¤›>øzˆ>~a¾ìÎô½ñ¹¾›°¾ªR‚½ÔÆ¼Æ>[ş¾O>PÎg¾39½cÌá=]½5fÏ½–ø¿vu½M4l>v(?&Ú,¿Ö²Œ¿¾³‹¾ÏºÏ½¾ô#>éäW¾–jâ¾FV>İ’W¼LM®¾É¾ÇoÊ>%h†½ì‘½¾®PØ¾Rxr½¢NJ>Y_µ¾YLh½ss¾]Ê¾€G0¿`ºÚ>_Ä¦½c ]¾;Ü<¿f <‡¯•½‰¢=ç¥¿½p¾ÿl"?ës±¾õ½ĞÏ½w:½%ƒ¾%†W¾YR¿éÒa?LO;=î ¾-G=%f¿-V4¿­BB¿
-b£>/UÎ¾äÉ¡=˜•Š¾Jå>éÁ=¬i>x]=Wë¾ûÕ…¾ÁÙµ½A`i½n²­>®¼È¾v1°¾Ê„¾©„¿ú¾ç=Jhš¾k¾¾Yh>
-Äe¾6W¿WQ0¿ÒÖˆ¾Kt½tfÅ>ı?c_=,¢¾Ôû¦¾õ›X¾ €¾öW¼¾iğ>Ğ›¾ı	İ=Z¾RKb¿ø[<SØ¾k¼> 6>ş)‹=V¡=ÿ+ğ½6?¾À-Z>d|ÿ½¶Ö/¿0$•¿üb¾¥†±½¶çÎ=w/¾Ğ0 ¾¶¶¾\’K<Jv»ë¼l<\²¼oØ¾ÜÔ)¿€®º¾„¨¼WZ½bÖº½_3Ğ½Gô=htr½W”8¿K±=İjê½Ê¾¶Š´>k¥š½;FR>S²o½Õ#‰>LÇË½Œhİ¾Z4'¿]ÜØ¾œQ­½äi°>¼n>Ãh1¿ÿ¿µÃñ¾<Ä¾ß¿½÷ò?X‰=5Ö¼Î7¾â§¥¾d¾ÎF ¿,Æ ¿ÜÁK½ÀNš¾”¾æ–A¾¤f¾•ŠŸ¾J	V¼£mu¼h!‡¾¡µä=šÊg?ÿ
--¿i¿ì^¾08>ò÷¾¼}~¾øÄò=?‹‘½.ÿá¾Ù4ƒ¾™xÜ=}ÅÉ¾óı=Í%»¤Ş=ßFå¾èÓK>W¬>ƒÌq@RÀjØ>ôç™;÷0g?‹ŠË¿ÈQ@XÆEÀì@Ëş¿ÙôU=&Ik>Ğ=Ò_‹@Q68¿­š7@”|M@:+ê¿ÎÃg?*(¿;ê)@Õ*U¾&¿¶¾ˆR¾×o¤@Í¸è½O©T¾4Ş¾¤A²?¤„1À ¦Àf~? j@2—i¾›ª1?`¿?j\¾Uxõ>MÊ]?ùÀµ¢JÀÀ€>i7À³q3@C…½ıß @RËP¿£Ê½æ&¾Õö¿2¼[¢/¾4U=¾Ş?à¿s™™¾G-¿KÄÂ>>ß©½L¾4 ™=YE-¾_S“¾îJ¾¦¾">¿T°ä<¯\½†Õ¥¾à»ÙÏÆ½$šƒ¼j¹~¾hM¾™r°<˜û1½ÚV°½uv!¾¹wı¾Q¾£Z–¾†ƒ½¡½°¼Ög½ZK'<‚dĞ»G'=¿ÂKç¾K3Ü¾Ğ~¾®wğ>u>Å¥3¾ÿ¿ıi>n¯…½£,¿:İ ¿kW	¾\Ş7¾îĞN=gÛ½áX¿ğlŠ¼åŞk¿øé½Ûd8=xÄ«=Í$Í½×éO½‰˜x== ¡½â—=Ì‰å¾´É!¾Qüé>Ò%¼ÇL5>ÂñS¾İ@à»‹N¾’¨>şf?œa¾ı‹0=À¸0¼Ø+¿.•¾šşş< Ë=Ù´0¾7e¿VÔ'>W#p½6Ê-¿=Ÿ¾Ö"á½<¨¯¾™ÙÚ=ÖºD=Ï»A=ü¦ :Î¿¯<™f'¾_Ï >&-¿7çë<±
-¿*bq¾<ÇÔ½5ì¾å~G¾7øä½O[¸½¶‰=›…/=~t¾ë:7¾İó6½kš‹>#ó·=¾Ÿ!¿Äh—¾ —>CAy>éA¾ıù¾Nğ½^˜Ç>±7¾’`>%_™=×%?ÌÎ$¾jC¿¹¾An>”¡½Œ:¾)3º>³•Ë=Ü¾·¾yM¾ï½Th>ã‘p<©p>V\<­Ïì½”l>B]Ä<}ÿ¾.®ê½3«Ö>Ï2 ¿3?ë×>ÇÉ	¾ıà?6o¼Cè½•=Ñw»;’,?^b¶»¬¾±ï½¦œª=î€¾ß?3Ò,¾Ôò#ºåœ¾¸qØ=Ÿ¡>¹k{¾bê$?ìÁ_¾s'?%ÂÙ¾r¿?Öf?µÀæ>	@§¾µ…(>*k‚¾ÕÆ¾X(¼:§Ô>·ïï>95x>¯Ç¼oŠ=¾™hª¾¼©×½+ÍŞ½-àû¼Ü?Æ£*¾ó¼‘>¨Ô=îùT¿GïC¾³ş=6HÒ½c=‹=#t¾ï~¾[5\¾Ûâ<’é*½ÌÚD½3Cß¾¬0Ç¼² ?ïQV>gà¢=WÎ¾ÿâ½2>¿)û¾lu¾VÔ…¾L=À¼¼‡‡¾ßˆ¾–Š¾„Ö>µ¡¾¬ÿê>¦jw>¢(>âäÈ=¿å„¾4U<½ûV½†Äv>™¢>ƒ¯–=5¬¾¶w‚;„ãÙ¾ö…>b=l½$–¾§íº>L2à½­ü¾ug˜=ô, ¿C=ö=u±¾3Ã¾#ØT¾a`W>S”í¾Pk?>×t¢¼ğph=W:æ¾.Ÿ¾€£=ù¨=sÁ¾Ï6y¾Ş“ì=ìgÈ>om>Mæé=ˆ=¾Ô“a;Í˜õ<Z’,¾*ü¨¾ém=ñÜ>Ğkä¾?^a=Ô}®=­ª'>54ì:[p_>Eˆ–½&r›¼£a¿1“¿½ãİÏ=˜o>øN==‚I±½.äi<–¡¼ÀVÊ¾T$¢>€0æ=óvF>‰¾'÷Ö>Ë°¦<ô}†¿°s?o½†¼å‰Â½Õ‘#¿ ë=ü[¾º£¾XgÉ¾c\3¾¦¬E?ã/½>-şé<ëƒ½Ûá:¾¦??xë½Üz¢=K4!½O±e>Ér¾(xn=åÂ•¾÷—>fi×=*‡½*ºy½+É<?‚4Õ;>£|>ªù™>ş~1½>ß½>z ½ü–=
-‚ğ½'Í>ÉFğ¼òz1½¹ö¾ãr”>ôš¾Ué=ªf >Peh>‡¡>BÈ¾
-‡>…¿À¾¥l”½6j>b“F¾ÿæH¾v§>êo<¾îğŞ½—<´]£>iIÒ>ª5=>2?¹>|ø‹>-‚U>‹Š[½ûC¶»Öh=S<‡`a=ªŒ½«»=¼=¼‰¿>@˜=ëÑÚ>P>[y>Y×>¥±B¼ŞM<êŒ>M;/¾Ø³Á¾hêà=#YÀ½ 1H¾;>¾µHı¼º*¹=å Œ¾1/¾ıqÑ<=«à=}Ñ¾ ‚>=j>EGn½.•:>Ÿ¿ı½X>NÖ¿–Ç»ÜÒ>eT$>7^½Í™Á¾)j>¥½/>¡ç>/Š>±¤e¾%a²¾°*¼½uE&¾L;-½>½Ï]¿ùä>V´¾ò!¾ Õ?=>dïW>Ó¤ª=Ú™>¤+Û½>b½]W´<ñ‡ˆ>@‰>Õ};<V”>â¶Y=Ğ*±=Fø-½ 2ö<ç\>íi¾MÜ>›^¨<q{=)%*¾¾½ºÿg½õ§;¸Ü¾Q]=VAµ<¹Œƒ;ÿCE=Õí="½¼=F@S;[k½/Z‡=×–@<Tš¾U)­=—Õ¾qÊ6¿¥““½a¿ÉZi=¬Ã<šŠ½0E=„Ôà¾4!¾>>«¼EË¾ñõ¾t†®<Vu/½|b8¾×^i¾IK¾c_6>×d ¿)Å>Ä@ä½ı¥<¸¶>ÌÜ£<¡
-h=,â=‰ »²T–½Gp=,á%¿QãÁ¾¢üè½“›:>Eò>í{Ê¾…œ
-¿¥ ¾„4¾Zİº¾Ü‡j>£7Ğ;`·Û½8„Ã¾ÿ¾YX¿œ›¾Æî=¶zø<F–A¾h¿¾N“‚¾J\›½bk =ªí<wôâ¾u	¿G¦P<~ß?Ò&Ò¾ºŒ¾Íàn¾E_>§l8¾¹¿¾ûãú¼4ïB½œé¿S¾Yò½¹²İ¾<>—Y£¾/*û=P²½yH@¾=D½¸[~= qZ¾2<é½á¿!}==G,>‰·¾¶í=ƒ½è=Ú">n#"=}Û½ÀÉ&½}v<4ñ(=ôs½–3¿qœ¾³N ½À6/>¹³Ô½ß/½V€º¼¤à=¶ğû¼ÔìX½>R$â>õ–=‘Ó¾ÒP½ÅÃÒ¼˜=wïn¾a3¾é*5=×ÿ´½¹ü>»Çá=Hû;ç6í½¢UÉ;^SB¾®ƒ=Ÿ½0âğ=ĞÕ½e¢¾œÔ¾Ù1b=ÅîÂ½Î=*<İ¨ˆ=3=Â¿Õb¾_h¿àqc<Õ{=>PÔ½æe[=>æ>Ÿ_^¾»…=yş>G×¿Z	¿hN¾L;É¾¬Å­½gƒ‡¾LM4¾p)¨½àP¨= 3†>ºà¾Õ§:>;yŸ=Ğ 0¿<—Ä¾Rj¼2ù×=8¥È¼½j˜¾áL<}d¼c+•¿z±>Òic¼Ğ	¿º‹«½®‘‹>È!E>QŒF¾ò"¼T½½½&Ö„¾ê¾kÿh=öAØ½œW×<×PÌ=êì¿ù‹D¼%Ú	¿ŞA>eM€>µ2á½ƒ?H¾ccV;œA=ºË=µ‘¾•%®¾›=N•_=¾¾šb;\£¼ŞÊ¾­ø=¡€<ç ­½l¥¼½æ`>£¨®¼ek˜¼*ˆ½±o¾÷
-=}Ã=5Ä=Ô…¾,éø¾…sÀ¾Ow¾¢¦<t á=FÇf>›÷>a‰> Œ=$S<cçs»³òÙ>(ù:>•ş4¿PXĞ½Ùêk>á> Y¾Èo+>¾ùcB½30¾îàİ=+§=ú²‡¾gĞr½5;T?—÷>úB=}5¿Â€½´î½-ƒ=¾Ò„¾2Å"½I¸¾êxŠ¼G*¿+¾¢íˆ=v:—¼µ^¾¡f~=¼öJ>PRj½9Üê<YB¿ÕG¾Eó:>Ÿƒ¾A‚×>øú½¸?ı¾ÿŠ½_?Š¾«è½4¹>u¶> ñ£>ãx?³ÃM½Án½Qûı>‰ïK>D¿d¿e?sh½l‹×¾
-Ï¾ÌW>‰µÂ½o-i¾-K¸>aû‘=CVƒ<:<?6ÿ¸>–<?	Mİ<(@Ö=™G9>b¿”:Ğt†=,aø=ŒÃ«½×p »­¾?c¾û7^>É‚¬=ôE>Å›¡>æío¾P°>¢P¾`93>Ô¶Ö>Õ0š>Á\°<Œö¶>¾r%>Å´7>@î>}½ë8N¾{‘>M½½gØ?Ñ¿L@uÃP?”Œ¾=ïÒ?Ü(·ÀÁ¯:@Bˆq>Y¤\?[À¾˜N>—|Ë>y>;
-@pkW¿“Y¾4á?ÇŠ’@Xp$¿¸xƒ¿Ë?$@¥È%>&/>
-¿3>T˜@€dƒ=‚èÑ>›ˆ¾k8¥¿dâVÀN4Ò?67@ËÂ>Òs¾Ï¨@?^T!@€;¾ò¸?ƒœ@§”¨¿‰wÀ(wÒ=€*À9œ?½èo=BÀë¾1×«¾ ê‘¾¿¥HÌ½ùŠ°½œáz¾ÚRÿ½U8¿q£ö½&Ï¿Ï¶=².å½:zL<Á=”P>åÒ>ùq>#X|>W.ã¾ø¦>Á2¾å«@¿f˜¾*ıï¾ìª§½Ù™<O½åz?>m ã½k%—>£ †=s$ƒ>ı°¾äpa>óô¹=*e½‚Š->TM<Š›{¾èkë¾½,Ô¾µ¹Œ=5,V¾W	>¡|§>3*Ş:{;
-¾¨GD>°¸¾¼ém:¿Ëú½ÿoõ¾›ÄÏ¾"o	¿ñÊ>V?/¿T¿*š?ŸÇ=Œ
-!>¢î½§Ü<ö¿W\¤½gíd½ğ€¡¿ˆ2d¿Øp¿6;a?Z<e¾aaÛ="„i>¶³½·&?€¢á=˜Ö9¾«½tS?¥¬Ÿ=„E¿÷²=¿`ßô½4|c9Èë¾÷¤Q¿mİo=¡·¾¢˜¿¹f.¿¼ÚÒ=å,§=×rÉ=y¿?½Ô–¸¾ŠV¿2a*¾*İ0Bfeatures.39.4.weightJÀ›ùñ?!8²½®@L>ò~ª½4;½n"®=Kî@›°>‹Ns>÷
-,<d©"<Ù÷?g;4>¡˜¯=;8Ø=\©=ç>,ÿ=)l5½´â¾¼üØ=“ñÉ½>6µÃ=ï2=À‚×½É.>°Yr½Cı?`¯C>öJ">äad¼é>Zñ
->T‚>h)ë½ ü•<}é½Kòä=ş¦½ŒË/>‹E<=®U>9I²=Àüß=ù@ê½Ú<$>*Û0Bfeatures.39.4.biasJÀÚ`À™¿¿Wfc¿¼Ga¿ñS¿.I_¿m7¿QZ¿©‰¿É¥j¿	ø\ÀH¢¿ +`¿¼Ä2¿D¡¿Çã!¿O¿"`G¿ÂĞc¿ë¿“_j¿O(!¿ZiZ¿IQ¿ ß¿Pd#¿ÓE‡¿¡¿Àâ†,¿dE¿ò¦Z¿VM¿€‚f¿­;¿8Rj¿›ÜM¿}ñO¿‡°F¿(ÈO¿øÑ(¿'‹¿œª¿Z¨W¿lO¿*ä«¿å w¿õB¿*ã0Bfeatures.39.4.running_meanJÀ‡­Ág[ÁS»dÀR&AÊ7Ã¿jØÁ­zÁt¬Àã¤¿5‚À˜€À(ª”ÁwÀ`DªÀzäGÀ‰ÊºÀÁJû?é–ïÀSzĞÀ·2'? ğ„?MÄÀe®DÀ£—Àyó¿q­®À>¸ÀExQÁşhÀ0yÀ«”?0C@·šû¿ÕÆ—ÀlÕ·?[Àâ?ôk@ˆu¿)¶À†>1¿4F#À÷Ä?d/š¿b®@^éQÂG;İ?$\Á*â0Bfeatures.39.4.running_varJÀöC³€eB#M@mÊ†A9"—@’|•AÈÙ_Dú4©@°X@É¹ÚAp¤
-A»éDÅÚÄ@æp÷@¹v@²®æA;î3AÑ*A›MAÖÖ@?FA@'<A…Fh@*ØA¨ A(ZNAq@ŒA‡á,A^›áC®ÿ@ÿ8"AĞäaAn$<Aï¼ê@Fç@üYA)¯?@v•…@…ü`@±A2Æ@GdzA&@Y5Ae«}AXø0D=âADb
-B*¢0Bclassifier.0.weightJ€6HG8<5Æ¼İHV¼lm¼³x ÀåXé:—E@<9½á3¸¼´Z<“8ë<Ÿ¦â¼xM!=_Z¿½Ÿî=|!á¼[§]<pL»Ù*å¼«/7½Ñg3=ß¶<}-ã<
-?»İS=09½Õ&½Ñt¼RÃM»fƒˆ:õ§Ë¼„•@»çˆ<+{s¼#Ã`<~®j<¤$¡;´Ú)½Qbö<TOU»`=˜¤=¼™"½»Ë#½…[¦»É‘L¼Éq=ã±¥<²AË»«#Õ¾>A¼q=<=Óı®<¡×B=9	Ë¼ÀÆ2½dÙ}»ÒÓ·<‘?÷M7½éá„;ÂŸè»ŒY=&õ¼E¦»wµÛ¹0T<†ë½”m,¼±Ø»“¶‹¼ ? =fò¢<ÌG(=“şá¼tYú¼ğ¸¼»¡½Ÿ68¼14u<Ks!½8 =ç<\<ì‰I<Şx½.,Ï½ç*= .»[>¬:cP¡¼ôyº¼Ø¸=i×¦»»°<æÜ˜="0¢¼¹S—»9³¬¼­$½ÈÔ¼¨Š=¹Gè<Áå<,˜@f;¬ Å<0,»¹†;K–È¼oK¥<¼É==Ì×õ<N¼Ø—;­m<\½Ø’%¼ÂZ@<5:½K½KVºl`
-½fQ<¸<@=Ğâ	:òvJ;h§”<e†¥¼Nß\¼ªF <êßh<ËKù¼¡‚ì;Å¼¸EÕ¼ô’=3ß<±ã¸¼İ³A¾Z³Ã<Œ±Æ<ªN¼;å<š£ ½û¼ÀSÆ;g„=`ó¼íÀ)=„âÁ»äyÄ<+İ/½Ç½Á³P¼ucä<­‚=”âj½ùöÖ¼Š£I<v3°¼A =Z3½Ì`Ë¼â×º;êo{¼‡a¼¬¤;=µ£³¼¾°e<ŸËt»µ>÷¼±ê'½4œœ<í)½$)¼–«½R´=Ú Æ»^-<=LD2½Ä³=£ ?¼#B;‚j(¼´á=¨Ú¼À<<½0¡–¼ezß<Wç=œç²;Ê~Ê¼ù«¼îa<îŠI<Š¸=Â+= x3=î9:<«èk;ıÛ<òq¼c<à<Ñİœ<“Yá¼|]£<ZÚÕ¼ü=-®(½O+=	(¾è½6='Ÿ<W8=™²½IÇ-½{ë<œ–Ç¼d$ô< Kš½“şM¼©™Ø¼¤ñ‚¼ò¶è¼³„;ÎrÄ<7ö=;¨Õ<öÙ„=ÿèÈ¼Õ÷½×× ¼î ;¼£ò¼%>É<{óÛ<§J¼"…»µ¹½?@œ¼&;B=%æ½ä+j<ÖÂL<è=Éà3»H¢;½®²<½¼›»$j%;‘ìV<­½À<È±0½óû¼ğ‘¨<”´¿@ùš¼R×g; ¯Y¼ùã\<=:^½¿^½O@½O|P=«ÑĞ¼ßc=õB½ÍWC½(g¸¾=_D½kK<=Ë² >œg¼Êˆº¨ñü<F`†<şn<‰Ç¶<]½Ø<‘)>´jã¼~‹(=ˆ=MW =ˆ-Å¼Upª;N}1=	ÇŒ<FÂ¾áò<HóÜ¼Õ÷7=£½S
-=ÊÎÓ<y:7½(7d<æÅl=‹”]<Şpëº²Î¹²¸<)Ü½øş
-½rğS¼+›À¼P¹3½İhü¼‹%î¼ªV½…³<3Ğ==¦½@|¨»¯ˆ"=¼¢<Kå=Vã%<,=¯l=¬ÕW<}=+o"==.»eò=s½.½½ı'=Ó¤ªºx¾;½ıaB¼Ñ‰¼8‡„¼9#ˆ=q”B½€É¼z%D½«ê½À´Ü<©>=Ó¸¼9Ö¼y^·;²Tà<U4½Û¡½¡[/¼R;™¼flºO½Ü¿<HÑ9=-9Š„½–r»b½j¼Åóô¼ÀQ3=oÔ½§:×<aX<ôÑ¼çÓœ<,Ã=»ô?=õ¬¼V·¼1V¶<R½Ò½¾:²µ;²Á…¼u%=ïY¨¼["ì;Èsê<˜…½<îB½ğ;=ù(=Ğh¼=h¦½HZö»ÉˆA<ıÙg<[@½9;M‰=+LÛ¼‰…,=eLî<{÷½p·)¼Èòû¼GÉ<sî•;Ã<Ò<ÂÌ³¼4ì·<÷­Ş¼)a‹¼@½1Ä;=¸‰*½õ‡¿rÖ<.èJ¼áy’<•Zæ¼ŠñÊ¼« =e_,=ÿ =&Ü?»‘Ÿº¼d)¼CY;ïÀî<!VB=p¤ó<Ñ~<¼CD\»(šH¾º=„ça<šå›¼o‰h:§@=o’^¼c‡„<q²&½÷S@8 %»¼QâR<ÂÁ¼„(=ĞÃ7=,ª=$B*=G>™®¤¼HX<émí<iÍ<ìö"¼İ3&½Vë =¯I¼±ß­<ø¼“{»<çÁ”¼ûÿø<à<¿–Ä¼úxÖ<ıê ½´ª¼öíÄ<k ƒ<	!‡<†O=½š”=ä2¸¸Ñù¼ó<Ùõ(<^;Ë<ÅØÑ¼ r*½28/¼¯a;=ŞÎË¼£'½øãA½ ÙÔ>«ìC½v=lÜ»×Ei¼G‰Ú<–Éù;ùV?»U|½>Ú¿Éƒ^; Æd»{tÓ<u„+=ÚK3¼ù¢ğ¼^Ì5=7rÙ¼Ô½;aY¼Øé
-¼²òŞ¼Àk(=˜“;¿A„;ï#É<>9½8¤Ü¼%;õ:gÒ=Y`=.=<	=ØC½ú½
-=¦ÿ<pÅ„¼O|Æ;İ^:=S×¼ÛÌ;$šA=Ó7*=ÃD´¼xWñ<Ğy¾j ‹¼œM•¼ìÁL»¢ç ½Î½Ú|<Ïçğ¼aÒé¼ïâÀÍ§ø»;ú8Úá‹<_ß3=kDÁ»3ø¼u[A= Ï:¯9¢¼ê¤<1Œ;=¥S¼ói7¼Wœ3=
-d¸¼~l–8w±9=œB™<øƒo</Ê¼B#µ<6ÿ@=%6-=é=Ğ,;ä²C=Ÿ)Ó;z‡=r‚Ê¼jvı<P®(¼7®ü<ß†¼¹=P÷½™>Z>»
-¼t-=ÔwÌ¼Ì<(=îğ½ÕÉ=İÌO;Æi<ƒM=†.Ï¼U
-½÷…™»‡Æ<;úô&<¡•>½ô8¿;¼ó ½íl‹<^™9½auÍ<.$<ƒ¤5½XÛ<Ò0¼P™L<?A=Èş»Ä{É<	3½…‹¼Å<½z×,<€Y=½gj£¼ïª1<„G	½Á°ê<¡KÖ¼|V±¼bÑ‹<•ªã<XW9½ÁÁ;éã‘¼äô½'–r¼J<7½uºè»İY=Ç$ <•`©<¡FÑ<5a <™¤å¼v±¼Ÿ3=®Ÿ×<€ü½ßå³<×_¤»dz'¼™º<,¡5½Šç< K}¼èE<eİW<‰#“¼ÕÓû¼Ÿ¾¼Y`¬¼×!>Eú!½8x’<ùÁ/½¨ÏŒ¼hö;¥·»‘„/=:Õ¼„«=o÷3=C*¼n`¦»e@½{uÚ¼·ÿ$»x„c¼|Q¼¬ =¡~K<“i¼Ş&y¼Ğã½À\Ê<àl<ĞÖ
-½âº"=TÂ;'ŸB½å›»;ÛùB;~[2=ê>=¢/»òt+=±“ñ<?¼ÖHô<2ê<M\<¡ƒ&½èç•<nŸè¼0‰™;@›C¼e(?Äô°¼‹´<'-„:cí¼~Ú¼³=ş»÷lÕ:êl¨¼_™Ú<ÈöJ<ş2½µbŒ<²ËÑ¼ûÈn<Ë}^¼ö¯¨<?Ó–¾ñÀ½=Ô	(=w¾&½„ÿÜ¼š¥
-=×>#=@~=M¦›¾^9½²än»™WÏ<Ç™;<';¼‘“°<(‘<xü-½\n?’½ ÷º<şùZ<©Û<è‡±<®KÏ<·‰¥¼‡§&½x2=É+å¼nH=<R¹¼]1:»`"#=vr½Ù|;Ë¢;wh=M«:=Ş‚õ<Tt…¼ó‰=ß“½<æ ë<`–8½DøP¼“Aì<ûş<=á `<çà»wŸv¼§7ø»/˜¼şœ@½@dm¼üãY=+À»<]­¼šÏA½¬Úz;†§<âá< 0¼×L¼…G¥¼‰2É<ÿ‹¼4H¼7oõ¼w6=‹68½<	)½ùqk¼Í(¹<KÖˆ<Ü·€<ËÂæ¼¾_v¼’¯M<t{€»x;¸¼(Ã˜<Éàµ¼/(½8Í<§ë2=«¦×;ÚI0½©Œğ;aÛø;ˆÿ¬¼:;)=}¨]¼ÕŞ<ø	=*m ¼hâÑ<×ĞB<Œç¼€Á>l=/Œ<ûŞ¾¼‚ı½/¿¼>^ü¼˜’9¼Æ_=	Xë<‘ˆO¼°i=ÆŠ<¬Ñ!½\p,½ü1(½z¥<‹hr¼;ÄÊ¾İM½À}¼ £§<R—â¼zM!½"z1=	ñ¼[œ1½È9P=$‹¯<Í<â5<T= ş¼ön8<˜n/½n¼o¼U¨?S+H¼™!½h<i;–x\<u—¼_G=ÿª,¼
-C/½“bg<¢¸&½ƒ†º<Üq=Ëú¥<°ƒÅ<7Vh¼NG¸¼ßßT>÷€¼Uª<¼‘®<áÖ_¼*KBA/features/features.0/input_quant/export_handler/Constant_output_0J   =*JBC/features/features.0/input_quant/export_handler/Constant_1_output_0J *LBB/features/features.0/weight_quant/export_handler/Constant_output_0J  €=*KBD/features/features.0/weight_quant/export_handler/Constant_1_output_0J*KBD/features/features.0/weight_quant/export_handler/Constant_2_output_0J*LBB/features/features.0/output_quant/export_handler/Constant_output_0J  €>*FB?/features/features.2/act_quant/export_handler/Constant_output_0J *LBB/features/features.6/weight_quant/export_handler/Constant_output_0J   >*LBB/features/features.9/output_quant/export_handler/Constant_output_0J   ?*MBC/features/features.18/output_quant/export_handler/Constant_output_0J  €?*MBC/features/features.35/output_quant/export_handler/Constant_output_0J   @*OBE/classifier/classifier.0/input_quant/export_handler/Constant_output_0J  €<Z
-x.1
-
-
-
-€
-€Z+
-features.0.weight
-
-
-
-
-Z
-features.1.weight
-
-
-Z
-features.1.bias
-
-
-Z%
-features.1.running_mean
-
-
-Z$
-features.1.running_var
-
-
-Z+
-features.3.weight
-
-
-
-
-Z
-features.4.weight
-
-
-Z
-features.4.bias
-
-
-Z%
-features.4.running_mean
-
-
-Z$
-features.4.running_var
-
-
-Z+
-features.6.weight
-
-
-
-
-Z
-features.7.weight
-
-
-Z
-features.7.bias
-
-
-Z%
-features.7.running_mean
-
-
-Z$
-features.7.running_var
-
-
-Z+
-features.9.weight
-
-
-
-
-Z 
-features.10.weight
-
-
-Z
-features.10.bias
-
-
-Z&
-features.10.running_mean
-
-
-Z%
-features.10.running_var
-
-
-Z,
-features.12.weight
-
-
-
-
-Z 
-features.13.weight
-
-
-Z
-features.13.bias
-
-
-Z&
-features.13.running_mean
-
-
-Z%
-features.13.running_var
-
-
-Z,
-features.15.weight
-
-
-
-
-Z 
-features.16.weight
-
-
-Z
-features.16.bias
-
-
-Z&
-features.16.running_mean
-
-
-Z%
-features.16.running_var
-
-
-Z,
-features.18.weight
-
-
-
-
-Z 
-features.19.weight
-
-
-Z
-features.19.bias
-
-
-Z&
-features.19.running_mean
-
-
-Z%
-features.19.running_var
-
-
-Z,
-features.21.weight
-
-
-
-
-Z 
-features.22.weight
-
-
-Z
-features.22.bias
-
-
-Z&
-features.22.running_mean
-
-
-Z%
-features.22.running_var
-
-
-Z,
-features.24.weight
-
-
-
-
-Z 
-features.25.weight
-
-
-Z
-features.25.bias
-
-
-Z&
-features.25.running_mean
-
-
-Z%
-features.25.running_var
-
-
-Z.
-features.27.0.weight
-
-
-
-
-Z"
-features.27.1.weight
-
-
-Z 
-features.27.1.bias
-
-
-Z(
-features.27.1.running_mean
-
-
-Z'
-features.27.1.running_var
-
-
-Z.
-features.27.3.weight
-
-
-
-
-Z"
-features.27.4.weight
-
-
-Z 
-features.27.4.bias
-
-
-Z(
-features.27.4.running_mean
-
-
-Z'
-features.27.4.running_var
-
-
-Z.
-features.28.0.weight
-
-
-
-
-Z"
-features.28.1.weight
-
-
-Z 
-features.28.1.bias
-
-
-Z(
-features.28.1.running_mean
-
-
-Z'
-features.28.1.running_var
-
-
-Z.
-features.28.3.weight
-
-
-
-
-Z"
-features.28.4.weight
-
-
-Z 
-features.28.4.bias
-
-
-Z(
-features.28.4.running_mean
-
-
-Z'
-features.28.4.running_var
-
-
-Z.
-features.29.0.weight
-
-
-
-
-Z"
-features.29.1.weight
-
-
-Z 
-features.29.1.bias
-
-
-Z(
-features.29.1.running_mean
-
-
-Z'
-features.29.1.running_var
-
-
-Z.
-features.29.3.weight
-
-
-
-
-Z"
-features.29.4.weight
-
-
-Z 
-features.29.4.bias
-
-
-Z(
-features.29.4.running_mean
-
-
-Z'
-features.29.4.running_var
-
-
-Z.
-features.30.0.weight
-
-
-
-
-Z"
-features.30.1.weight
-
-
-Z 
-features.30.1.bias
-
-
-Z(
-features.30.1.running_mean
-
-
-Z'
-features.30.1.running_var
-
-
-Z.
-features.30.3.weight
-
-
-
-
-Z"
-features.30.4.weight
-
-
-Z 
-features.30.4.bias
-
-
-Z(
-features.30.4.running_mean
-
-
-Z'
-features.30.4.running_var
-
-
-Z.
-features.31.0.weight
-
-
-
-
-Z"
-features.31.1.weight
-
-
-Z 
-features.31.1.bias
-
-
-Z(
-features.31.1.running_mean
-
-
-Z'
-features.31.1.running_var
-
-
-Z.
-features.31.3.weight
-
-
-
-
-Z"
-features.31.4.weight
-
-
-Z 
-features.31.4.bias
-
-
-Z(
-features.31.4.running_mean
-
-
-Z'
-features.31.4.running_var
-
-
-Z,
-features.32.weight
-
-0
-
-
-Z 
-features.33.weight
-
-
-0Z
-features.33.bias
-
-
-0Z&
-features.33.running_mean
-
-
-0Z%
-features.33.running_var
-
-
-0Z,
-features.35.weight
-
-0
-0
-
-Z 
-features.36.weight
-
-
-0Z
-features.36.bias
-
-
-0Z&
-features.36.running_mean
-
-
-0Z%
-features.36.running_var
-
-
-0Z.
-features.38.0.weight
-
-0
-
-
-Z"
-features.38.1.weight
-
-
-0Z 
-features.38.1.bias
-
-
-0Z(
-features.38.1.running_mean
-
-
-0Z'
-features.38.1.running_var
-
-
-0Z.
-features.38.3.weight
-
-0
-0
-
-Z"
-features.38.4.weight
-
-
-0Z 
-features.38.4.bias
-
-
-0Z(
-features.38.4.running_mean
-
-
-0Z'
-features.38.4.running_var
-
-
-0Z.
-features.39.0.weight
-
-0
-
-
-Z"
-features.39.1.weight
-
-
-0Z 
-features.39.1.bias
-
-
-0Z(
-features.39.1.running_mean
-
-
-0Z'
-features.39.1.running_var
-
-
-0Z.
-features.39.3.weight
-
-0
-0
-
-Z"
-features.39.4.weight
-
-
-0Z 
-features.39.4.bias
-
-
-0Z(
-features.39.4.running_mean
-
-
-0Z'
-features.39.4.running_var
-
-
-0Z-
-classifier.0.weight
-
-
-0
-
-b
-524
-
-
-
-
-B
- 
