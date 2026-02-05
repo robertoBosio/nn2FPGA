@@ -389,6 +389,10 @@ def generate_schedule(model: ModelWrapper, work_root: str):
     schedule_model = schedule_model.transform(EmbedHLSCode(nn2fpga_model=model, erase=False, work_root=work_root))
     schedule_model = schedule_model.transform(GenerateBitstream(work_dir=work_root, erase=False, only_synthesize=True))
 
+
+def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
+    """Adjust the FIFO depth based on the scheduling information."""
+    
     # Extract the scheduling information from the HLS report for each node in the original model.
     for node in model.graph.node:
         custom_op = getCustomOp(node)
@@ -463,9 +467,6 @@ def generate_schedule(model: ModelWrapper, work_root: str):
         custom_op.set_nodeattr("read_skew", read_skew)
         custom_op.set_nodeattr("write_skew", write_skew)
         custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
-
-def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
-    """Adjust the FIFO depth based on the scheduling information."""
 
     for stream_name in fifo_depths.keys():
         producer = model.find_producer(stream_name)
@@ -567,6 +568,9 @@ class ComputeFifoDepth(Transformation):
         # Store the FIFO depth in the model metadata.
         for stream_name, depth in fifo_depths.items():
             current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
+            if current_meta is None:
+                logger.warning(f"No existing FIFO metadata found for stream {stream_name}. Skipping update.")
+                continue
             if current_meta.depth == 0:
                 current_meta.depth = depth + 1
                 set_custom_tensor_fifo_metadata(model, stream_name, current_meta)
@@ -576,6 +580,9 @@ class ComputeFifoDepth(Transformation):
             f.write("stream_name,depth\n")
             for stream_name, depth in fifo_depths.items():
                 current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
+                if current_meta is None:
+                    logger.warning(f"No existing FIFO metadata found for stream {stream_name}. Skipping writing to CSV.")
+                    continue
                 f.write(f"{stream_name},{current_meta.depth}\n")
         
         # Optionally erase the working directory.

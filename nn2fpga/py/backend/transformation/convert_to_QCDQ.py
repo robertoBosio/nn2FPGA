@@ -10,6 +10,8 @@ import numpy as np
 from backend.transformation.add_streaming_params import quant_array
 from backend.core.acceleratorpackage import AcceleratorPackage
 from backend.core.tensor_quant import TensorQuant
+import logging
+logger = logging.getLogger(__name__)
 
 def get_tensorproto_dtype(bitwidth, signed):
     """Get the TensorProto data type based on bitwidth and signedness."""
@@ -195,6 +197,10 @@ class ConvertToQCDQ(Transformation):
             new_inputs_map = {}
             for i, inp in enumerate(partition_node.input):
 
+                if model.find_producer(inp) is not None and model.find_producer(inp).op_type == "QuantizeLinear":
+                    # Skip if the input is already quantized
+                    continue
+
                 inp_shape = model.get_tensor_shape(inp)
                 if inp_shape is None:
                     continue  # Skip if input shape is not available
@@ -265,6 +271,10 @@ class ConvertToQCDQ(Transformation):
 
             new_outputs_map = {}
             for i, out in enumerate(partition_node.output):
+
+                if model.find_consumer(out) is not None and model.find_consumer(out).op_type == "DequantizeLinear":
+                    # Skip if the output is already dequantized
+                    continue
 
                 out_shape = model.get_tensor_shape(out)
                 if out_shape is None:

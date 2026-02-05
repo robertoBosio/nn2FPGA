@@ -688,7 +688,7 @@ def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
             
     return model
 
-def print_report(nodes, layer_par, n_variables, n_constraints, model_II, time_spent, generate_report_file, model):
+def print_report(nodes, n_variables, n_constraints, model_II, frequency, time_spent, generate_report_file, model):
     with open(generate_report_file, "w+") as f:
         print("=" * 40, file=f)
         print("== DSE report", file=f)
@@ -698,7 +698,7 @@ def print_report(nodes, layer_par, n_variables, n_constraints, model_II, time_sp
         print(f"Time to solve: \t\t\t\t\t{time_spent:.2f}s", file=f)
         print(f"Initiation interval: \t\t\t{model_II}cc", file=f)
         print(
-            f"Theorical throughput @ 200MHz: \t{1000000000.0 / (model_II * 5):.2f}FPS\n",
+            f"Theorical throughput @ {frequency}MHz: \t{1000000000.0 / (model_II * 1000 / float(frequency)):.2f}FPS\n",
             file=f,
         )
         table_data = []
@@ -763,6 +763,7 @@ class BalanceComputation(Transformation):
             board=model.get_metadata_prop("board_name"),
         )
         dsp_limit = model.get_metadata_prop("dsp_limit")
+        frequency = model.get_metadata_prop("frequency")
         if dsp_limit is not None:
             dsp_limit = int(dsp_limit)
 
@@ -808,10 +809,10 @@ class BalanceComputation(Transformation):
         generate_report_file = f"{self.nn2fpga_root}/balance_computation.rpt"
         print_report(
             DSE_nodes,
-            layer_par,
             n_variables,
             n_constraints,
             model_II,
+            frequency,
             time_spent,
             generate_report_file,
             model,

@@ -273,8 +273,6 @@ class AddStreamingParams(Transformation):
         model = model.transform(SortGraph())
         input_original_names = [i.name for i in model.graph.input]
         output_original_names = [o.name for o in model.graph.output]
-        model = model.transform(GiveUniqueNodeNames())
-        model = model.transform(GiveReadableTensorNames())
         input_new_names = [i.name for i in model.graph.input]
         output_new_names = [o.name for o in model.graph.output]
         for original, new in zip(input_original_names, input_new_names):

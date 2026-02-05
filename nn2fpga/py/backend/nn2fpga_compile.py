@@ -1,5 +1,6 @@
 import os
 import logging
+import copy
 import numpy as np
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.core.modelwrapper import ModelWrapper
@@ -11,8 +12,8 @@ from qonnx.transformation.general import (
 import backend.transformation as transformation
 from backend.util.compare_models import test_transformation_equivalence
 
-def nn2fpga_compile(config_dict: dict):
 
+def nn2fpga_compile(config_dict: dict):
     """Compile an ONNX model for FPGA using nn2FPGA flow.
     Args:
         config_dict (dict): Configuration dictionary containing:
@@ -69,7 +70,6 @@ def nn2fpga_compile(config_dict: dict):
     # Optional parameters
     if config_dict["dsp_limit"] is not None:
         model.set_metadata_prop("dsp_limit", str(config_dict["dsp_limit"]))
-    
 
     # Clean up the model.
     model.cleanup()
@@ -84,7 +84,9 @@ def nn2fpga_compile(config_dict: dict):
     model = model.transform(transformation.PropagateQuant())
 
     # Extract implementable partition.
-    nn2fpga_model = model.transform(transformation.SupportedPartition(config_dict["prj_root"]))
+    nn2fpga_model = model.transform(
+        transformation.SupportedPartition(config_dict["prj_root"])
+    )
 
     # Insert custom nodes.
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
@@ -97,7 +99,8 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model.save("after_custom_nodes.onnx")
 
     # Handle quantization.
-    nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
+    if config_dict["steps"].get("OptimizeBitwidth", True):
+        nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
@@ -113,16 +116,31 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(
         transformation.BalanceComputation(nn2fpga_root=config_dict["prj_root"])
     )
-    nn2fpga_model = nn2fpga_model.transform(transformation.AdjustStreamingCommunication())
+
+    # Handle streaming.
+    nn2fpga_model = nn2fpga_model.transform(
+        transformation.AdjustStreamingCommunication()
+    )
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
-    # Handle weights streaming.
-    nn2fpga_model = nn2fpga_model.transform(transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"]))
+    # nn2fpga_model.save("pre_streaming_params.onnx")
+    if config_dict["steps"].get("AddStreamingParams", True):
+        nn2fpga_model = nn2fpga_model.transform(
+            transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"])
+        )
+    nn2fpga_model = nn2fpga_model.transform(GiveUniqueNodeNames())
+    nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
-    nn2fpga_model.save("lowered_to_hls.onnx")
-    nn2fpga_model = nn2fpga_model.transform(transformation.ComputeFifoDepth(work_root=config_dict["prj_root"], erase=False, ste_already_done=False))
-    nn2fpga_model.save("post_fifo_depth.onnx")
+
+    if config_dict["steps"].get("ComputeFifoDepth", True):
+        nn2fpga_model = nn2fpga_model.transform(
+            transformation.ComputeFifoDepth(
+                work_root=config_dict["prj_root"], erase=False, ste_already_done=True
+            )
+        )
+        nn2fpga_model.save("post_fifo_depth.onnx")
+
     model = ModelWrapper("wrapper_model.onnx")
     model = model.transform(
         transformation.EmbedHLSCode(
@@ -130,16 +148,24 @@ def nn2fpga_compile(config_dict: dict):
         )
     )
 
-    # Simulate the model to check if it works.
-    model.save("wrapper_model.onnx")
-    model = ModelWrapper("wrapper_model.onnx")
-    test_transformation_equivalence(original_model, model)
-    model = model.transform(transformation.GenerateBitstream(work_dir=config_dict["prj_root"], already_exported=False, only_synthesize=False))
-    model.save("bitstream_generated.onnx")
-    model = model.transform(transformation.GenerateDriver(work_dir=config_dict["prj_root"]))
+    # Simulate the model to check correctness.
+    if config_dict["steps"].get("Simulate", True):
+        test_transformation_equivalence(original_model, model)
 
-    # Generate as a comparison the original model with QCDQ quantization.
-    original_model = original_model.transform(transformation.ConvertToQCDQ())
-    original_model = original_model.transform(transformation.SetDynamicBatchSize())
-    original_model.save("original_model_qcdq.onnx")
-    
+    # Generate the bitstream.
+    if config_dict["steps"].get("Deploy", True):
+        model = model.transform(
+            transformation.GenerateBitstream(
+                work_dir=config_dict["prj_root"],
+                already_exported=False,
+                only_synthesize=False,
+            )
+        )
+        model.save("bitstream_generated.onnx")
+
+        # Deploy converted model and original model.
+        model = model.transform(
+            transformation.GenerateDriver(
+                work_dir=config_dict["prj_root"], original_model=original_model
+            )
+        )

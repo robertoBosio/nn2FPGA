@@ -153,9 +153,10 @@ def make_deploy_directory(work_dir: str, top_name: str) -> str:
 
 class GenerateDriver(Transformation):
 
-    def __init__(self, work_dir: str):
+    def __init__(self, work_dir: str, original_model: ModelWrapper = None):
         super().__init__()
         self.work_dir = work_dir
+        self.original_model = original_model
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         top_name = model.get_metadata_prop("top_name")
@@ -205,12 +206,18 @@ class GenerateDriver(Transformation):
             raise RuntimeError(f"Custom operator not built: {custom_op_path}")
 
         # Remove all the copies of the spec file.
-        # os.remove("/workspace/NN2FPGA/nn2fpga/deploy/generated_spec.hpp")
+        os.remove("/workspace/NN2FPGA/nn2fpga/deploy/generated_spec.hpp")
 
         # Temporarily copy the pynq utility needed to upload the bitstream.
         shutil.copy(
             "/workspace/NN2FPGA/nn2fpga/deploy/pynq_program.py",
             f"{deploy_dir}"
         )
+
+        if self.original_model is not None:
+            # Save the original model with QCDQ quantization for deployment.
+            original_model = self.original_model.transform(ConvertToQCDQ())
+            original_model = original_model.transform(SetDynamicBatchSize())
+            original_model.save(f"{deploy_dir}/original_model_qcdq.onnx")
 
         return model, False
