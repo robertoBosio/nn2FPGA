@@ -1051,7 +1051,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "IntQuant": [IntQuantNodePattern()],
     "Quant": [QuantNodePattern()],
     "AveragePool": [AveragePoolQuantPattern()],
-    "Conv": [ConvQuantPattern()],
+    "Conv": [ConvQuantPattern()],  # debug allowlist by node name prefix
     "Gemm": [GemmQuantPattern()],
     "GlobalMaxPool": [GlobalMaxPoolQuantPattern()],
     "GlobalAveragePool": [GlobalAveragePoolQuantPattern()],

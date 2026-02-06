@@ -78,7 +78,7 @@ class OptimizeBitwidth(Transformation):
                 logger.info(
                     f"Optimizing bitwidth of tensor {quant.input[0]} from {tq.bitwidth} to {required_bits}"
                 )
-                # model.set_initializer(
-                #     quant.input[3], np.array(required_bits, dtype=np.int32)
-                # )
+                model.set_initializer(
+                    quant.input[3], np.array(required_bits, dtype=np.int32)
+                )
         return model, False

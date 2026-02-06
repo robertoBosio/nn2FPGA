@@ -1,5 +1,5 @@
 from backend.transformation.add_streaming_params import AddStreamingParams
-from backend.transformation.adjust_bias_scale import AdjustBiasScale
+from backend.transformation.adjust_conv_scale import AdjustConvScale
 from backend.transformation.adjust_streaming_comunication import (
     AdjustStreamingCommunication,
 )
