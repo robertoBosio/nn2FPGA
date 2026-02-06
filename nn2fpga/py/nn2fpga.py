@@ -31,9 +31,19 @@ def load_config(config_path: str) -> dict:
         config_dict["board"] = config["platform"]["board"]
         config_dict["frequency"] = config["platform"]["frequency"]
 
+        # Steps
+        config_dict["steps"] = config.get("steps", {
+            "OptimizeBitwidth": True,
+            "AddStreamingParams": True,
+            "ComputeFifoDepth": True,
+            "Simulate": True,
+            "Deploy": True,
+        })  
+        
         # Optional fields with defaults
         config_dict["silvia_packing"] = config.get("options", {}).get("silvia_packing", False)
         config_dict["dsp_limit"] = config.get("options", {}).get("dsp_limit", None)
+
 
     except KeyError as e:
         print(f"Missing configuration field: {e}")
