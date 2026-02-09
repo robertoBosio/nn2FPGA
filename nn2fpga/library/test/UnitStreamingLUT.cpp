@@ -20,8 +20,8 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
       TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
       test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
       test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
-      streaming_sigmoid;
-  streaming_sigmoid.run<0>(i_data, LUTmem, o_data);
+      streaming_lut;
+  streaming_lut.run<0>(i_data, LUTmem, o_data);
 }
 
 bool test_run() {
@@ -94,8 +94,8 @@ bool test_step() {
       TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
       test_config::LUT_SIZE, test_config::IN_HEIGHT, test_config::IN_WIDTH,
       test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
-      streaming_sigmoid;
-  streaming_sigmoid.step_init(test_config::PIPELINE_DEPTH);
+      streaming_lut;
+  streaming_lut.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;
   size_t clock_cycles = 0;
@@ -108,7 +108,7 @@ bool test_step() {
     }
 
     ActorStatus actor_status =
-        streaming_sigmoid.step(in_stream, test_config::LUTmem, out_stream);
+        streaming_lut.step(in_stream, test_config::LUTmem, out_stream);
     std::vector<ActorStatus> actor_statuses;
     std::vector<size_t> channel_quantities;
     actor_statuses.push_back(actor_status);
