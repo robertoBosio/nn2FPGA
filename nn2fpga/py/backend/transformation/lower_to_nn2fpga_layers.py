@@ -1,7 +1,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from onnxscript.rewriter import rewrite
-from backend.custom_op.register_rewrite_rule import collect_rules
+from backend.custom_op.register_rewrite_rule import collect_rule_buckets
 from onnxscript import ir
 import logging
 logger = logging.getLogger(__name__)
@@ -24,7 +24,9 @@ class LowerToNN2FPGALayers(Transformation):
             tuple: A tuple containing the transformed model and a boolean indicating if the transformation needs to be reapplied.
         """
         model = ir.from_proto(model.model)
-        model = rewrite(model, pattern_rewrite_rules=collect_rules())
+
+        for ruleset in collect_rule_buckets():
+            model = rewrite(model, pattern_rewrite_rules=ruleset)
         model = ir.to_proto(model)
         model = ModelWrapper(model)
 

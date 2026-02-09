@@ -93,20 +93,19 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveSqueeze())
-    nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
-    nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
-    nn2fpga_model.save("after_custom_nodes.onnx")
 
     # Handle quantization.
     if config_dict["steps"].get("OptimizeBitwidth", True):
         nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
+    nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
+    nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
+    nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
+    nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
-    nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
-    nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
 
     # Start of the backend.
     nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
@@ -123,8 +122,6 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
-    # nn2fpga_model.save("pre_streaming_params.onnx")
-    # nn2fpga_model = ModelWrapper("pre_streaming_params.onnx")
     if config_dict["steps"].get("AddStreamingParams", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"])

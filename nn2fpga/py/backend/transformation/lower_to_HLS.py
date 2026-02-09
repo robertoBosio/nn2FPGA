@@ -3,7 +3,6 @@ from qonnx.core.modelwrapper import ModelWrapper
 from onnxscript.rewriter import rewrite
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
-from backend.custom_op.register_rewrite_rule import collect_rules
 from backend.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata, set_custom_tensor_fifo_metadata
 from backend.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
 from backend.core.acceleratorpackage import AcceleratorPackage

@@ -104,7 +104,7 @@ class BaseHLSTest(ABC):
             text=True,
         )
 
-    def run(self, config_dict: dict, steps: str, workdir: str = ".", **kwargs):
+    def run(self, config_dict: dict, steps: str, workdir: str = ".", clean: bool = True, **kwargs):
         # write config header
         testconfig_path = os.path.join(workdir, "test_config.hpp")
         with open(testconfig_path, "w") as f:
@@ -127,18 +127,19 @@ class BaseHLSTest(ABC):
                 f"Loop constraints not satisfied: {result.stdout}"
 
         # cleanup
-        try:
-            os.remove(tcl_path)
-            os.remove(testconfig_path)
-        except FileNotFoundError:
-            pass
+        if clean:
+            try:
+                os.remove(tcl_path)
+                os.remove(testconfig_path)
+            except FileNotFoundError:
+                pass
 
-        if os.path.exists(PROJECT_NAME):
-            os.system(f"rm -rf {PROJECT_NAME}")
+            if os.path.exists(PROJECT_NAME):
+                os.system(f"rm -rf {PROJECT_NAME}")
 
-        for f in list(os.listdir(workdir)):
-            if f.startswith("vitis_hls") and f.endswith(".log"):
-                try:
-                    os.remove(os.path.join(workdir, f))
-                except OSError:
-                    pass
+            for f in list(os.listdir(workdir)):
+                if f.startswith("vitis_hls") and f.endswith(".log"):
+                    try:
+                        os.remove(os.path.join(workdir, f))
+                    except OSError:
+                        pass

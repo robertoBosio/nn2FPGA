@@ -12,7 +12,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
 
     @property
     def unit_filename(self):
-        return "StreamingLeakyReLU"
+        return "StreamingLUT"
 
     def generate_lut_memory(self, config_dict):
         """
