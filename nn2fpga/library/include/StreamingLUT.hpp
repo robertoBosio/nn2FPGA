@@ -57,7 +57,7 @@ public:
            hls::stream<TOutputWord> o_data[W_PAR]) {
     // Loop through the input height and width.
     for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH / W_PAR; i_hw++) {
-    STREAMINGRELU_RUN_LOOP:
+    STREAMINGLUT_RUN_LOOP:
       for (size_t i_ch = 0; i_ch < IN_CH / CH_PAR; i_ch++) {
 #pragma HLS pipeline II = 1
         StreamingLUT::pipeline_body(i_data, LUTmem, o_data);

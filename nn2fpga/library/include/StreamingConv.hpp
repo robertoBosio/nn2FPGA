@@ -472,7 +472,7 @@ private:
     TWeightWord weight_data[FH][FW];
     // Bias structure to hold the biases.
     TBiasWord bias_data;
-#pragma HLS ARRAY_PARTITION variable = bias_data dim = 0
+#pragma HLS ARRAY_RESHAPE variable = bias_data dim = 0
     TPartialSum acc_buff_par_local[OUT_CH_PAR * W_PAR];
 #pragma HLS ARRAY_PARTITION variable = acc_buff_par_local dim = 0
 
