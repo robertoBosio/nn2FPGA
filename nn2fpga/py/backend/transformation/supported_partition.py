@@ -47,7 +47,7 @@ class Pattern:
 
     def _match_impl(self, model, anchor_node) -> Match:
         raise NotImplementedError
-    
+
 
 # =========================== Helper Functions ===========================#
 
@@ -643,7 +643,11 @@ class ConcatQuantSameParamsAxis1(Pattern):
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Concat expects >=2 inputs"])
 
-        if not check_attribute(anchor_node, "axis", 1, reasons):
+        if (
+            not check_attribute(anchor_node, "axis", 1, reasons)
+            and not check_attribute(anchor_node, "axis", 2, reasons)
+            and not check_attribute(anchor_node, "axis", 3, reasons)
+        ):
             return Match(False, self.name, covered, reasons)
 
         qnodes = []
@@ -669,43 +673,53 @@ class ConcatQuantSameParamsAxis1(Pattern):
 
 class ReshapeFlattenFCOnly(Pattern):
     """
-    Matches Reshape/Flatten with your current constraints:
-      - input is 4D
-      - last two dims are 1,1
-      - output preserves [N,C] (i.e., output_shape[0:2] == input_shape[0:2])
-    Note: no quant requirement in your original code; add one if needed.
+    Accept only reshapes whose shape input is a constant and matches one of:
+      - [B, C, -1]  (preserves channels)
+      - [B, -1]     (only allowed when input H=W=1)
+    Everything else is rejected.
     """
-    name = "Reshape/Flatten FC-only shape constraints"
+    name = "Reshape/Flatten FC-only (strict shape-const)"
     anchor_op = ""  # set in subclasses
 
     def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
         covered: Set[str] = set()
 
-        if len(anchor_node.input) < 1 or len(anchor_node.output) < 1:
-            return Match(False, self.name, covered, ["Missing input/output"])
+        # must have input tensor and shape/second input
+        if len(anchor_node.input) < 2 or len(anchor_node.output) < 1:
+            return Match(False, self.name, covered, ["Missing input/shape/output"])
 
         in_shape = model.get_tensor_shape(anchor_node.input[0])
-        out_shape = model.get_tensor_shape(anchor_node.output[0])
+        if in_shape is None or len(in_shape) != 4:
+            return Match(False, self.name, covered, [f"Input must be 4D, got {in_shape}"])
 
-        if in_shape is None or out_shape is None:
-            reasons.append("Could not determine input/output shapes")
-            return Match(False, self.name, covered, reasons)
+        # must have a constant shape vector as the second input
+        shape_input = anchor_node.input[1]
+        shape_const = model.get_initializer(shape_input)
 
-        if len(in_shape) != 4:
-            reasons.append(f"Input must be 4D, got {in_shape}")
-            return Match(False, self.name, covered, reasons)
+        if shape_const is None:
+            return Match(False, self.name, covered, ["Reshape shape is not a constant"])
 
-        if in_shape[-2] != 1 or in_shape[-1] != 1:
-            reasons.append(f"Only supported when input H=W=1, got {in_shape[-2:]}")
-            return Match(False, self.name, covered, reasons)
+        vec = [int(v) for v in list(shape_const)]
+        B_in, C_in, H_in, W_in = in_shape
 
-        if len(out_shape) < 2 or out_shape[0:2] != in_shape[0:2]:
-            reasons.append(f"Output shape must preserve [N,C]; in={in_shape}, out={out_shape}")
-            return Match(False, self.name, covered, reasons)
+        # Pattern A: [B, C, -1]
+        if len(vec) == 3 and vec[0] == B_in and vec[1] == C_in and vec[2] == -1:
+            covered.add(anchor_node.name)
+            return Match(True, self.name, covered, reasons)
 
-        covered.add(anchor_node.name)
-        return Match(True, self.name, covered, reasons)
+        # Pattern B: [B, -1] allowed only when H=W=1
+        if len(vec) == 2 and vec[0] == B_in and vec[1] == -1:
+            if H_in == 1 and W_in == 1:
+                covered.add(anchor_node.name)
+                return Match(True, self.name, covered, reasons)
+            else:
+                return Match(False, self.name, covered, [f"[B,-1] only allowed when H=W=1, got H={H_in},W={W_in}"])
+
+        # otherwise reject
+        return Match(False, self.name, covered,
+                     [f"Unsupported constant reshape shape {vec}; allowed: [B,C,-1] or [B,-1](if H=W=1)"])
+
 
 class ReshapeFCOnly(ReshapeFlattenFCOnly):
     anchor_op = "Reshape"
