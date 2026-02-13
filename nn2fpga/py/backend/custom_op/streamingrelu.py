@@ -128,7 +128,10 @@ class StreamingReLU(NN2FPGAOp):
             self.__is_power_of_two(input_quant.scale)
             and self.__is_power_of_two(output_quant.scale)
         ):
-            return f"DequantQuantPo2<0, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
+            shift = -1 * int(np.log2(output_quant.scale) - np.log2(input_quant.scale))
+            if shift == 0 and input_quant.bitwidth == output_quant.bitwidth and input_quant.signed == output_quant.signed:
+                return f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>"
+            return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingReLU."

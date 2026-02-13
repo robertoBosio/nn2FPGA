@@ -180,6 +180,8 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
             and self.__is_power_of_two(output_quant.scale)
         ):
             shift = -1 * int(np.log2(output_quant.scale) - np.log2(input_quant.scale))
+            if shift == 0 and input_quant.bitwidth == output_quant.bitwidth and input_quant.signed == output_quant.signed:
+                return f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>"
             return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
