@@ -35,6 +35,7 @@ public:
     PipelineDelayBuffer<TWord> delayed_output[FH * FW_EXPAND];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
+    size_t depth = 1;
 
     void init(size_t depth) {
       if (initialized)
@@ -44,6 +45,7 @@ public:
       }
       actor_status = ActorStatus(depth, OUT_HEIGHT * (OUT_WIDTH / W_PAR) *
                                             (IN_CH / CH_PAR));
+      this->depth = depth;
       initialized = true;
     }
   };
@@ -95,6 +97,25 @@ public:
       }
     }
 
+    if (st.depth == 1) {
+      for (size_t i_fh = 0; i_fh < FH; i_fh++) {
+        for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
+          if (o_data[i_fh * FW_EXPAND + i_fw].size() >= 2) {
+            firing_condition = false;
+          }
+        }
+      }
+    } else {
+      for (size_t i_fh = 0; i_fh < FH; i_fh++) {
+        for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
+          if (st.delayed_output[i_fh * FW_EXPAND + i_fw].peek() &&
+              o_data[i_fh * FW_EXPAND + i_fw].size() >= 2) {
+            firing_condition = false;
+          }
+        }
+      }
+    }
+
     if (firing_condition) {
       hls::stream<TWord> instant_o_data[FH * FW_EXPAND];
       StreamingPad::pipeline_body(i_data, instant_o_data, st.i_h, st.i_w);
@@ -122,26 +143,16 @@ public:
               instant_o_data[i_fh * FW_EXPAND + i_fw].read(), true);
         }
       }
+      // Advance the state of the actor firings.
+      st.actor_status.advance();
 
-    } else {
-      // If the firing condition is not met, push placeholders to maintain
-      // timing.
+      // Write the output data to the output stream.
       for (size_t i_fh = 0; i_fh < FH; i_fh++) {
         for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
-          st.delayed_output[i_fh * FW_EXPAND + i_fw].push(TWord(), false);
-        }
-      }
-    }
-
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
-
-    // Write the output data to the output stream.
-    for (size_t i_fh = 0; i_fh < FH; i_fh++) {
-      for (size_t i_fw = 0; i_fw < FW_EXPAND; i_fw++) {
-        TWord out;
-        if (st.delayed_output[i_fh * FW_EXPAND + i_fw].pop(out)) {
-          o_data[i_fh * FW_EXPAND + i_fw].write(out);
+          TWord out;
+          if (st.delayed_output[i_fh * FW_EXPAND + i_fw].pop(out)) {
+            o_data[i_fh * FW_EXPAND + i_fw].write(out);
+          }
         }
       }
     }

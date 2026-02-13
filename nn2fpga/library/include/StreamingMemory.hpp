@@ -115,7 +115,7 @@ public : StreamingMemory() = default;
       for (size_t i = 0; i < ARRAY_PAR; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      depth = depth;
+      this->depth = depth;
       actor_status = ActorStatus(depth, CH_GROUPS * TIMES);
       initialized = true;
     }
