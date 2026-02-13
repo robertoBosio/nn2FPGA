@@ -5,7 +5,7 @@ from qonnx.custom_op.registry import getCustomOp
 import logging
 import numpy as np
 import math
-from backend.transformation.add_streaming_params import quant_array
+from backend.transformation.add_streaming_params import quant_array, safe_int_quant_call
 from backend.core.tensor_quant import TensorQuant
 logger = logging.getLogger(__name__)
 
@@ -165,18 +165,34 @@ class AdjustConvScale(Transformation):
                     narrow=target_tensor_quant.narrow,
                     rounding_mode=target_tensor_quant.rounding_mode,
                 )
+
+                # In case the original floating values were not quantized, we need to substitute them
+                # to being able to change the scaling factor. Otherwise changing only the scaling factor
+                # could result in rounding errors if the original floats were not exactly representable in the original quantization scheme.
+                tensor_quantized_float = safe_int_quant_call(
+                    model.get_initializer(quant_node.input[0]),
+                    target_tensor_quant.scale,
+                    target_tensor_quant.zeropt,
+                    target_tensor_quant.bitwidth,
+                    signed=target_tensor_quant.signed,
+                    narrow=target_tensor_quant.narrow,
+                    rounding_mode=target_tensor_quant.rounding_mode,
+                )
                 new_ints = tensor_quantized * ratio
 
                 i_min = int(np.min(new_ints))
                 i_max = int(np.max(new_ints))
                 needed_bw = required_bitwidth_from_int_range(i_min, i_max, target_tensor_quant.signed, target_tensor_quant.narrow)
                 if needed_bw > target_tensor_quant.bitwidth:
-                    logger.info(f"Updating bitwidth of quant node {quant_node.name} from {target_tensor_quant.bitwidth} to {needed_bw}")
+                    logger.info(f"Updating bitwidth of quant node {quant_node.name} from {target_tensor_quant.bitwidth} to {needed_bw}.")
                     model.set_initializer(quant_node.input[3], np.array(needed_bw, dtype=np.float32))
 
                 # update bias quantizer scale to the target (per-tensor)
                 model.set_initializer(quant_node.input[1], np.array([target_tensor_scalar], dtype=np.float32))
                 logger.info(f"Adjusted per-tensor scale for node {node.name}")
+
+                # Update the quantized floating tensor.
+                model.set_initializer(quant_node.input[0], tensor_quantized_float.astype(np.float32))
 
             else:
                 # per-channel mode: both weight and bias are per-channel and size should be c_out
