@@ -487,7 +487,7 @@ def make_build_dir(work_dir: str) -> None:
 
 class ComputeFifoDepth(Transformation):
     """Compute the FIFO depth for each node in the model."""
-    
+
     def __init__(self, work_root: str = "/tmp", erase: bool = True, ste_already_done: bool = False):
         """
         Initializes the ComputeFifoDepth transformation.
@@ -514,7 +514,7 @@ class ComputeFifoDepth(Transformation):
 
             with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
                 f.write(generate_hls_code(model, self.work_root))
-            
+
             # Write the driver code.
             with open(os.path.join(self.work_root, "testbench.cpp"), "w") as f:
                 f.write(generate_hls_driver(model))
@@ -545,7 +545,7 @@ class ComputeFifoDepth(Transformation):
                     cwd=self.work_root,
                     check=True
                 )
-                
+
         else:
             logger.info("Skipping synthesis and STE simulation as ste_already_done is set to True.")
 
@@ -553,18 +553,23 @@ class ComputeFifoDepth(Transformation):
         fifo_depth_file = os.path.join(self.work_root, "fifo_depth.json")
         if not os.path.exists(fifo_depth_file):
             raise FileNotFoundError(f"FIFO depth file not found: {fifo_depth_file}")
-        
+
         fifo_depth_data = {}
         with open(fifo_depth_file, "r") as f:
             fifo_depth_data = json.load(f)
-        
+
         fifo_depths = fifo_depth_data.get("fifo_depth", {})
         if not fifo_depths:
             raise ValueError("No FIFO depth data found in the generated file.")
+        computed_II = fifo_depth_data.get("II", None)
+        if computed_II is None or int(computed_II) != int(model.get_metadata_prop("model_II")):
+            raise ValueError(
+                f"Computed II {computed_II} does not match model II {model.get_metadata_prop('model_II')}. The simulation might have failed or the model might be deadlocked."
+            )
 
         # Adjust the FIFO depths based on scheduling information.
         fifo_depths = adjust_depth_based_on_scheduling(model, fifo_depths, self.work_root)
-        
+
         # Store the FIFO depth in the model metadata.
         for stream_name, depth in fifo_depths.items():
             current_meta = get_custom_tensor_fifo_metadata(model, stream_name)
@@ -584,7 +589,7 @@ class ComputeFifoDepth(Transformation):
                     logger.warning(f"No existing FIFO metadata found for stream {stream_name}. Skipping writing to CSV.")
                     continue
                 f.write(f"{stream_name},{current_meta.depth}\n")
-        
+
         # Optionally erase the working directory.
         if self.erase:
             subprocess.run(["rm", "-rf", self.work_root], check=True)
