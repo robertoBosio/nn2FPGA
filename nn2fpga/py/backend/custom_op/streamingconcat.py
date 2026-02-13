@@ -157,15 +157,47 @@ class StreamingConcat(NN2FPGAOp):
         input_shapeA = model.get_tensor_shape(self.onnx_node.input[0])
         if input_shapeA is None:
             raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
+        input_shapeA = input_shapeA + [1] * (4 - len(input_shapeA))  # Ensure 4D shape.
+
         input_shapeB = model.get_tensor_shape(self.onnx_node.input[1])
         if input_shapeB is None:
             raise ValueError(f"Input {self.onnx_node.input[1]} has no shape info")
+        input_shapeB = input_shapeB + [1] * (4 - len(input_shapeB))  # Ensure 4D shape.
+        
         output_shape = model.get_tensor_shape(self.onnx_node.output[0])
         if output_shape is None:
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        
         axis = self.get_nodeattr("axis")
+        axis_strings = ["Channel", "Height", "Width"] 
+        class_name = f"StreamingConcat{axis_strings[axis - 1]}"
+        if axis == 1:
+            template_args = [
+                (f"{input_shapeA[2]}", "IN_HEIGHT"),
+                (f"{input_shapeA[3]}", "IN_WIDTH"),
+                (f"{input_shapeA[1]}", "IN_CH_A"),
+                (f"{input_shapeB[1]}", "IN_CH_B"),
+            ]
+        elif axis == 2:
+            template_args = [
+                (f"{input_shapeA[2]}", "IN_HEIGHT_A"),
+                (f"{input_shapeB[2]}", "IN_HEIGHT_B"),
+                (f"{input_shapeA[3]}", "IN_WIDTH"),
+                (f"{input_shapeA[1]}", "IN_CH"),
+            ]
+        elif axis == 3:
+            template_args = [
+                (f"{input_shapeA[2]}", "IN_HEIGHT"),
+                (f"{input_shapeA[3]}", "IN_WIDTH_A"),
+                (f"{input_shapeB[3]}", "IN_WIDTH_B"),
+                (f"{input_shapeA[1]}", "IN_CH"),
+            ]
+        else:
+            raise ValueError(f"Unsupported concat axis: {axis}")
+
         StreamingConcat = cpp_object(
-            "StreamingConcat",
+            class_name,
             f"{self.onnx_node.name}",
             template_args=[
                 (
@@ -188,10 +220,10 @@ class StreamingConcat(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shapeA[2]}", "IN_HEIGHT"),
-                (f"{input_shapeA[3]}", "IN_WIDTH"),
-                (f"{input_shapeA[1]}", "IN_CH_A"),
-                (f"{input_shapeB[1]}", "IN_CH_B"),
+                template_args[0],
+                template_args[1],
+                template_args[2],
+                template_args[3],
                 (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
                 (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
             ]
