@@ -324,6 +324,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             + weights_quant.bitwidth
             + int(np.ceil(np.log2(add_ops + 1)))
         )
+        if input_quant.signed != weights_quant.signed:
+            acc_bitwidth += 1  # Add extra bit for sign if input and weights have different signedness
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
         acc_quant = TensorQuant(
             bitwidth=acc_bitwidth,
@@ -343,6 +345,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             + weights_quant.bitwidth
             + int(np.ceil(np.log2(add_ops + 1)))
         )
+        if input_quant.signed != weights_quant.signed:
+            acc_bitwidth += 1  # Add extra bit for sign if input and weights have different signedness
         acc_bitwidth = max(acc_bitwidth, bias_quant.bitwidth) + 1
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
         acc_quant = TensorQuant(

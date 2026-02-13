@@ -16,6 +16,7 @@ from backend.custom_op.streamingmaxpool import StreamingMaxPool
 from backend.custom_op.streamingmemory import StreamingMemory
 from backend.custom_op.streamingmul import StreamingMul
 from backend.custom_op.streamingrelu import StreamingReLU
+from backend.custom_op.streamingreshape import StreamingReshape
 from backend.custom_op.streamingsigmoid import StreamingSigmoid
 from backend.custom_op.streamingsplit import StreamingSplit
 from backend.custom_op.streamingswish import StreamingSwish
@@ -42,6 +43,7 @@ custom_op = {
     "StreamingMemory": StreamingMemory,
     "StreamingMul": StreamingMul,
     "StreamingReLU": StreamingReLU,
+    "StreamingReshape": StreamingReshape,
     "StreamingSigmoid": StreamingSigmoid,
     "StreamingSplit": StreamingSplit,
     "StreamingSwish": StreamingSwish,
