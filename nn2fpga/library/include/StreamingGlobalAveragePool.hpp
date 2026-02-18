@@ -208,22 +208,22 @@ private:
         // This is not strictly correct, as ties should be rounded to the
         // nearest even number, but it requires the use of a modulo operation,
         // which is quite expensive. Instead, we are rounding ties up.
-        TAcc bias = (s_acc_buff[i_och_par] >= 0) ? (TAcc)(divisor >> 1)
-                                                 : (TAcc) - (divisor >> 1);
-        TAcc rounded_value = s_acc_buff[i_och_par] + bias;
-        TAcc result = rounded_value / divisor; // Calculate the average.
+        // TAcc bias = (s_acc_buff[i_och_par] >= 0) ? (TAcc)(divisor >> 1)
+        //                                          : (TAcc) - (divisor >> 1);
+        // TAcc rounded_value = s_acc_buff[i_och_par] + bias;
+        // TAcc result = rounded_value / divisor; // Calculate the average.
 
         // Potential logic for a rounding to the nearest even number
-        // TAcc quotient = acc / div;
-        // TDiv remainder = acc % div;
-        // TDiv half = div >> 1;
-        // if (remainder > half || (remainder == half && (quotient & 1))) {
-        //   quotient += 1;
-        // }
-        // if (remainder < -half || (remainder == -half && (quotient & 1))) {
-        //   quotient -= 1;
-        // }
-        // TAcc result = quotient;
+        TAcc quotient = s_acc_buff[i_och_par] / divisor;
+        ap_int<TDiv::width + 1> remainder = s_acc_buff[i_och_par] % divisor;
+        ap_int<TDiv::width + 2> double_remainder = remainder * 2;
+        if (double_remainder > divisor || (double_remainder == divisor && (quotient & 1))) {
+          quotient += 1;
+        }
+        if (double_remainder < -divisor || (double_remainder == -divisor && (quotient & 1))) {
+          quotient -= 1;
+        }
+        TAcc result = quotient;
 
         s_output_struct[i_och_par] = quantizer(result);
         if (i_och_par == (OUT_CH_PAR - 1)) {
