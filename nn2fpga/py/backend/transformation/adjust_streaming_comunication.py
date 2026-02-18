@@ -241,6 +241,28 @@ class AdjustStreamingCommunication(Transformation):
                 last_w_par = in_w_par
                 tensor_shape = model.get_tensor_shape(output)
 
+                if tensor_shape is None:
+                    raise ValueError(
+                        f"Tensor shape for {output} is not defined. Cannot adjust bandwidth without tensor shape information."
+                    )
+                tensor_shape = tensor_shape + [1] * (
+                    4 - len(tensor_shape)
+                )  # Ensure 4D shape.
+                if (
+                    tensor_shape[3] % out_w_par != 0
+                    or tensor_shape[3] % last_w_par != 0
+                ):
+                    raise ValueError(
+                        f"Output width {tensor_shape[3]} is not divisible by the width parallelism of producer ({last_w_par}) or consumer ({out_w_par})."
+                    )
+                if (
+                    tensor_shape[1] % out_ch_par != 0
+                    or tensor_shape[1] % last_ch_par != 0
+                ):
+                    raise ValueError(
+                        f"Output channels {tensor_shape[1]} is not divisible by the channel parallelism of producer ({last_ch_par}) or consumer ({out_ch_par})."
+                    )
+
                 last_output, last_ch_par, last_w_par = adjust_bandwidth(
                     model,
                     output,
@@ -258,7 +280,6 @@ class AdjustStreamingCommunication(Transformation):
                 for i, input_name in enumerate(consumer.input):
                     if input_name == output:
                         consumer.input[i] = last_output
-
 
         if communication_nodes:
             # If any communication nodes were added, we need to sort the graph
