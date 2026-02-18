@@ -1,3 +1,4 @@
+from attr import dataclass
 import numpy as np
 import onnxruntime as rt
 from onnxscript.rewriter import pattern
@@ -7,7 +8,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from backend.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
 from backend.core.tensor_fifo import TensorFifo
 from backend.custom_op.hlskernel import HLSKernel
-from backend.custom_op.op_base import NN2FPGAOp, NodeInterface
+from backend.custom_op.op_base import NN2FPGAOp, NodeInterface, DSECapable
 from backend.custom_op.register_rewrite_rule import register_rules
 from backend.util.codegen_utils import (
     cpp_function,
@@ -16,8 +17,26 @@ from backend.util.codegen_utils import (
     get_hls_quant_type,
 )
 
-class StreamingConcat(NN2FPGAOp):
+class StreamingConcat(NN2FPGAOp, DSECapable):
     """Node implementing the Concat operation."""
+
+    @dataclass(frozen=True)
+    class DSEPoint:
+        channel_unroll: int
+        width_unroll: int
+
+        def to_dict(self) -> dict:
+            return {
+                "channel_unroll": self.channel_unroll,
+                "width_unroll": self.width_unroll,
+            }
+
+        @staticmethod
+        def from_dict(d: dict) -> "StreamingConcat.DSEPoint":
+            return StreamingConcat.DSEPoint(
+                channel_unroll=d["channel_unroll"],
+                width_unroll=d["width_unroll"],
+            )
 
     @staticmethod
     def pattern(op, a, b, axis):
@@ -163,12 +182,12 @@ class StreamingConcat(NN2FPGAOp):
         if input_shapeB is None:
             raise ValueError(f"Input {self.onnx_node.input[1]} has no shape info")
         input_shapeB = input_shapeB + [1] * (4 - len(input_shapeB))  # Ensure 4D shape.
-        
+
         output_shape = model.get_tensor_shape(self.onnx_node.output[0])
         if output_shape is None:
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
         output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-        
+
         axis = self.get_nodeattr("axis")
         axis_strings = ["Channel", "Height", "Width"] 
         class_name = f"StreamingConcat{axis_strings[axis - 1]}"
@@ -336,6 +355,81 @@ class StreamingConcat(NN2FPGAOp):
         hls_tag += 1
 
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
+    
+    def get_dse_points(self, model: ModelWrapper) -> list["StreamingConcat.DSEPoint"]:
+        """ Generate the DSE points for the StreamingConcat operation.
+        Args:
+            model (ModelWrapper): The model with quantization information.
+        Returns:
+            list[StreamingConcat.DSEPoint]: List of DSE points.
+        """
+
+        def divisors(n: list[int], clip: int) -> list[int]:
+            return [
+                i
+                for i in range(1, min(n) + 1)
+                if (all(x % i == 0 for x in n) and i <= clip)
+            ]
+
+        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
+        if input_quant is None:
+            raise ValueError(
+                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
+            )
+        input_bits = input_quant.bitwidth
+
+        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        if output_quant is None:
+            raise ValueError(
+                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
+            )
+        output_bits = output_quant.bitwidth
+
+        input_shape0 = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape0 is None:
+            raise ValueError(
+                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
+            )
+        input_shape0 = input_shape0 + [1] * (4 - len(input_shape0))  # Ensure 4D shape.
+
+        input_shape1 = model.get_tensor_shape(self.onnx_node.input[1])
+        if input_shape1 is None:
+            raise ValueError(
+                f"Tensor shape for input '{self.onnx_node.input[1]}' not found in model."
+            )
+        input_shape1 = input_shape1 + [1] * (4 - len(input_shape1))  # Ensure 4D shape.
+
+        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
+        if output_shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
+            )
+        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+
+        # As of now, kernel height and width are completely unrolled.
+        DSE_points = []
+        for channel_unroll in divisors(
+            [input_shape0[1], input_shape1[1], output_shape[1]],
+            min(input_shape0[1], input_shape1[1], output_shape[1]),
+        ):
+            for width_unroll in divisors(
+                [input_shape0[3], input_shape1[3], output_shape[3]],
+                min(input_shape0[3], input_shape1[3], output_shape[3]),
+            ):
+                # Check dimension of input streams
+                if (input_bits * channel_unroll) > 4096:
+                    continue
+                # Check dimension of output streams
+                if (output_bits * channel_unroll) > 4096:
+                    continue
+
+                DSE_points.append(
+                    self.DSEPoint(
+                        channel_unroll, width_unroll
+                    )
+                )
+
+        return DSE_points
 
     def get_latency(self, model: ModelWrapper) -> int:
         """ Estimate the latency of the StreamingConcat operation.
@@ -348,7 +442,9 @@ class StreamingConcat(NN2FPGAOp):
         if output_shape is None:
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr(
+            "width_unroll"
+        )
         return np.prod(output_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -368,23 +464,23 @@ class StreamingConcat(NN2FPGAOp):
             int: Estimated DSP usage.
         """
         return 0
-    
+
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingConcat operation requires a line buffer.
         Returns:
             bool: True if Line Buffering is required, False otherwise.
         """
         return False
-    
-    def can_inherit_interface(self):
-        return True
-    
-    def inherit_interface(self, model: ModelWrapper, upstream: NodeInterface) -> None:
-        """ Inherit the interface from the upstream node."""
-        self.set_nodeattr("in_stream_array", upstream.out_stream_array)
-        self.set_nodeattr("out_stream_array", upstream.out_stream_array)
-        self.set_nodeattr("in_word_array", upstream.out_word_array)
-        self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("width_unroll", upstream.out_stream_array)
+    def apply_point(self, model: ModelWrapper, point: "StreamingConcat.DSEPoint"):
+        """ Set the parallelization attributes for the StreamingConcat operation.
+        Args:
+            point (StreamingConcat.DSEPoint): The DSE point containing the unrolling parameters.
+        """
+        self.set_nodeattr("channel_unroll", point.channel_unroll)
+        self.set_nodeattr("width_unroll", point.width_unroll)
+
+        self.set_nodeattr("in_stream_array", point.width_unroll)
+        self.set_nodeattr("out_stream_array", point.width_unroll)
+        self.set_nodeattr("in_word_array", point.channel_unroll)
+        self.set_nodeattr("out_word_array", point.channel_unroll)
