@@ -417,6 +417,7 @@ public:
       BANDWIDTHADJUSTINCREASECHANNELS_RUN_LOOP:
         for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR;
              i_och_par += IN_CH_PAR) {
+#pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
           BandwidthAdjustIncreaseChannels::pipeline_body(
               input_data_stream, output_data_stream, output_data, i_och_par);
@@ -599,6 +600,7 @@ public:
       BANDWIDTHADJUSTDECREASECHANNELS_RUN_LOOP:
         for (size_t i_ich_par = 0; i_ich_par < IN_CH_PAR;
              i_ich_par += OUT_CH_PAR) {
+#pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
           BandwidthAdjustDecreaseChannels::pipeline_body(
               input_data_stream, output_data_stream, input_data, i_ich_par);
