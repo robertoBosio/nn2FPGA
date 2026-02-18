@@ -23,6 +23,58 @@ import subprocess
 import logging
 logger = logging.getLogger(__name__)
 
+def analyze_memory_occupation(model: ModelWrapper):
+    """Analyze the memory occupation of each stream in the model."""
+    def from_hls_type_to_dtype_size(hls_type: str) -> int:
+        """
+        Parse an HLS type string and return its total size in bits.
+
+        Supported examples:
+            ap_int<16>
+            ap_uint<32>
+            float
+            double
+            std::array<ap_uint<8>, 4>
+            std::array<std::array<ap_uint<8>, 4>, 2>
+        """
+
+        hls_type = hls_type.strip()
+
+        # Handle std::array<T, N>
+        array_match = re.match(r"std::array\s*<(.+),\s*(\d+)\s*>", hls_type)
+        if array_match:
+            element_type = array_match.group(1).strip()
+            array_size = int(array_match.group(2))
+            element_bits = from_hls_type_to_dtype_size(element_type)
+            return element_bits * array_size
+
+        # Handle ap_int<N> or ap_uint<N>
+        ap_match = re.match(r"(ap_int|ap_uint)\s*<\s*(\d+)\s*>", hls_type)
+        if ap_match:
+            return int(ap_match.group(2))
+
+        # Handle float and double
+        if hls_type == "float":
+            return 32
+        if hls_type == "double":
+            return 64
+
+        raise ValueError(f"Unsupported HLS type: {hls_type}")
+
+    stream_occupations = {}
+    tot_bits = 0
+    for fifo in model.graph.value_info:
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
+        if tensor_fifo is not None:
+            stream_occupations[fifo.name] = tensor_fifo.depth * (from_hls_type_to_dtype_size(tensor_fifo.hls_type))
+            tot_bits += stream_occupations[fifo.name]
+    
+    stream_occupations = dict(sorted(stream_occupations.items(), key=lambda item: item[1], reverse=True))
+    logger.info(f"Total memory occupation: {tot_bits} bits, {tot_bits / (1024 * 1024 * 8):.2f} MBs")
+    logger.info("Memory occupation of the 10 largest streams:")
+    for stream_name, occupation in list(stream_occupations.items())[:10]:
+        logger.info(f"{stream_name}: {occupation} bits, {occupation * 100 / tot_bits:.2f}% of total")
+
 def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     """ Generate the HLS code to execute the model in fifo-depth mode. """
 
@@ -389,7 +441,6 @@ def generate_schedule(model: ModelWrapper, work_root: str):
     schedule_model = schedule_model.transform(EmbedHLSCode(nn2fpga_model=model, erase=False, work_root=work_root))
     schedule_model = schedule_model.transform(GenerateBitstream(work_dir=work_root, erase=False, only_synthesize=True))
 
-
 def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
     """Adjust the FIFO depth based on the scheduling information."""
     
@@ -590,8 +641,18 @@ class ComputeFifoDepth(Transformation):
                     continue
                 f.write(f"{stream_name},{current_meta.depth}\n")
 
+        analyze_memory_occupation(model)
+
         # Optionally erase the working directory.
         if self.erase:
-            subprocess.run(["rm", "-rf", self.work_root], check=True)
+            logger.info(f"Erasing working directory {self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')} to save space.")
+            subprocess.run(
+                [
+                    "rm",
+                    "-rf",
+                    f"{self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')}",
+                ],
+                check=True,
+            )
 
         return model, False

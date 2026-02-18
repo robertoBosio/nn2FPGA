@@ -27,6 +27,7 @@ from backend.transformation.lower_to_HLS import LowerToHLS
 from backend.transformation.lower_to_nn2fpga_layers import LowerToNN2FPGALayers
 from backend.transformation.optimize_bitwidth import OptimizeBitwidth
 from backend.transformation.propagate_quant import PropagateQuant
+from backend.transformation.remove_noop_nodes import RemoveNoopNodes
 from backend.transformation.remove_redundant_quant import RemoveRedundantQuant
 from backend.transformation.remove_squeeze import RemoveSqueeze
 from backend.transformation.set_dynamic_batchsize import SetDynamicBatchSize

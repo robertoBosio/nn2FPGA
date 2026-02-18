@@ -81,6 +81,7 @@ def nn2fpga_compile(config_dict: dict):
 
     # Propagate quantization through quantization invariant nodes.
     model = model.transform(transformation.SplitConcat())
+    model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
 
     # Extract implementable partition.
@@ -122,6 +123,8 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
+    # nn2fpga_model.save("dse_baseline.onnx")
+    # nn2fpga_model = ModelWrapper("dse_baseline.onnx")
     if config_dict["steps"].get("AddStreamingParams", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"])
@@ -133,12 +136,14 @@ def nn2fpga_compile(config_dict: dict):
     if config_dict["steps"].get("ComputeFifoDepth", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.ComputeFifoDepth(
-                work_root=config_dict["prj_root"], erase=False, ste_already_done=False
+                work_root=config_dict["prj_root"], erase=True, ste_already_done=False
             )
         )
         nn2fpga_model.save("post_fifo_depth.onnx")
 
     model = ModelWrapper("wrapper_model.onnx")
+    # model.save("dse_wrapper_model.onnx")
+    # model = ModelWrapper("dse_wrapper_model.onnx")
     model = model.transform(
         transformation.EmbedHLSCode(
             nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"]
