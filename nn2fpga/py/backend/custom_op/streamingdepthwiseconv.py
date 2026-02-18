@@ -980,8 +980,12 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingDepthwiseConv.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingDepthwiseConv operation."""
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
+        def divisors(n: list[int], clip: int) -> list[int]:
+            return [
+                i
+                for i in range(1, min(n) + 1)
+                if (all(x % i == 0 for x in n) and i <= clip)
+            ]
 
         kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
         weight_quant = TensorQuant(
@@ -993,7 +997,7 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=self.get_nodeattr("w_rounding_mode"),
         )
         weight_bits = weight_quant.bitwidth
-        
+
         if len(self.onnx_node.input) > 5:
             bias_quant = TensorQuant(
                 scale=model.get_initializer(self.onnx_node.input[6]),
@@ -1036,8 +1040,10 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors(output_shape[1], output_shape[1]):
-            for width_unroll in divisors(output_shape[3], output_shape[3]):
+        for channel_unroll in divisors([output_shape[1]], output_shape[1]):
+            for width_unroll in divisors(
+                [output_shape[3], input_shape[3]], min(output_shape[3], input_shape[3])
+            ):
                 # Check dimension of weight streams
                 if (weight_bits * channel_unroll) > 4096:
                     continue
