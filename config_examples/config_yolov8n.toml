@@ -1,0 +1,20 @@
+[project]
+top_name = "yolov8n"
+onnx_path = "/workspace/NN2FPGA/models/onnx/yolov8n_a8w8b32_po2.onnx"
+project_root = "/workspace/NN2FPGA/work/yolov8n_nofinalconcat"
+hls_version = 2025.1
+
+[platform]
+board = "ZCU102"
+frequency = 200
+
+[steps]
+OptimizeBitwidth = true
+AddStreamingParams = true
+ComputeFifoDepth = true
+Simulate = true
+Deploy = true
+
+[options]
+silvia_packing = true
+dsp_limit = 700

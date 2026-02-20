@@ -1,0 +1,20 @@
+[project]
+top_name = "yolo_fotovoltaic"
+onnx_path = "/workspace/NN2FPGA/models/onnx/fotov640_final_scaleoutLR_q.onnx"
+project_root = "/workspace/NN2FPGA/work/yolo_fotovoltaic"
+hls_version = 2025.1
+
+[platform]
+board = "ZCU102"
+frequency = 200
+
+[steps]
+OptimizeBitwidth = true
+AddStreamingParams = true
+ComputeFifoDepth = false
+Simulate = true
+Deploy = false
+
+[options]
+silvia_packing = true
+dsp_limit = 1000

@@ -1,0 +1,20 @@
+[project]
+top_name = "yolov5n"
+onnx_path = "/workspace/NN2FPGA/models/onnx/quant_v640New_final_quant.onnx"
+project_root = "/workspace/NN2FPGA/work/yolov5n_new"
+hls_version = 2025.1
+
+[platform]
+board = "ZCU102"
+frequency = 200
+
+[steps]
+OptimizeBitwidth = true
+AddStreamingParams = true
+ComputeFifoDepth = true
+Simulate = true
+Deploy = true
+
+[options]
+silvia_packing = true
+dsp_limit = 1000
