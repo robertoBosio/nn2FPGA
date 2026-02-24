@@ -440,9 +440,6 @@ def generate_schedule(model: ModelWrapper, work_root: str):
 
     schedule_model = schedule_model.transform(EmbedHLSCode(nn2fpga_model=model, erase=False, work_root=work_root))
     schedule_model = schedule_model.transform(GenerateBitstream(work_dir=work_root, erase=False, only_synthesize=True))
-
-def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
-    """Adjust the FIFO depth based on the scheduling information."""
     
     # Extract the scheduling information from the HLS report for each node in the original model.
     for node in model.graph.node:
@@ -518,6 +515,9 @@ def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, wor
         custom_op.set_nodeattr("read_skew", read_skew)
         custom_op.set_nodeattr("write_skew", write_skew)
         custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
+
+def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
+    """Adjust the FIFO depth based on the scheduling information."""
 
     for stream_name in fifo_depths.keys():
         producer = model.find_producer(stream_name)
