@@ -19,6 +19,7 @@ from backend.custom_op.streamingmul import StreamingMul
 from backend.custom_op.streamingrelu import StreamingReLU
 from backend.custom_op.streamingreshape import StreamingReshape
 from backend.custom_op.streamingsigmoid import StreamingSigmoid
+from backend.custom_op.streamingsoftmax import StreamingSoftmax
 from backend.custom_op.streamingsplit import StreamingSplit
 from backend.custom_op.streamingswish import StreamingSwish
 from backend.custom_op.streamingupsample import StreamingUpsample
@@ -47,6 +48,7 @@ custom_op = {
     "StreamingReLU": StreamingReLU,
     "StreamingReshape": StreamingReshape,
     "StreamingSigmoid": StreamingSigmoid,
+    "StreamingSoftmax": StreamingSoftmax,
     "StreamingSplit": StreamingSplit,
     "StreamingSwish": StreamingSwish,
     "StreamingUpsample": StreamingUpsample,

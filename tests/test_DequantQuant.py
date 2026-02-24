@@ -271,3 +271,18 @@ class TestDequantQuant(BaseHLSTest):
             config_dict,
             hls_steps,
         )
+    
+    def test_softmax(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 48,
+            "OUT_DATAWIDTH": 8,
+            "SHIFT": 10,
+            "INPUT": 2560,
+            "EXPECTED": 3,
+            "ACC_SIGNED": 0,
+            "OUT_SIGNED": 0,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
