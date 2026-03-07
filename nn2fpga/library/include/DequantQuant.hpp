@@ -51,13 +51,22 @@ private:
     }
 
     // Restore sign
-    TAcc rounded = neg ? TAcc(-rounded_mag) : TAcc(rounded_mag);
+    TAcc rounded;
+    if (is_ap_signed<TAcc>::value) {
+      rounded = neg ? TAcc(-rounded_mag) : TAcc(rounded_mag);
+    } else {
+      rounded = TAcc(rounded_mag);
+    }
 
     // Saturate to OUT_WIDTH
-    if (rounded > LimitsImpl<TOut>::max())
+    if (rounded > LimitsImpl<TOut>::max()) {
       rounded = LimitsImpl<TOut>::max();
-    if (rounded < LimitsImpl<TOut>::min())
-      rounded = LimitsImpl<TOut>::min();
+    }
+    if (is_ap_signed<TAcc>::value) {
+      if (rounded < LimitsImpl<TOut>::min()) {
+        rounded = LimitsImpl<TOut>::min();
+      }
+    }
     return TOut(rounded);
   }
 
