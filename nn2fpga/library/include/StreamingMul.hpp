@@ -11,6 +11,7 @@ template <typename TInputWordA, typename TInputA, typename TInputWordB,
           size_t CH_PAR>
 class StreamingMul {
 
+private:
   struct StepState {
     // Loop iteration indexes.
     size_t i = 0;
@@ -37,12 +38,13 @@ class StreamingMul {
     return r;
   }
 
-  public:
+public:
   void step_init(size_t pipeline_depth = 1) {
     auto &st = registry()[this];
     st.init(pipeline_depth);
   }
 
+public:
   StreamingMul() = default;
 
   template <size_t HLS_TAG>

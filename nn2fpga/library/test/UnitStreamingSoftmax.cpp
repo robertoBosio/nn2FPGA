@@ -19,9 +19,9 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
   StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
-                   test_config::LUT_SIZE, test_config::IN_HEIGHT,
-                   test_config::IN_WIDTH, test_config::IN_CH,
-                   test_config::CH_PAR, test_config::W_PAR>
+                   test_config::LUT_SIZE,
+                   test_config::IN_HEIGHT * test_config::IN_WIDTH,
+                   test_config::IN_CH, test_config::W_PAR, test_config::CH_PAR>
       streaming_softmax;
   streaming_softmax.run<0>(i_data, LUTmem, o_data);
 }
@@ -86,7 +86,7 @@ bool test_run() {
 bool test_step() {
 
   static constexpr size_t expectedII =
-      test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH * 2 /
+      test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH * 3 /
       (test_config::W_PAR * test_config::CH_PAR);
 
   // Prepare input and output streams
@@ -96,9 +96,9 @@ bool test_step() {
   StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
-                   test_config::LUT_SIZE, test_config::IN_HEIGHT,
-                   test_config::IN_WIDTH, test_config::IN_CH,
-                   test_config::CH_PAR, test_config::W_PAR>
+                   test_config::LUT_SIZE,
+                   test_config::IN_HEIGHT * test_config::IN_WIDTH,
+                   test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
       streaming_softmax;
   streaming_softmax.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;

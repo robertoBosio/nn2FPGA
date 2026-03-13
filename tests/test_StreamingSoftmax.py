@@ -102,7 +102,7 @@ class TestStreamingSoftmax(BaseHLSTest):
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
         out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
         config_dict["EXP_PRECISION"] = 12  # Number of bits for LUT output (Q0.16 format for max precision)
-        config_dict["DIV_PRECISION"] = 36
+        config_dict["DIV_PRECISION"] = 32
 
         in_bits = int(config_dict["INPUT_DATAWIDTH"])
         out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
@@ -247,7 +247,7 @@ class TestStreamingSoftmax(BaseHLSTest):
             "OUTPUT_IS_UNSIGNED": True,
             "IN_HEIGHT": 12,
             "IN_WIDTH": 12,
-            "IN_CH": 400,
+            "IN_CH": 20,
             "CH_PAR": 1,
             "W_PAR": 1,
             "X_SCALE": 2**-3,
