@@ -1,8 +1,8 @@
 [project]
 top_name = "mobilenet_v2"
 onnx_path = "/workspace/NN2FPGA/models/onnx/mobilenet_v2_a8w8b16.onnx"
-project_root = "/workspace/NN2FPGA/work/mobilenet_v2_fixed"
-hls_version = 2025.1
+project_root = "/workspace/NN2FPGA/work/mobilenet_v2"
+hls_version = 2025.2
 
 [platform]
 board = "ZCU102"
@@ -13,7 +13,7 @@ OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
 Simulate = true
-Deploy = false
+Deploy = true
 
 [options]
 silvia_packing = true
