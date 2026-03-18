@@ -56,21 +56,21 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        lanes_unroll: int
+        reduction_unroll: int
 
         # optional helpers to interop with old code / ONNX storage
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "lanes_unroll": self.lanes_unroll,
+                "reduction_unroll": self.reduction_unroll,
             }
 
         @staticmethod
         def from_dict(d: dict) -> "StreamingSoftmax.DSEPoint":
             return StreamingSoftmax.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                lanes_unroll=d["lanes_unroll"],
+                reduction_unroll=d["reduction_unroll"],
             )
 
     def get_nodeattr_types(self):
@@ -82,8 +82,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
 
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "lanes_unroll": ("i", False, 1),
+            "reduction_unroll": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -153,12 +153,11 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         For softmax, we need to accumulate exponentials, so we need a wider type.
         We can use a simple heuristic of doubling the bitwidth for the accumulator.
         """
-        input_bitwidth = input_quant.bitwidth
         axis = self.get_nodeattr("axis")
         if axis < 0:
             axis += len(input_shape)
         n_sums = input_shape[axis]
-        accumulator_bitwidth = input_bitwidth + int(np.floor(np.log2(n_sums) + 1))
+        accumulator_bitwidth = EXP_PRECISION + int(np.floor(np.log2(n_sums) + 1))
 
         signed = False
         acc_quant = TensorQuant(
@@ -206,7 +205,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         if (
             self.__is_power_of_two(output_quant.scale)
         ):
-            shift = -(int(np.log2(output_quant.scale)) - (DIV_PRECISION - EXP_PRECISION))
+            shift = ((DIV_PRECISION - EXP_PRECISION) + int(np.log2(output_quant.scale)))
             return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
@@ -270,6 +269,9 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
         output_shape = [1] * (4 - len(output_shape)) + output_shape
 
+        dim_reduction = input_shape[self.get_nodeattr("axis")]
+        dim_lanes = np.prod(input_shape) // dim_reduction
+
         lut_size = 1 << input_quant.bitwidth
         StreamingSoftmax = cpp_object(
             "StreamingSoftmax",
@@ -299,11 +301,10 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
                 (f"{self.__get_division_type()}", "TDiv"),
                 (f"{self.__get_quantizer(output_quant)}", "Quantizer"),
                 (f"{lut_size}", "LUT_SIZE"),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
+                (f"{dim_lanes}", "DIM_LANES"),
+                (f"{dim_reduction}", "DIM_REDUCTION"),
+                (f"{self.get_nodeattr('lanes_unroll')}", "LANE_PAR"),
+                (f"{self.get_nodeattr('reduction_unroll')}", "REDUCE_PAR"),
             ]
         )
 
@@ -427,7 +428,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         if input_shape is None:
             raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        unroll_factor = self.get_nodeattr("lanes_unroll") * self.get_nodeattr("reduction_unroll")
         return np.prod(input_shape) * 2 // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -447,7 +448,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             int: Estimated DSP usage.
         """
         point = self.__current_dse_point()
-        return point.channel_unroll * point.width_unroll
+        return point.lanes_unroll * point.reduction_unroll
 
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingSoftmax operation requires a line buffer.
@@ -459,8 +460,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     def __current_dse_point(self) -> "StreamingSoftmax.DSEPoint":
         """ Returns the current DSE point of the StreamingSoftmax operation. """
         return StreamingSoftmax.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+            lanes_unroll=self.get_nodeattr("lanes_unroll"),
+            reduction_unroll=self.get_nodeattr("reduction_unroll"),
         )
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingSoftmax.DSEPoint"]:
@@ -500,22 +501,24 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             )
         output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
 
+        dim_reduction = input_shape[self.get_nodeattr("axis")]
+        dim_lanes = np.prod(input_shape) // dim_reduction
+
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors([output_shape[1]], output_shape[1]):
-            for width_unroll in divisors(
-                [output_shape[3], input_shape[3]], min(output_shape[3], input_shape[3])
-            ):
+        for lanes_unroll in divisors([dim_lanes], dim_lanes):
+            for reduction_unroll in divisors([dim_reduction], dim_reduction):
                 # Check dimension of input streams
-                if (input_bits * channel_unroll) > 4096:
+                if (input_bits * reduction_unroll) > 4096:
                     continue
                 # Check dimension of output streams
-                if (output_bits * channel_unroll) > 4096:
+                if (output_bits * reduction_unroll) > 4096:
                     continue
 
                 DSE_points.append(
                     self.DSEPoint(
-                        channel_unroll, width_unroll
+                        lanes_unroll=lanes_unroll,
+                        reduction_unroll=reduction_unroll
                     )
                 )
 
@@ -526,10 +529,10 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingSoftmax.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("lanes_unroll", point.lanes_unroll)
+        self.set_nodeattr("reduction_unroll", point.reduction_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.lanes_unroll)
+        self.set_nodeattr("out_stream_array", point.lanes_unroll)
+        self.set_nodeattr("in_word_array", point.reduction_unroll)
+        self.set_nodeattr("out_word_array", point.reduction_unroll)

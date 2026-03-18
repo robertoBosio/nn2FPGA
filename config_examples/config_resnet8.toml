@@ -1,20 +1,19 @@
 [project]
 top_name = "resnet8"
 onnx_path = "/workspace/NN2FPGA/models/onnx/resnet8_a8w8b16.onnx"
-project_root = "/workspace/NN2FPGA/work/resnet8_not_fixed"
-hls_version = 2025.1
+project_root = "/workspace/NN2FPGA/work/resnet8"
+hls_version = 2025.2
 
 [platform]
 board = "KRIA"
-frequency = 200
+frequency = 250
 
 [steps]
 OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
 Simulate = true
-Deploy = false
+Deploy = true
 
 [options]
-silvia_packing = false
-dsp_limit = 300
+silvia_packing = true
