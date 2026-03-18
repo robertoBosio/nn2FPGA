@@ -260,86 +260,6 @@ class MulQuantized(Pattern):
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
 
-class FusedSoftmaxTransposeMatmul(Pattern):
-    """
-    Match:  MatMul( Transpose( Softmax( Quant(x) ), perm=[0,1,3,2] ), Quant(y) )
-      - Anchor: MatMul
-      - Left input must be Transpose(Softmax(Quant(...))) with perm=0,1,3,2
-      - No quantization nodes between Softmax and Transpose (i.e., Transpose input producer must be Softmax)
-      - Other MatMul input must be quantized (params or activation quant — pick what you want via helper)
-    """
-    name = "MatMul(Transpose(Softmax(Quant(x)), perm=0,1,3,2), Quant(y))"
-    anchor_op = "MatMul"
-
-    def _match_impl(self, model, anchor_node) -> Match:
-        reasons: List[str] = []
-        covered: Set[str] = set()
-
-        if len(anchor_node.input) != 2:
-            return Match(False, self.name, covered, [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
-
-        a, b = anchor_node.input
-        pa = model.find_producer(a)
-        pb = model.find_producer(b)
-
-        # Identify which side is the Transpose(Softmax(Quant(x))) chain
-        trans = None
-        other_prod = None
-
-        if pa is not None and pa.op_type == "Transpose":
-            trans = pa
-            other_prod = pb
-        elif pb is not None and pb.op_type == "Transpose":
-            trans = pb
-            other_prod = pa
-        else:
-            reasons.append("Expected Transpose on one MatMul input")
-            return Match(False, self.name, covered, reasons)
-
-        # Transpose must have perm = [0,1,3,2]
-        if not check_attribute(trans, "perm", [0, 1, 3, 2], reasons):
-            reasons.append(f"Transpose before matmul perm must be [0,1,3,2]")
-            return Match(False, self.name, covered, reasons)
-
-        # Enforce: no quantization nodes between Softmax and Transpose
-        # i.e., producer of Transpose input must be Softmax (direct edge)
-        if len(trans.input) != 1:
-            reasons.append(f"Transpose expects 1 input, got {len(trans.input)}")
-            return Match(False, self.name, covered, reasons)
-
-        softmax_in = trans.input[0]
-        softmax = model.find_producer(softmax_in)
-        if softmax is None or softmax.op_type != "Softmax":
-            reasons.append("Transpose input must be produced directly by Softmax (no nodes in between)")
-            return Match(False, self.name, covered, reasons)
-
-        # Softmax input must come from Quant/IntQuant (activation quant)
-        if len(softmax.input) != 1:
-            reasons.append(f"Softmax expects 1 input, got {len(softmax.input)}")
-            return Match(False, self.name, covered, reasons)
-
-        q_in = softmax.input[0]
-        q = model.find_producer(q_in)
-        if q is None or not check_act_quant(model, q, reasons):
-            reasons.append("Softmax input must be produced by supported activation Quant/IntQuant")
-            return Match(False, self.name, covered, reasons)
-
-        # Other MatMul input must be quantized
-        # If you want to allow either activation-quant or params-quant, accept either helper.
-        if other_prod is None:
-            reasons.append("Other MatMul input must be produced by Quant/IntQuant (no producer found)")
-            return Match(False, self.name, covered, reasons)
-
-        other_ok = check_act_quant(model, other_prod, []) or check_params_quant(model, other_prod, [])
-        if not other_ok:
-            reasons.append("Other MatMul input must be produced by supported Quant/IntQuant (act or params)")
-            return Match(False, self.name, covered, reasons)
-
-        # Covered nodes
-        covered.update({anchor_node.name, trans.name, softmax.name, q.name, other_prod.name})
-
-        return Match(True, self.name, covered, reasons)
-
 class MulHardSigmoidTimesConst(Pattern):
     """ Pattern matching Mul where one input is HardSigmoid(Quant(x)) and the other is a constant. """
     name = "Mul(HardSigmoid(Quant(x)), Const)"
@@ -751,15 +671,15 @@ class ConcatQuantSameParamsAxis1(Pattern):
         covered.update(q.name for q in qnodes)
         return Match(True, self.name, covered, reasons)
 
-class ReshapeFCOnly(Pattern):
+class ReshapeFlattenFCOnly(Pattern):
     """
     Accept only reshapes whose shape input is a constant and matches one of:
       - [B, C, -1]  (preserves channels)
       - [B, -1]     (only allowed when input H=W=1)
     Everything else is rejected.
     """
-    name = "Reshape FC-only shape constraints"
-    anchor_op = "Reshape"  # set in subclasses
+    name = "Reshape/Flatten FC-only (strict shape-const)"
+    anchor_op = ""  # set in subclasses
 
     def _match_impl(self, model, anchor_node) -> Match:
         reasons: List[str] = []
@@ -800,35 +720,14 @@ class ReshapeFCOnly(Pattern):
         return Match(False, self.name, covered,
                      [f"Unsupported constant reshape shape {vec}; allowed: [B,C,-1] or [B,-1](if H=W=1)"])
 
-class FlattenFCOnly(Pattern):
-    """
-    Accept only flattens whose shape input is a constant and matches one of:
-      - [B, C, -1]  (preserves channels)
-      - [B, -1]     (only allowed when input H=W=1)
-    Everything else is rejected.
-    """
+
+class ReshapeFCOnly(ReshapeFlattenFCOnly):
+    anchor_op = "Reshape"
+    name = "Reshape FC-only shape constraints"
+
+class FlattenFCOnly(ReshapeFlattenFCOnly):
+    anchor_op = "Flatten"
     name = "Flatten FC-only shape constraints"
-    anchor_op = "Flatten"  # set in subclasses
-
-    def _match_impl(self, model, anchor_node) -> Match:
-        reasons: List[str] = []
-        covered: Set[str] = set()
-
-        # must have input tensor and shape/second input
-        if len(anchor_node.input) < 1 or len(anchor_node.output) < 1:
-            return Match(False, self.name, covered, ["Missing input/shape/output"])
-
-        in_shape = model.get_tensor_shape(anchor_node.input[0])
-        if in_shape is None or len(in_shape) != 4:
-            return Match(False, self.name, covered, [f"Input must be 4D, got {in_shape}"])
-
-        axis = get_by_name(anchor_node.attribute, "axis")
-        if axis is None or axis.i != 1:
-            return Match(False, self.name, covered, [f"Flatten axis must be 1, got {axis.i if axis else None}"])
-
-        covered.add(anchor_node.name)
-        return Match(True, self.name, covered, reasons)
-
 
 class QuantizedActivationPattern(Pattern):
     """
@@ -1152,9 +1051,6 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
             prev_end = en
         return prev_end == dim
 
-class MatMulQuantPattern(Pattern):
-
-    
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
     "Concat": [ConcatQuantSameParamsAxis1()],
