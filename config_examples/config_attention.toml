@@ -1,0 +1,20 @@
+[project]
+top_name = "attention"
+onnx_path = "/workspace/NN2FPGA/models/onnx/attention_test_quant_clean.onnx"
+project_root = "/workspace/NN2FPGA/work/attention_test"
+hls_version = 2025.2
+
+[platform]
+board = "KRIA"
+frequency = 250
+
+[steps]
+OptimizeBitwidth = true
+AddStreamingParams = true
+ComputeFifoDepth = true
+Simulate = true
+Deploy = false
+
+[options]
+silvia_packing = true
+dsp_limit = 20

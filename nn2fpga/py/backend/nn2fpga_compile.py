@@ -88,7 +88,7 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = model.transform(
         transformation.SupportedPartition(config_dict["prj_root"])
     )
-
+    exit(0)
     # Insert custom nodes.
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
