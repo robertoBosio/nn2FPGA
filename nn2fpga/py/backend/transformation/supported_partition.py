@@ -1051,6 +1051,9 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
             prev_end = en
         return prev_end == dim
 
+class MatMulQuantPattern(Pattern):
+
+    
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
     "Concat": [ConcatQuantSameParamsAxis1()],
@@ -1072,6 +1075,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "MaxPool": [MaxPoolQuantPattern()],
     "Mul": [MulHardSigmoidTimesConst(), MulQuantized()],  # order = priority
     "Resize": [ResizeQuantUpsampleNearestAsymmetric()],
+    "MatMul": [MatMulQuantPattern()],
 }
 
 def match_supported_patterns(model, node) -> Match:
