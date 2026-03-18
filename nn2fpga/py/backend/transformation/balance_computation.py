@@ -768,10 +768,8 @@ class BalanceComputation(Transformation):
             dsp_limit = int(dsp_limit)
 
         NUM_PORTS = (board_res["bram"] + board_res["uram"] * 8)
-        NUM_PORTS = int(NUM_PORTS * 1)  # 85% of the BRAMs are used for parallelization
-        NUM_DSP = board_res["dsp"] * 0.8  # 80% of the DSPs are used for parallelization
-        if dsp_limit is not None:
-            NUM_DSP = dsp_limit
+        NUM_PORTS = int(NUM_PORTS * 1.2)  # 85% of the BRAMs are used for parallelization
+        NUM_DSP = board_res["dsp"] * 0.4  # 40% of the DSPs are used for parallelization
 
         # Extract layers information
         DSE_nodes = [node for node in model.graph.node if isinstance(getCustomOp(node), DSECapable)]
@@ -817,6 +815,19 @@ class BalanceComputation(Transformation):
             generate_report_file,
             model,
         )
+        exit(0)
+
+        # Update the model with the parallelization chosen for each layer
+        model = update_model(model, layer_par)
+        model = propagate_parallelism(model)
+
+
+        # layer_par = opt_steps(
+        #     layers_info,
+        #     layer_par,
+        #     valid_par_solutions,
+        #     self.nn2fpga_root,
+        # )
 
         # Add model II to the model metadata
         model.set_metadata_prop("model_II", str(model_II))

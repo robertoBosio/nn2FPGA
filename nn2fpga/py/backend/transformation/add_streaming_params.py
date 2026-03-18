@@ -161,7 +161,8 @@ class AddStreamingParams(Transformation):
         )
 
         for node in model.graph.node:
-            hoist_param(model, node)
+            if node.op_type in NODE_WITH_PARAMS:
+                hoist_params_to_streaming_memory_unpacked(model, node)
 
         # Find all nodes with parameters that need streaming
         # and collect them in a list.

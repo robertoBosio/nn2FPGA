@@ -5,6 +5,7 @@
 #include "utils/CSDFG_utils.hpp"
 #include <cassert>
 #include <cstddef>
+#include <cassert>
 
 /**
  * @brief StreamingMaxPool implements a quantized max pooling with only
