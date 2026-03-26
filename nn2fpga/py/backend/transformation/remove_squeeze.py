@@ -18,23 +18,13 @@ def remove_flatten_reshape(model: ModelWrapper, node: NodeProto) -> None:
     """
     graph = model.graph
 
-    # Connect the inputs of the Flatten/Reshape node to its consumers
-    producer = model.find_producer(node.input[0])
-    if producer is None:
-
-        # If the input is not produced by any node, it's a model input.
-        consumers = model.find_consumers(node.output[0])
-        for consumer in consumers:
-            # Replace the input with the Flatten/Reshape node's input
-            for i, consumer_input in enumerate(consumer.input):
-                if consumer_input == node.output[0]:
-                    consumer.input[i] = node.input[0]
-    else:
-
-        for i, producer_output in enumerate(producer.output):
-            if producer_output == node.input[0]:
-                # Replace the input with the Flatten/Reshape node's input
-                producer.output[i] = node.output[0]
+    # If the input is not produced by any node, it's a model input.
+    consumers = model.find_consumers(node.output[0])
+    for consumer in consumers:
+        # Replace the input with the Flatten/Reshape node's input
+        for i, consumer_input in enumerate(consumer.input):
+            if consumer_input == node.output[0]:
+                consumer.input[i] = node.input[0]
 
     # Remove the Flatten/Reshape node from the graph
     graph.node.remove(node)
@@ -83,7 +73,7 @@ class RemoveSqueeze(Transformation):
             if node.op_type == "Flatten" or node.op_type == "Squeeze" or node.op_type == "Reshape":
                 input_shape = model.get_tensor_shape(node.input[0])
                 output_shape = model.get_tensor_shape(node.output[0])
-                if input_shape is not None and output_shape is not None:
+                if input_shape is not None and output_shape is not None and len(input_shape) > len(output_shape):
                     
                     # Check that all the missing dimensions are 1
                     for i in range(len(output_shape), len(input_shape)):
