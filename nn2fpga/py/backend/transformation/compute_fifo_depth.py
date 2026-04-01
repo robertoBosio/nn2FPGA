@@ -94,14 +94,20 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     cwr.include("<chrono>")
 
     # Include files from the nn2FPGA library
-    nn2fpga_include_dir = "/workspace/NN2FPGA/nn2fpga/library/include"
-    if os.path.isdir(nn2fpga_include_dir):
-        for fname in os.listdir(nn2fpga_include_dir):
-            if fname.endswith(".hpp"):
-                cwr.include(fname)
+    base_include_dir = "/workspace/NN2FPGA/nn2fpga/library/include"
 
-    cwr.include("utils/CSDFG_utils.hpp")
-    cwr.include("utils/DMA_utils.hpp")
+    if os.path.isdir(base_include_dir):
+        for root, _, files in os.walk(base_include_dir):
+            for fname in files:
+                if fname.endswith(".hpp"):
+                    rel_path = os.path.relpath(
+                        os.path.join(root, fname),
+                        base_include_dir
+                    )
+                    rel_path = rel_path.replace(os.sep, "/")
+                    if "testbench" not in rel_path:
+                        cwr.include(rel_path)
+
     cwr.include("<fstream>")
     cwr.include("<iostream>")
     cwr.include("<unordered_map>")

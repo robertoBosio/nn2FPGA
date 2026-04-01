@@ -94,6 +94,7 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveSqueeze())
+    nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
 
     # Handle quantization.
@@ -146,7 +147,7 @@ def nn2fpga_compile(config_dict: dict):
     # model = ModelWrapper("dse_wrapper_model.onnx")
     model = model.transform(
         transformation.EmbedHLSCode(
-            nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"]
+            nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"], erase=False
         )
     )
 
