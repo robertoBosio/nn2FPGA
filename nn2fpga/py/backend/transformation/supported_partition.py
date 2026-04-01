@@ -58,10 +58,14 @@ def _is_const_source(model, tensor_name: str) -> bool:
     """Initializer OR produced by Constant op."""
     if tensor_name == "" or tensor_name is None:
         return False
-    if _is_initializer(model, tensor_name):
-        return True
     p = model.find_producer(tensor_name)
-    return (p is not None) and (p.op_type == "Constant")
+    if p is None:
+        return False
+    if p.op_type == "Constant":
+        return True
+    if _is_initializer(model, p.input[0]):
+        return True
+    return False
 
 def check_attribute(
     node: onnx.NodeProto, attr_name: str, expected_value, reasons: list, optional=False
@@ -829,7 +833,6 @@ class FlattenFCOnly(Pattern):
         covered.add(anchor_node.name)
         return Match(True, self.name, covered, reasons)
 
-
 class QuantizedActivationPattern(Pattern):
     """
     Matches supported quantized activations
@@ -845,12 +848,17 @@ class QuantizedActivationPattern(Pattern):
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["Missing input"])
 
-        act_q = model.find_producer(anchor_node.input[0])
-        if act_q is None or not check_act_quant(model, act_q, reasons):
+        in_act_q = model.find_producer(anchor_node.input[0])
+        if in_act_q is None or not check_act_quant(model, in_act_q, reasons):
             reasons.append(f"{self.anchor_op} input must be produced by supported activation Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 
-        covered.update({anchor_node.name, act_q.name})
+        out_act_q = model.find_consumer(anchor_node.output[0])
+        if out_act_q is None or not check_act_quant(model, out_act_q, reasons):
+            reasons.append(f"{self.anchor_op} output must be quantized")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({anchor_node.name, in_act_q.name})
         return Match(True, self.name, covered, reasons)
 
 class HardSigmoidQuant(QuantizedActivationPattern):
@@ -1152,11 +1160,332 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
             prev_end = en
         return prev_end == dim
 
+class YoloAttentionFromInputReshape(Pattern):
+    """
+    Match the full YOLO attention block anchored at the initial Reshape:
+
+      Reshape -> Quant
+        ├─ Slice(Q) -> Quant -> Transpose -> Quant
+        ├─ Slice(K) -> Quant
+        └─ Slice(V) -> Quant -----------------> Reshape -> Quant(V_out)
+
+      MatMul(Transpose(Q_q), K_q)
+        -> Quant
+        -> Mul(Const)
+        -> Quant
+        -> Softmax
+        -> Quant
+        -> Transpose
+        -> Quant
+        -> MatMul(V_q, ...)
+        -> Quant
+        -> Reshape
+        -> Quant(Y_out)
+
+    Assumes explicit Quant/IntQuant nodes, not Q/DQ.
+    """
+
+    name = "YoloAttentionFromInputReshape"
+    anchor_op = "Reshape"
+
+    Q_RANGE = (0, 32)
+    K_RANGE = (32, 64)
+    V_RANGE = (64, 128)
+    TRANSPOSE_PERM = [0, 1, 3, 2]
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.output) < 1:
+            return Match(False, self.name, covered, ["Reshape has no output"])
+
+        reshape_quant = model.find_consumer(anchor_node.output[0])
+        if reshape_quant is None or not check_act_quant(model, reshape_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Reshape output must feed supported activation Quant/IntQuant"],
+            )
+
+        slice_consumers = model.find_consumers(reshape_quant.output[0])
+        slice_consumers = [n for n in slice_consumers if n.op_type == "Slice"]
+        if len(slice_consumers) != 3:
+            return Match(
+                False,
+                self.name,
+                covered,
+                [f"Expected exactly 3 Slice consumers from input Quant, got {len(slice_consumers)}"],
+            )
+
+        parsed = {}
+        slice_const_nodes: Set[str] = set()
+
+        for s in slice_consumers:
+            ok, info, const_nodes, out_q = self._parse_attention_slice(model, s)
+            slice_const_nodes.update(const_nodes)
+            if not ok:
+                reasons.append(f"{s.name}: {info}")
+                continue
+            axis, start, end = info
+            parsed[(start, end)] = (s, out_q, axis)
+
+        if reasons:
+            return Match(False, self.name, covered, reasons)
+
+        expected = {self.Q_RANGE, self.K_RANGE, self.V_RANGE}
+        if set(parsed.keys()) != expected:
+            return Match(
+                False,
+                self.name,
+                covered,
+                [f"Slice intervals do not match expected Q/K/V partition {sorted(expected)}, got {sorted(parsed.keys())}"],
+            )
+
+        axes = {axis for (_, (_, _, axis)) in parsed.items()}
+        if len(axes) != 1:
+            return Match(
+                False,
+                self.name,
+                covered,
+                [f"Q/K/V slices must share one axis, got {sorted(list(axes))}"],
+            )
+
+        q_slice, q_quant, _ = parsed[self.Q_RANGE]
+        k_slice, k_quant, _ = parsed[self.K_RANGE]
+        v_slice, v_quant, _ = parsed[self.V_RANGE]
+
+        for label, qnode in [("Q", q_quant), ("K", k_quant), ("V", v_quant)]:
+            if qnode is None or not check_act_quant(model, qnode, reasons):
+                return Match(False, self.name, covered, [f"{label} slice output must feed Quant/IntQuant"])
+
+        q_transpose = self._unique_consumer_of_type(model.find_consumers(q_quant.output[0]), "Transpose")
+        if q_transpose is None:
+            return Match(False, self.name, covered, ["Q quant must feed a Transpose"])
+        if not check_attribute(q_transpose, "perm", self.TRANSPOSE_PERM, reasons):
+            return Match(False, self.name, covered, ["Q transpose perm must be [0,1,3,2]"])
+
+        q_transpose_quant = model.find_consumer(q_transpose.output[0])
+        if q_transpose_quant is None or not check_act_quant(model, q_transpose_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Transpose(Q) output must feed supported activation Quant/IntQuant"],
+            )
+
+        qk_matmul = self._find_binary_consumer(
+            model, q_transpose_quant.output[0], k_quant.output[0], "MatMul"
+        )
+        if qk_matmul is None:
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Could not find QK MatMul consuming Transpose(Q_q) and K_q"],
+            )
+
+        qk_quant = self._unique_consumer_quant(model.find_consumers(qk_matmul.output[0]), model)
+        if qk_quant is None:
+            return Match(False, self.name, covered, ["QK MatMul output must feed Quant/IntQuant"])
+
+        mul = self._unique_consumer_of_type(model.find_consumers(qk_quant.output[0]), "Mul")
+        if mul is None:
+            return Match(False, self.name, covered, ["QK quant output must feed Mul"])
+        if len(mul.input) != 2:
+            return Match(False, self.name, covered, [f"Mul expects 2 inputs, got {len(mul.input)}"])
+
+        const_input_name = None
+        if mul.input[0] == qk_quant.output[0] and _is_const_source(model, mul.input[1]):
+            const_input_name = mul.input[1]
+        elif mul.input[1] == qk_quant.output[0] and _is_const_source(model, mul.input[0]):
+            const_input_name = mul.input[0]
+        else:
+            return Match(False, self.name, covered, ["Mul must combine QK quant output with a constant"])
+
+        mul_quant = self._unique_consumer_quant(model.find_consumers(mul.output[0]), model)
+        if mul_quant is None:
+            return Match(False, self.name, covered, ["Mul output must feed Quant/IntQuant"])
+
+        softmax = self._unique_consumer_of_type(model.find_consumers(mul_quant.output[0]), "Softmax")
+        if softmax is None:
+            return Match(False, self.name, covered, ["Mul quant output must feed Softmax"])
+
+        p_quant = self._unique_consumer_quant(model.find_consumers(softmax.output[0]), model)
+        if p_quant is None:
+            return Match(False, self.name, covered, ["Softmax output must feed Quant/IntQuant"])
+
+        p_transpose = self._unique_consumer_of_type(model.find_consumers(p_quant.output[0]), "Transpose")
+        if p_transpose is None:
+            return Match(False, self.name, covered, ["P quant output must feed Transpose"])
+        if not check_attribute(p_transpose, "perm", self.TRANSPOSE_PERM, reasons):
+            return Match(False, self.name, covered, ["P transpose perm must be [0,1,3,2]"])
+
+        p_transpose_quant = model.find_consumer(p_transpose.output[0])
+        if p_transpose_quant is None or not check_act_quant(model, p_transpose_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Transpose(P) output must feed supported activation Quant/IntQuant"],
+            )
+
+        vp_matmul = self._find_binary_consumer(
+            model, v_quant.output[0], p_transpose_quant.output[0], "MatMul"
+        )
+        if vp_matmul is None:
+            return Match(False, self.name, covered, ["Could not find VP MatMul consuming V_q and Transpose(P_q)"])
+
+        vp_matmul_quant = model.find_consumer(vp_matmul.output[0])
+        if vp_matmul_quant is None or not check_act_quant(model, vp_matmul_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["VP MatMul output must feed supported activation Quant/IntQuant"],
+            )
+
+        y_reshape = self._unique_consumer_of_type(model.find_consumers(vp_matmul_quant.output[0]), "Reshape")
+        if y_reshape is None:
+            return Match(False, self.name, covered, ["VP MatMul output must feed Y Reshape"])
+
+        y_quant = self._unique_consumer_quant(model.find_consumers(y_reshape.output[0]), model)
+        if y_quant is None:
+            return Match(False, self.name, covered, ["Y Reshape output must feed Quant/IntQuant"])
+
+        v_reshape = self._unique_consumer_of_type(model.find_consumers(v_quant.output[0]), "Reshape")
+        if v_reshape is None:
+            return Match(False, self.name, covered, ["V quant output must also feed V Reshape"])
+
+        v_out_quant = self._unique_consumer_quant(model.find_consumers(v_reshape.output[0]), model)
+        if v_out_quant is None:
+            return Match(False, self.name, covered, ["V Reshape output must feed Quant/IntQuant"])
+
+        covered.update({
+            anchor_node.name,
+            reshape_quant.name,
+            q_slice.name,
+            k_slice.name,
+            v_slice.name,
+            q_quant.name,
+            k_quant.name,
+            v_quant.name,
+            q_transpose.name,
+            q_transpose_quant.name,
+            qk_matmul.name,
+            qk_quant.name,
+            mul.name,
+            mul_quant.name,
+            softmax.name,
+            p_quant.name,
+            p_transpose.name,
+            p_transpose_quant.name,
+            vp_matmul.name,
+            vp_matmul_quant.name,
+            y_reshape.name,
+            y_quant.name,
+            v_reshape.name,
+            v_out_quant.name,
+        })
+        covered.update(slice_const_nodes)
+
+        const_prod = model.find_producer(const_input_name)
+        if const_prod is not None:
+            covered.add(const_prod.name)
+
+        return Match(True, self.name, covered, reasons)
+
+    def _unique_consumer_of_type(self, consumers, op_type: str):
+        matches = [n for n in consumers if n.op_type == op_type]
+        return matches[0] if len(matches) == 1 else None
+
+    def _unique_consumer_quant(self, consumers, model):
+        matches = [n for n in consumers if check_act_quant(model, n, [])]
+        return matches[0] if len(matches) == 1 else None
+
+    def _find_binary_consumer(self, model, tensor_a: str, tensor_b: str, op_type: str):
+        consumers_a = model.find_consumers(tensor_a)
+        for n in consumers_a:
+            if n.op_type != op_type or len(n.input) != 2:
+                continue
+            if {n.input[0], n.input[1]} == {tensor_a, tensor_b}:
+                return n
+        return None
+
+    def _get_const_array_and_constnode(self, model, tensor_name: str):
+        if not tensor_name:
+            return None, None
+
+        init = get_by_name(model.graph.initializer, tensor_name)
+        if init is not None:
+            return numpy_helper.to_array(init), None
+
+        prod = model.find_producer(tensor_name)
+        if prod is None or prod.op_type != "Constant":
+            return None, None
+
+        v = get_by_name(prod.attribute, "value")
+        if v is None:
+            return None, prod.name
+
+        return numpy_helper.to_array(v.t), prod.name
+
+    def _parse_attention_slice(self, model, slice_node):
+        used_const_nodes: Set[str] = set()
+
+        if len(slice_node.input) < 3:
+            return False, "Slice missing starts/ends", used_const_nodes, None
+
+        starts_arr, cn1 = self._get_const_array_and_constnode(model, slice_node.input[1])
+        ends_arr, cn2 = self._get_const_array_and_constnode(model, slice_node.input[2])
+        if cn1:
+            used_const_nodes.add(cn1)
+        if cn2:
+            used_const_nodes.add(cn2)
+
+        if starts_arr is None or ends_arr is None:
+            return False, "Slice starts/ends must be constant", used_const_nodes, None
+
+        if len(slice_node.input) >= 4 and slice_node.input[3] != "":
+            axes_arr, cn3 = self._get_const_array_and_constnode(model, slice_node.input[3])
+            if cn3:
+                used_const_nodes.add(cn3)
+            if axes_arr is None:
+                return False, "Slice axes must be constant", used_const_nodes, None
+        else:
+            axes_arr = np.array([0], dtype=np.int64)
+
+        if len(slice_node.input) >= 5 and slice_node.input[4] != "":
+            steps_arr, cn4 = self._get_const_array_and_constnode(model, slice_node.input[4])
+            if cn4:
+                used_const_nodes.add(cn4)
+            if steps_arr is None:
+                return False, "Slice steps must be constant", used_const_nodes, None
+        else:
+            steps_arr = np.array([1], dtype=np.int64)
+
+        starts = [int(x) for x in np.array(starts_arr).flatten()]
+        ends = [int(x) for x in np.array(ends_arr).flatten()]
+        axes = [int(x) for x in np.array(axes_arr).flatten()]
+        steps = [int(x) for x in np.array(steps_arr).flatten()]
+
+        if len(starts) != 1 or len(ends) != 1 or len(axes) != 1 or len(steps) != 1:
+            return False, "Attention slices must be single-axis single-interval", used_const_nodes, None
+        if steps[0] != 1:
+            return False, f"Attention slice step must be 1, got {steps[0]}", used_const_nodes, None
+
+        out_q = model.find_consumer(slice_node.output[0]) if slice_node.output else None
+        if out_q is None or not check_act_quant(model, out_q, []):
+            return False, "Slice output must feed Quant/IntQuant", used_const_nodes, None
+
+        return True, (axes[0], starts[0], ends[0]), used_const_nodes, out_q
+
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
     "Concat": [ConcatQuantSameParamsAxis1()],
     "Flatten": [FlattenFCOnly()],
-    "Reshape": [ReshapeFCOnly()],
+    "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "HardSigmoid": [HardSigmoidQuant()],
     "LeakyRelu": [LeakyReluQuant()],
     "Relu": [ReluQuantOrFusable()],
@@ -1166,14 +1495,13 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "IntQuant": [IntQuantNodePattern()],
     "Quant": [QuantNodePattern()],
     "AveragePool": [AveragePoolQuantPattern()],
-    "Conv": [ConvQuantPattern()],  # debug allowlist by node name prefix
+    "Conv": [ConvQuantPattern()],
     "Gemm": [GemmQuantPattern()],
     "GlobalMaxPool": [GlobalMaxPoolQuantPattern()],
     "GlobalAveragePool": [GlobalAveragePoolQuantPattern()],
     "MaxPool": [MaxPoolQuantPattern()],
-    "Mul": [MulHardSigmoidTimesConst(), MulQuantized()],  # order = priority
+    "Mul": [MulHardSigmoidTimesConst(), MulQuantized()],
     "Resize": [ResizeQuantUpsampleNearestAsymmetric()],
-    "MatMul": [FusedSoftmaxTransposeMatmul()],
 }
 
 def match_supported_patterns(model, node) -> Match:

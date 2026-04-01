@@ -267,6 +267,7 @@ def solve_ilp(
     gap_rel: Optional[float] = None,
     msg: bool = False,
     raise_on_infeasible: bool = True,
+    file: Optional[str] = None,
 ) -> Tuple[int, float]:
     """
     Solve a PuLP ILP with CBC and consistent logging.
@@ -292,7 +293,11 @@ def solve_ilp(
     status = prob.status
     logger.info(f"ILP solver finished: {name} in {elapsed:.2f}s, status={pulp.LpStatus[status]}")
 
-    if raise_on_infeasible and status == pulp.LpStatusInfeasible:
+    # Write problem to file
+    if file:
+        prob.writeLP(file)
+
+    if raise_on_infeasible and status == pulp.LpStatusInfeasible or status == pulp.LpStatusNotSolved:
         raise RuntimeError(f"ILP infeasible: {name}")
 
     return status, elapsed
@@ -643,8 +648,8 @@ def reduce_mismatches(model: ModelWrapper, parallel_op: Dict[str, Any], model_II
             iface_cache=iface_cache,
             points_cache=points_cache,
             mismatch_cost=mismatch_cost,
-            time_limit_s=100,
-            msg=False,
+            time_limit_s=200,
+            msg=True,
         )
     
     return model
