@@ -30,12 +30,19 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
 
-    # Include files from the nn2FPGA library
-    nn2fpga_include_dir = "/workspace/NN2FPGA/nn2fpga/library/include"
-    if os.path.isdir(nn2fpga_include_dir):
-        for fname in os.listdir(nn2fpga_include_dir):
-            if fname.endswith(".hpp"):
-                cwr.include(fname)
+    base_include_dir = "/workspace/NN2FPGA/nn2fpga/library/include"
+
+    if os.path.isdir(base_include_dir):
+        for root, _, files in os.walk(base_include_dir):
+            for fname in files:
+                if fname.endswith(".hpp"):
+                    rel_path = os.path.relpath(
+                        os.path.join(root, fname),
+                        base_include_dir
+                    )
+                    rel_path = rel_path.replace(os.sep, "/")
+                    if "testbench" not in rel_path:
+                        cwr.include(rel_path)
     
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")

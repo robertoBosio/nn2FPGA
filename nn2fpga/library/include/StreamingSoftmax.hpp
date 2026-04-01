@@ -1,5 +1,6 @@
 #pragma once
 #include "hls_stream.h"
+#include "DequantQuant.hpp"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
 #include <cassert>

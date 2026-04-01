@@ -23,6 +23,7 @@ from backend.custom_op.streamingsoftmax import StreamingSoftmax
 from backend.custom_op.streamingsplit import StreamingSplit
 from backend.custom_op.streamingswish import StreamingSwish
 from backend.custom_op.streamingupsample import StreamingUpsample
+from backend.custom_op.streamingyoloattention import StreamingYoloAttention
 from backend.custom_op.streamtonhwc import StreamToNHWC
 from backend.custom_op.tensorduplicator import TensorDuplicator
 
@@ -52,6 +53,7 @@ custom_op = {
     "StreamingSplit": StreamingSplit,
     "StreamingSwish": StreamingSwish,
     "StreamingUpsample": StreamingUpsample,
+    "StreamingYoloAttention": StreamingYoloAttention,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
 }
