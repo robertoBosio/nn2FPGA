@@ -116,8 +116,7 @@ bool test_step(){
   // Instantiate the operator
   StreamingMemory<TInputWord, test_config::TOutput, TOutputWord,
                   test_config::DATA_PER_WORD, test_config::DATA_TO_SHIFT, TIMES,
-                  WORDS, ARRAY_PAR,
-                  WORD_PAR>
+                  WORDS, ARRAY_PAR, WORD_PAR>
       mem;
   mem.step_init(test_config::PIPELINE_DEPTH);
 
@@ -143,17 +142,17 @@ bool test_step(){
     }
     visited_states.emplace(current_state, clock_cycles);
 
+    // Flush the output stream.
+    for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; ++i_fhw) {
+      while (!o_data[i_fhw].empty()) {
+        TOutputWord output_word = o_data[i_fhw].read();
+        (void)output_word; // Suppress unused variable warning
+      }
+    }
+
     // Prevent infinite loops in case of errors
     clock_cycles++;
     assert(clock_cycles < 10 * expectedII);
-  }
-
-  // Flush the output stream.
-  for (size_t i_fhw = 0; i_fhw < ARRAY_PAR; ++i_fhw) {
-    while (!o_data[i_fhw].empty()) {
-      TOutputWord output_word = o_data[i_fhw].read();
-      (void)output_word; // Suppress unused variable warning
-    }
   }
 
   bool flag = (II == expectedII);
