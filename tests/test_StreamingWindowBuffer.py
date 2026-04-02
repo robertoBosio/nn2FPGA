@@ -32,11 +32,12 @@ class TestStreamingWindowBuffer(BaseHLSTest):
         cwr.indent()
         for key, value in config_dict.items():
             cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef std::array<ap_int<{config_dict['INPUT_DATAWIDTH']}>, CH_PAR> TWord;")
+        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TData;")
+        cwr.add_line(f"typedef std::array<TData, CH_PAR> TWord;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
-                primitive=f"ap_int<{config_dict['INPUT_DATAWIDTH']}>",
+                primitive=f"TData",
                 value=input_tensor,
             ).generate_initialization()
         )

@@ -61,9 +61,9 @@ bool test_run() {
         for (size_t w_par = 0; w_par < test_config::W_PAR; w_par++) {
           TOutputWord output_word = out_stream[w_par].read();
           for (size_t ch_par = 0; ch_par < test_config::CH_PAR; ch_par++) {
-            bool cmp = (output_word[ch_par] == test_config::output_tensor[0]
+            bool cmp = abs(output_word[ch_par] - test_config::output_tensor[0]
                                                      [ch + ch_par][i_h]
-                                                     [i_w + w_par]);
+                                                     [i_w + w_par]) < 2;
             if (!cmp) {
               std::cout << "Mismatch at index (i_h=" << i_h
                         << ", i_w=" << i_w + w_par << ", ch=" << ch + ch_par

@@ -218,7 +218,7 @@ void wrap_run(
       window_selector_pixel17;
   window_selector_pixel17.run<17>(buffer_stream[13], pre_pad[0]);
 
-  StreamingPad<test_config::TWord, test_config::IN_HEIGHT,
+  StreamingPad<test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
                test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
                test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
@@ -513,7 +513,7 @@ bool test_step() {
       window_selector_pixel17;
   window_selector_pixel17.step_init(test_config::PIPELINE_DEPTH);
 
-  StreamingPad<test_config::TWord, test_config::IN_HEIGHT,
+  StreamingPad<test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
                test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
                test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
