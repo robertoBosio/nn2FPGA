@@ -1,6 +1,5 @@
 import os
 import logging
-import copy
 import numpy as np
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.core.modelwrapper import ModelWrapper
@@ -17,7 +16,7 @@ def nn2fpga_compile(config_dict: dict):
     """Compile an ONNX model for FPGA using nn2FPGA flow.
     Args:
         config_dict (dict): Configuration dictionary containing:
-            - onnx_model (str): Path to the ONNX model file.
+            - onnx_path (str): Path to the ONNX model file.
             - board (str): Target FPGA board name.
             - prj_root (str): Project root directory.
             - top_name (str): Top module name.
@@ -30,34 +29,28 @@ def nn2fpga_compile(config_dict: dict):
 
     # Change the working directory to the project root.
     os.chdir(config_dict["prj_root"])
-    # Create handlers
-    console_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler("nn2fpga_compile.log", mode="w")
 
-    # Set levels
+    # Logging setup.
+    console_handler = logging.StreamHandler()
+    file_handler = logging.FileHandler("nn2FPGA_compile.log", mode="w")
     console_handler.setLevel(logging.INFO)
     file_handler.setLevel(logging.INFO)
-
-    # Define a formatter (optional but recommended)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-
-    # Attach formatter to handlers
     console_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
-
-    # Get the root logger and attach handlers
     logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
 
+    # Load the original ONNX model.
     original_model = ModelWrapper(config_dict["onnx_path"])
+
     generate_report_file = f"{config_dict['prj_root']}/generate_{config_dict['top_name']}_{config_dict['board']}.rpt"
-    # If the file generate_report_file exists, delete it
     if os.path.exists(generate_report_file):
         os.remove(generate_report_file)
 
     # Save the model before any transformations.
     model = original_model
 
-    # Save target board name in metadata properties.
+    # Save metadata properties.
     model.set_metadata_prop("board_name", config_dict["board"])
     model.set_metadata_prop("top_name", config_dict["top_name"])
     model.set_metadata_prop("frequency", config_dict["frequency"])
@@ -68,13 +61,13 @@ def nn2fpga_compile(config_dict: dict):
     model.set_metadata_prop("silvia_packing", str(config_dict["silvia_packing"]))
 
     # Optional parameters
-    if config_dict["dsp_limit"] is not None:
-        model.set_metadata_prop("dsp_limit", str(config_dict["dsp_limit"]))
+    dsp_limit = config_dict.get("dsp_limit")
+    if dsp_limit is not None:
+        model.set_metadata_prop("dsp_limit", str(dsp_limit))
 
     # Clean up the model.
     model.cleanup()
     model = model.transform(InferShapes())
-    model = model.transform(GiveUniqueParameterTensors())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     original_model = model
@@ -89,15 +82,12 @@ def nn2fpga_compile(config_dict: dict):
         transformation.SupportedPartition(config_dict["prj_root"])
     )
 
-    # Insert custom nodes.
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveSqueeze())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
-
-    # Handle quantization.
     if config_dict["steps"].get("OptimizeBitwidth", True):
         nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
@@ -124,8 +114,6 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
-    # nn2fpga_model.save("dse_baseline.onnx")
-    # nn2fpga_model = ModelWrapper("dse_baseline.onnx")
     if config_dict["steps"].get("AddStreamingParams", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"])
@@ -140,11 +128,15 @@ def nn2fpga_compile(config_dict: dict):
                 work_root=config_dict["prj_root"], erase=True, ste_already_done=False
             )
         )
-        nn2fpga_model.save("post_fifo_depth.onnx")
 
+    # Check file existence before embedding HLS code.
+    wrapper_model_dir = os.path.join(config_dict["prj_root"], "wrapper_model.onnx")
+    if not os.path.exists(wrapper_model_dir):
+        logging.error(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
+        raise FileNotFoundError(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
     model = ModelWrapper("wrapper_model.onnx")
-    # model.save("dse_wrapper_model.onnx")
-    # model = ModelWrapper("dse_wrapper_model.onnx")
+
+    # Embed HLS code into the model.
     model = model.transform(
         transformation.EmbedHLSCode(
             nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"], erase=False

@@ -1,0 +1,20 @@
+[project]
+top_name = "resnet50"
+onnx_path = "/workspace/NN2FPGA/models/onnx/resnet50_a8w8b16_75.836.onnx"
+project_root = "/workspace/NN2FPGA/work/resnet50"
+hls_version = 2025.1
+
+[platform]
+board = "ZCU102"
+frequency = 200
+
+[steps]
+OptimizeBitwidth = true
+AddStreamingParams = true
+ComputeFifoDepth = true
+Simulate = true
+Deploy = true
+
+[options]
+silvia_packing = true
+dsp_limit = 1200
