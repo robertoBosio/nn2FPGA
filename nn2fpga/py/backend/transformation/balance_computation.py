@@ -649,7 +649,7 @@ def reduce_mismatches(model: ModelWrapper, parallel_op: Dict[str, Any], model_II
             points_cache=points_cache,
             mismatch_cost=mismatch_cost,
             time_limit_s=200,
-            msg=True,
+            msg=False,
         )
     
     return model
