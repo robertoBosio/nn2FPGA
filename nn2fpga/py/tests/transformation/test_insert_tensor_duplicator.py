@@ -229,9 +229,7 @@ def test_triple_tensor_pattern():
     model = build_accelerator_package(model)
 
     # Apply the SlicesToSplitTree transformation
-    model.save("before_insert_tensor_duplicator.onnx")
     transformed_model = model.transform(InsertTensorDuplicator())
-    transformed_model.save("after_insert_tensor_duplicator.onnx")
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
     tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]

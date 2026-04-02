@@ -2,7 +2,6 @@ from backend.transformation.split_concat import SplitConcat
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import TensorProto, helper
-import numpy as np
 
 def build_concat_graph(
     inputs: int,

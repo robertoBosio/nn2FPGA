@@ -480,7 +480,6 @@ def test_adjust_streaming_communication_increase_both():
     model = ModelWrapper(model)
     model.set_metadata_prop("model_II", "490") 
     transformed_model = model.transform(AdjustStreamingCommunication())
-    transformed_model.save("test_increase_both.onnx")
 
     # The expected behavior is:
     # 1. Insert a BandwidthAdjustIncreaseChannels node to go from 3 to 15 channel unroll,
