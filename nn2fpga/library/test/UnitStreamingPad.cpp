@@ -23,12 +23,12 @@ static constexpr size_t FW_EXPAND =
 void wrap_run(
     hls::stream<test_config::TWord> i_data[test_config::FH * FW_EXPAND],
     hls::stream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
-  StreamingPad<test_config::TWord, test_config::IN_HEIGHT,
+  StreamingPad<test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
                test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
                test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
                test_config::PAD_L, test_config::PAD_B, test_config::PAD_R,
-               test_config::W_PAR, test_config::CH_PAR>
+               test_config::W_PAR, test_config::CH_PAR, test_config::PAD_VALUE>
       pad;
   pad.run<0>(i_data, o_data);
 }
@@ -108,12 +108,12 @@ bool test_run() {
             } else {
               for (size_t i_ch_par = 0; i_ch_par < test_config::CH_PAR;
                    i_ch_par++) {
-                cmp = (data[i_ch_par] == 0);
+                cmp = (data[i_ch_par] == test_config::PAD_VALUE);
                 if (!cmp) {
                   std::cout << "Mismatch at index (h=" << h << ", w=" << w
                             << ", ich=" << i_ich << ", fh=" << fh
                             << ", fw=" << fw << ", ch_par=" << i_ch_par
-                            << "). got: " << data[i_ch_par] << ", expected: 0"
+                            << "). got: " << data[i_ch_par] << ", expected: " << test_config::PAD_VALUE
                             << std::endl;
                 }
               }
@@ -148,12 +148,12 @@ bool test_step() {
   hls::stream<test_config::TWord> out_stream[test_config::FH * FW_EXPAND];
 
   // Run the Pad
-  StreamingPad<test_config::TWord, test_config::IN_HEIGHT,
+  StreamingPad<test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
                test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
                test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
                test_config::PAD_L, test_config::PAD_B, test_config::PAD_R,
-               test_config::W_PAR, test_config::CH_PAR>
+               test_config::W_PAR, test_config::CH_PAR, test_config::PAD_VALUE>
       pad;
   pad.step_init(test_config::PIPELINE_DEPTH);
 
@@ -170,8 +170,7 @@ bool test_step() {
       }
     }
 
-    ActorStatus actor_status =
-        pad.step(in_stream, out_stream);
+    ActorStatus actor_status = pad.step(in_stream, out_stream);
     std::vector<ActorStatus> actor_statuses;
     std::vector<size_t> channel_quantities;
     actor_statuses.push_back(actor_status);
@@ -183,16 +182,16 @@ bool test_step() {
     }
     visited_states.emplace(current_state, clock_cycles);
 
+    // Flush the output stream.
+    for (size_t i = 0; i < test_config::FH * FW_EXPAND; i++) {
+      test_config::TWord data;
+      while (out_stream[i].read_nb(data))
+        ;
+    }
+
     // Prevent infinite loops in case of errors
     clock_cycles++;
     assert(clock_cycles < 10 * expectedII);
-  }
-
-  // Flush the output stream.
-  for (size_t i = 0; i < test_config::FH * FW_EXPAND; i++) {
-    test_config::TWord data;
-    while (out_stream[i].read_nb(data))
-      ;
   }
 
   bool flag = (II == expectedII);

@@ -4,6 +4,46 @@
 #include <cassert>
 #include <cstddef>
 
+/**
+ * @brief StreamingPad implements a quantized padding operation with only
+ * streaming in input and output. Works only with NHWC data layout.
+ *
+ * @tparam TWord           Data type for input and output word (packed input and
+ * output channels).
+ * @tparam TData           Data type for individual elements.
+ * @tparam OUT_CH          Number of output channels.
+ * @tparam IN_HEIGHT       Input feature map height.
+ * @tparam IN_WIDTH        Input feature map width.
+ * @tparam IN_CH           Number of input channels.
+ * @tparam FH              Filter height.
+ * @tparam FW              Filter width.
+ * @tparam STRIDE_H        Stride along height.
+ * @tparam STRIDE_W        Stride along width.
+ * @tparam DILATION_H      Dilation along height.
+ * @tparam DILATION_W      Dilation along width.
+ * @tparam PAD_T           Padding on top.
+ * @tparam PAD_L           Padding on left.
+ * @tparam PAD_B           Padding on bottom.
+ * @tparam PAD_R           Padding on right.
+ * @tparam CH_PAR          Parallelism factor for output channels.
+ * @tparam W_PAR           Parallelism factor for output width (pixels).
+ * @tparam PAD_VALUE       Value to use for padding (default: 0).
+ *
+ * @note
+ * - The class provides two main interfaces:
+ *   - run(): Processes the entire tensor in a blocking fashion.
+ *   - step(): Processes one pipeline step for CSDFG STE.
+ *
+ * @section Implementation Details
+ * - The input stream is an array of FH*(FW+(W_PAR-1)*STRIDE_W) streams, each
+ *   representing a different spatial location in the input feature map.
+ * - The output stream is an array of FH*(FW+(W_PAR-1)*STRIDE_W) streams, each
+ *   representing a different spatial location in the output feature map.
+ * - The padding is implemented by checking the spatial location of the input
+ *   data corresponding to the current output pixel and substituting it with the
+ *   PAD_VALUE if it falls within the padding region.
+ *
+ */
 template <typename TWord, typename TData, size_t IN_HEIGHT, size_t IN_WIDTH,
           size_t IN_CH, size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
           size_t DILATION_H, size_t DILATION_W, size_t PAD_T, size_t PAD_L,
@@ -16,18 +56,19 @@ class StreamingPad {
   static constexpr size_t OUT_WIDTH =
       (IN_WIDTH + PAD_L + PAD_R - DILATION_W * (FW - 1) - 1) / STRIDE_W + 1;
 
-public:
   static_assert(FH > 0 && FW > 0, "FH and FW must be greater than 0");
   static_assert(STRIDE_H > 0 && STRIDE_W > 0,
                 "STRIDE_H and STRIDE_W must be greater than 0");
   static_assert(PAD_T >= 0 && PAD_L >= 0 && PAD_B >= 0 && PAD_R >= 0,
                 "PAD_T, PAD_L, PAD_B and PAD_R must be non-negative");
   static_assert(W_PAR > 0, "W_PAR must be greater than 0");
+  static_assert(IN_WIDTH % W_PAR == 0, "IN_WIDTH must be a multiple of W_PAR");
+  static_assert(OUT_WIDTH % W_PAR == 0,
+                "OUT_WIDTH must be a multiple of W_PAR");
   static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
+  static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
   static_assert(FW_EXPAND > 0,
                 "FW + (W_PAR-1)*STRIDE_W must be greater than 0");
-
-  StreamingPad() = default;
 
   struct StepState {
     // Loop iteration indexes.
@@ -55,6 +96,9 @@ public:
     static Registry r;
     return r;
   }
+
+public:
+  StreamingPad() = default;
 
   void step_init(size_t pipeline_depth = 1) {
     auto &st = registry()[this];
@@ -178,7 +222,8 @@ private:
           in_word = i_data[i_fh * FW_EXPAND + i_fw].read();
         } else {
           for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-            in_word[i_ch_par] = TData(PAD_VALUE); // Padding with specified value
+            in_word[i_ch_par] =
+                TData(PAD_VALUE); // Padding with specified value
           }
         }
         o_data[i_fh * FW_EXPAND + i_fw].write(in_word);
