@@ -1,4 +1,4 @@
-#include "YoloAttention/SplitReshape.hpp"
+#include "YoloAttention/SplitReshapeQKV.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -16,7 +16,7 @@ void wrap_run(
     hls::stream<test_config::TOutputWord> output_data_k[2],
     hls::stream<test_config::TOutputWord>
         output_data_v[2]) {
-  SplitReshape<test_config::TInputWord, test_config::TInput,
+  SplitReshapeQKV<test_config::TInputWord, test_config::TInput,
                test_config::TOutputWord, test_config::TOutput,
                test_config::Quantizer, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH,
@@ -134,7 +134,7 @@ bool test_step() {
 
   static constexpr size_t expectedII =
       test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH /
-      (1 * test_config::REDUCE_PAR);
+      test_config::REDUCE_PAR;
 
   // Prepare input and output streams
   hls::stream<test_config::TInputWord> in_stream[1];
@@ -142,7 +142,7 @@ bool test_step() {
   hls::stream<test_config::TOutputWord> out_streamk[2];
   hls::stream<test_config::TOutputWord> out_streamv[2];
 
-  SplitReshape<test_config::TInputWord, test_config::TInput,
+  SplitReshapeQKV<test_config::TInputWord, test_config::TInput,
                test_config::TOutputWord, test_config::TOutput,
                test_config::Quantizer, test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH,

@@ -8,11 +8,11 @@ class TestSplitReshape(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return "YoloAttention/SplitReshape"
+        return "YoloAttention/SplitReshapeQKV"
 
     @property
     def unit_filename(self):
-        return "YoloAttention/SplitReshape"
+        return "YoloAttention/SplitReshapeQKV"
 
     def generate_config_file(self, config_dict):
         """
@@ -328,7 +328,7 @@ class TestSplitReshape(BaseHLSTest):
         cwr.add_line("}")
         return cwr.code
 
-    def test_8bit_po2_signed_splith(self, hls_steps):
+    def test_yolov10n(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,

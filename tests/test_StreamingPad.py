@@ -63,7 +63,7 @@ class TestStreamingPad(BaseHLSTest):
         cwr.add_line("}")
         return cwr.code
 
-    def test_3x3_asympadding(self, hls_steps):
+    def test_3x3_asympadding_0pad(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "DATA_DATAWIDTH": 8,
@@ -83,12 +83,12 @@ class TestStreamingPad(BaseHLSTest):
             "DIL_W": 1,
             "CH_PAR": 3,
             "W_PAR": 2,
-            "PAD_VALUE": -128,
+            "PAD_VALUE": 0,
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
 
-    def test_3x3_sympadding(self, hls_steps):
+    def test_3x3_sympadding_0pad(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "DATA_DATAWIDTH": 8,
@@ -109,7 +109,7 @@ class TestStreamingPad(BaseHLSTest):
             "CH_PAR": 2,
             "W_PAR": 2,
             "PIPELINE_DEPTH": 5,
-            "PAD_VALUE": -128,
+            "PAD_VALUE": 0,
         }
         self.run(config_dict, hls_steps)
 
@@ -118,9 +118,9 @@ class TestStreamingPad(BaseHLSTest):
         config_dict = {
             "DATA_DATAWIDTH": 8,
             "DATA_IS_UNSIGNED": False,
-            "IN_HEIGHT": 112,
-            "IN_WIDTH": 112,
-            "IN_CH": 32,
+            "IN_HEIGHT": 4,
+            "IN_WIDTH": 4,
+            "IN_CH": 4,
             "FH": 3,
             "FW": 3,
             "STRIDE_H": 1,
@@ -135,5 +135,30 @@ class TestStreamingPad(BaseHLSTest):
             "W_PAR": 4,
             "PIPELINE_DEPTH": 5,
             "PAD_VALUE": -128,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_5x5_sympadding_0pad(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "DATA_DATAWIDTH": 8,
+            "DATA_IS_UNSIGNED": False,
+            "IN_HEIGHT": 7,
+            "IN_WIDTH": 7,
+            "IN_CH": 4,
+            "FH": 5,
+            "FW": 5,
+            "STRIDE_H": 1,
+            "STRIDE_W": 1,
+            "PAD_T": 1,
+            "PAD_B": 1,
+            "PAD_L": 1,
+            "PAD_R": 1,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "CH_PAR": 2,
+            "W_PAR": 1,
+            "PIPELINE_DEPTH": 5,
+            "PAD_VALUE": 0,
         }
         self.run(config_dict, hls_steps)

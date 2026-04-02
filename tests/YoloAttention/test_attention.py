@@ -499,7 +499,7 @@ class TestQKMatMul(BaseHLSTest):
 
         model = helper.make_model(graph, producer_name="qonnx")
         model = onnx.shape_inference.infer_shapes(model)
-        onnx.save(model, "attention_test.onnx")
+        # onnx.save(model, "attention_test.onnx")
         sess = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
         y, v, y_q = sess.run(None, {"X": input_tensor})
 

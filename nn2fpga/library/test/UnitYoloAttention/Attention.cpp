@@ -2,7 +2,8 @@
 #include "StreamingSoftmax.hpp"
 #include "TensorDuplicator.hpp"
 #include "YoloAttention/QKMatMul.hpp"
-#include "YoloAttention/SplitReshape.hpp"
+#include "YoloAttention/SplitReshapeQKV.hpp"
+#include "YoloAttention/ReshapeV.hpp"
 #include "YoloAttention/VPMatMul.hpp"
 #include "YoloAttention/Transpose.hpp"
 #include "ap_axi_sdata.h"
@@ -219,14 +220,14 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
 
   ReshapeV<test_config::TSplitWord, test_config::TSplit,
            test_config::TSplitWord, test_config::TSplit,
-           DequantQuantEqual<test_config::TSplit>, 20, 20, 128,
+           DequantQuantEqual<test_config::TSplit>, 2, 64, 400, 20, 20, 128,
            test_config::REDUCE_PAR>
       reshape_v;
   reshape_v.run<13>(stream_v_out, o_v_data);
 
   ReshapeV<test_config::TYOutputWord, test_config::TYOutput,
            test_config::TYOutputWord, test_config::TYOutput,
-           DequantQuantEqual<test_config::TYOutput>, 20, 20, 128,
+           DequantQuantEqual<test_config::TYOutput>, 2, 64, 400, 20, 20, 128,
            test_config::REDUCE_PAR>
       reshape_y;
   reshape_y.run<14>(stream_attention_out, o_matmul_data);
