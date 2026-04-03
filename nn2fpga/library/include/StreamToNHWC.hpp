@@ -60,8 +60,6 @@ template <typename TInputWord, typename TInput, typename TOutputWord,
           size_t IN_W_PAR, size_t IN_CH_PAR>
 class StreamToNHWC {
   static constexpr size_t READS = HEIGHT * WIDTH * CH / (IN_W_PAR * IN_CH_PAR);
-
-public:
   static_assert(
       DATA_PER_WORD >= (IN_W_PAR * IN_CH_PAR),
       "DATA_PER_WORD must be bigger or equal to IN_CH_PAR * IN_W_PAR");
@@ -69,26 +67,6 @@ public:
                 "CH must be equal to IN_CH_PAR when IN_W_PAR > 1");
   static_assert(CH % IN_CH_PAR == 0, "CH must be a multiple of IN_CH_PAR");
   static_assert(WIDTH % IN_W_PAR == 0, "WIDTH must be a multiple of IN_W_PAR");
-
-  StreamToNHWC() = default;
-
-  template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputWord> &output_data_stream) {
-    TInput circular_buffer[DATA_PER_WORD * 2];
-    ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
-    ap_uint<1> tail = 0;
-    ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> size = 0;
-
-    // Loop through the input height and width.
-  STREAM_TO_NHWC_MAINLOOP:
-    for (size_t i_input_word = 0; i_input_word < ITER; i_input_word++) {
-#pragma HLS pipeline II = 1
-      StreamToNHWC::pipeline_body(input_data_stream, output_data_stream,
-                                  circular_buffer, head, size, tail,
-                                  i_input_word);
-    }
-  }
 
   struct StepState {
     // Circular buffer to hold output data for processing.
@@ -118,6 +96,28 @@ public:
   static Registry &registry() {
     static Registry r;
     return r;
+  }
+
+public:
+
+  StreamToNHWC() = default;
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+           hls::stream<TOutputWord> &output_data_stream) {
+    TInput circular_buffer[DATA_PER_WORD * 2];
+    ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
+    ap_uint<1> tail = 0;
+    ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> size = 0;
+
+    // Loop through the input height and width.
+  STREAM_TO_NHWC_MAINLOOP:
+    for (size_t i_input_word = 0; i_input_word < ITER; i_input_word++) {
+#pragma HLS pipeline II = 1
+      StreamToNHWC::pipeline_body(input_data_stream, output_data_stream,
+                                  circular_buffer, head, size, tail,
+                                  i_input_word);
+    }
   }
 
   void step_init(size_t pipeline_depth = 1) {
@@ -182,58 +182,6 @@ public:
   }
 
 private:
-
-//   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-//                             hls::stream<TOutputWord> &output_data_stream,
-//                             TInput circular_buffer[DATA_PER_WORD * 2],
-//                             char &head, char &size, char &tail,
-//                             size_t i_input_word) {
-// #pragma HLS inline
-//     Quantizer quantizer; // Quantizer instance for quantization.
-
-//     // Loop through the pixels processed in parallel.
-//     const bool end_of_tensor = (i_input_word >= READS);
-//     if (!end_of_tensor) {
-//       for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-//         TInputWord s_input_struct = input_data_stream[i_w_par].read();
-//         for (size_t i_och_par = 0; i_och_par < IN_CH_PAR; i_och_par++) {
-//           circular_buffer[head] = s_input_struct[i_och_par];
-//           head = (head + 1) % (DATA_PER_WORD * 2);
-//         }
-//       }
-//       size += IN_W_PAR * IN_CH_PAR;
-//     }
-
-//     // Check if we have enough data to form an output word or if we are at the
-//     // end of the tensor.
-//     if (size >= DATA_PER_WORD || end_of_tensor) {
-
-//       // If we have enough data to form an output word, proceed with packing.
-//       TOutputWord output_data;
-//       for (size_t i = 0; i < DATA_PER_WORD; i++) {
-//         output_data.data.range((i + 1) * TInput::width - 1,
-//                                i * TInput::width) =
-//             quantizer(circular_buffer[tail + i]);
-//       }
-
-//       if (end_of_tensor) {
-//         size_t valid_bytes = size * TInput::width / 8;
-//         output_data.keep = (1 << valid_bytes) - 1;
-//         tail = 0; // Reset the tail at the end of the tensor.
-//         size = 0; // Reset the size at the end of the tensor.
-//         head = 0; // Reset the head at the end of the tensor.
-//         output_data.last = true;
-//       } else {
-//         tail = (tail + DATA_PER_WORD) % (DATA_PER_WORD * 2);
-//         size -= DATA_PER_WORD;
-//         output_data.last = false;
-//         output_data.keep = ~0; // Set all bytes as valid.
-//       }
-
-//       output_data.strb = output_data.keep;
-//       output_data_stream.write(output_data);
-//     }
-//   }
 
   static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
                             hls::stream<TOutputWord> &output_data_stream,
