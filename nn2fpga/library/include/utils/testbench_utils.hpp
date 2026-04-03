@@ -14,11 +14,14 @@ void hls_stream_to_npy(const std::string &output_path,
   size_t bits_per_data = TData::width;
   while (!stream.empty()) {
     TAxi word = stream.read();
+    ap_uint<decltype(word.keep)::width> valid_bytes = word.keep;
     for (int j = 0; j < data_per_word; j++) {
       TData hls_data =
           word.data.range((j + 1) * bits_per_data - 1, j * bits_per_data);
       TDataNumpy quant_data = static_cast<TDataNumpy>(hls_data);
-      output_data.push_back(quant_data);
+      if ((valid_bytes.test(j))) { // Check if the j-th byte is valid
+        output_data.push_back(quant_data);
+      }
     }
   }
 
