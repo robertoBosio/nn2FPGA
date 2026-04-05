@@ -48,7 +48,6 @@ def get_spec_dtype(tensor_quant: TensorQuant) -> str:
             return "u32"
     raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
 
-
 def generate_spec(
     model: ModelWrapper,
     nn2FPGA_node: NodeProto,
@@ -143,13 +142,148 @@ def generate_spec(
 
     return cwr.code 
 
+
+def generate_pynq_test(nn2FPGA_node: NodeProto) -> str:
+    # Generate a test script to only test the nn2FPGA custom operator on PYNQ.
+    # This can be used to validate the operator and the bitstream independently of the full ONNX Runtime integration.
+    # The test generates random input data, streams the data and checks the throughput.
+    ap = AcceleratorPackage.from_json(
+        getCustomOp(nn2FPGA_node).get_nodeattr("accelerator_package")
+    )
+
+    test_code = """
+import numpy as np
+from pynq import Overlay
+from pynq import allocate
+from pynq import PL
+import time
+
+PL.reset()
+ol = Overlay("Overlay/design.bit")
+"""
+    # Xilinx DMA has a maximum transfer size of 64MB, so we need to choose a batch size that fits 
+    # within this limit based on the input and output buffer sizes defined in the accelerator package.
+    max_batch_size = 1024
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        if value['value'] is not None:
+            continue
+        tensor_shape = value["shape"]
+        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
+        quant = TensorQuant.from_canonical_name(value["quant"])
+        np_dtype = quant.get_numpy_dtype()
+        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
+        max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
+
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
+        if value['value'] is not None:
+            continue
+        tensor_shape = value["shape"]
+        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
+        quant = TensorQuant.from_canonical_name(value["quant"])
+        np_dtype = quant.get_numpy_dtype()
+        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
+        max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
+
+    test_code += f"BATCH = {max_batch_size}\n"
+
+    # Generate code to allocate input and output buffers based on the accelerator package specification.
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        tensor_shape = value["shape"]
+        dma_name = value['new_name'] 
+        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
+        str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
+        quant = TensorQuant.from_canonical_name(value["quant"])
+        np_dtype = quant.get_numpy_dtype()
+        np_dtype_info = np.iinfo(np_dtype)
+        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
+        if value['value'] is None:
+            str_tensor_shape = f"BATCH, {str_tensor_shape}"
+        else:
+            str_tensor_shape = f"{str_tensor_shape},"
+        test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+        test_code += f"{dma_name}_data = np.random.randint({np_dtype_info.min}, {np_dtype_info.max}, size=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
+        tensor_shape = value["shape"]
+        dma_name = value['new_name']
+        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
+        str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
+        quant = TensorQuant.from_canonical_name(value["quant"])
+        np_dtype = quant.get_numpy_dtype()
+        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
+        str_tensor_shape = f"BATCH, {str_tensor_shape}"
+        test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+        test_code += f"{dma_name}_data = np.zeros(({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+        test_code += f"ol.{dma_name}_dma.recvchannel._max_size = {buffer_size}\n"
+        test_code += f"ol.{dma_name}_dma.recvchannel._align = 1\n"
+
+    # Load the static inputs
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        if value['value'] is not None:
+            dma_name = value['new_name']
+            test_code += f"{dma_name}_buffer[:] = {dma_name}_data[:]\n"
+            test_code += f"ol.{dma_name}_dma.sendchannel.transfer({dma_name}_buffer)\n"
+            test_code += f"ol.{dma_name}_dma.sendchannel.wait()\n"
+            test_code += f"print('Static input {dma_name} loaded')\n"
+
+    test_code += """
+batch_lat_s = []
+img_lat_s = []
+total_images = 0
+total_time_s = 0.0
+for batch_idx in range(10):  # Run 10 batches for testing\n"""
+
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        if value['value'] is not None:
+            continue
+        dma_name = value['new_name']
+        test_code += f"""    {dma_name}_buffer[:] = {dma_name}_data[:]\n"""
+    test_code += """    start_time = time.perf_counter()\n"""
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
+        dma_name = value['new_name']
+        test_code += f"    ol.{dma_name}_dma.recvchannel.transfer({dma_name}_buffer)\n"
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        if value['value'] is not None:
+            continue
+        dma_name = value['new_name']
+        test_code += f"    ol.{dma_name}_dma.sendchannel.transfer({dma_name}_buffer)\n"
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
+        dma_name = value['new_name']
+        test_code += f"    ol.{dma_name}_dma.recvchannel.wait()\n"
+    test_code += """    end_time = time.perf_counter()\n"""
+    test_code += """    batch_time = end_time - start_time\n"""
+    test_code += """    batch_lat_s.append(batch_time)\n"""
+    test_code += """    img_lat_s.append(batch_time / BATCH)\n"""
+    test_code += """    total_images += BATCH\n"""
+    test_code += """    total_time_s += batch_time\n"""
+    test_code += """
+throughput = total_images / total_time_s
+avg_batch_ms = (sum(batch_lat_s) / len(batch_lat_s)) * 1e3
+avg_img_ms = (sum(img_lat_s) / len(img_lat_s)) * 1e3
+
+print("===== Benchmark results =====")
+print(f"Measured batches:        {len(batch_lat_s)}")
+print(f"Measured images:         {total_images}")
+print(f"Total measured time (s): {total_time_s:.6f}")
+print(f"Throughput (img/s):      {throughput:.2f}")
+print(f"Avg batch latency (ms):  {avg_batch_ms:.3f}")
+print(f"Avg img latency (ms):    {avg_img_ms:.3f}")
+"""
+
+    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
+        dma_name = value['new_name']
+        test_code += f"del {dma_name}_buffer\n"
+    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
+        dma_name = value['new_name']
+        test_code += f"del {dma_name}_buffer\n"
+    return test_code
+
 def make_deploy_directory(work_dir: str, top_name: str) -> str:
     """Create a deployment directory for the FPGA project."""
     deploy_dir = f"{work_dir}/deploy"
     if not os.path.exists(deploy_dir):
         os.makedirs(deploy_dir)
     return deploy_dir
-
 
 class GenerateDriver(Transformation):
 
@@ -219,5 +353,8 @@ class GenerateDriver(Transformation):
             original_model = self.original_model.transform(ConvertToQCDQ())
             original_model = original_model.transform(SetDynamicBatchSize())
             original_model.save(f"{deploy_dir}/original_model_qcdq.onnx")
+        
+        with open(f"{deploy_dir}/throughput_test.py", "w") as f:
+            f.write(generate_pynq_test(nn2FPGA_node))
 
         return model, False

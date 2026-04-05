@@ -4,7 +4,13 @@ import os
 import subprocess
 from backend.core.acceleratorpackage import AcceleratorPackage
 from backend.util.board_util import read_board_info
-from backend.util.codegen_utils import NewCodeWriter, cpp_function, cpp_variable, get_hls_quant_type, get_cpp_quant_type
+from backend.util.codegen_utils import (
+    NewCodeWriter,
+    cpp_function,
+    cpp_variable,
+    get_hls_quant_type,
+    get_cpp_quant_type,
+)
 from backend.core.tensor_quant import TensorQuant
 
 SOLUTION_NAME = "solution0"
@@ -64,8 +70,8 @@ def dump_tcl_script(
             f"create_clock -period {t_clk}",
             "config_compile -pipeline_style flp",
             f'csim_design -argv "{argv}"',
-            # f"{csynth_command}",
-            # f'cosim_design -argv "{argv}"',
+            f"{csynth_command}",
+            f'cosim_design -argv "{argv}"',
             # "export_design -flow syn",
             "exit",
         ]

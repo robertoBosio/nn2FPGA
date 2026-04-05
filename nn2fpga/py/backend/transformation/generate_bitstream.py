@@ -57,7 +57,6 @@ def process_verilog_files(hls_dir: Path):
         if v_file.exists():
             optimize_ram_decomp(v_file)
 
-
 def dump_tcl_script(
     top_name,
     part_name,
@@ -116,7 +115,6 @@ def dump_tcl_script(
     )
 
     return "\n".join(lines)
-
 
 def vivado_tcl_script(
     work_dir: str,
@@ -412,7 +410,10 @@ class GenerateBitstream(Transformation):
         part_name = read_board_info(board)["part"]
         board_part_name = read_board_info(board)["board_part"]
 
-        if len(ap.input_map) + len(ap.output_map) * self.axilite_dma_window > axilite_size:
+        if (
+            len(ap.input_map) + len(ap.output_map) * self.axilite_dma_window
+            > axilite_size
+        ):
             raise ValueError(
                 f"Total AXI lite size ({len(ap.input_map) + len(ap.output_map) * self.axilite_dma_window}) exceeds the maximum allowed size ({axilite_size})."
             )
