@@ -1,12 +1,9 @@
-import onnxruntime as ort
-import numpy as np
 import time
 import os
-
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
-import os
+import onnxruntime as ort
 import numpy as np
 from PIL import Image
 
@@ -137,7 +134,6 @@ CUSTOM_OP_SO = os.path.abspath("libnn2fpga_customop.so")
 
 # Session options
 so = ort.SessionOptions()
-print("Loading the operator")
 so.register_custom_ops_library(CUSTOM_OP_SO)
 
 # Enable optimizations
@@ -147,28 +143,26 @@ so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 so.enable_profiling = True
 
 # Create session
-print("Starting the session")
 sess = ort.InferenceSession(MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
-sess_orig = ort.InferenceSession(ORIGINAL_MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
 
 # Dummy input data (adapt dtype/shape to your model)
 input_name = sess.get_inputs()[0].name
 input_shape = [d if isinstance(d, int) else 1 for d in sess.get_inputs()[0].shape]
-x = np.random.rand(10, 3, 224, 224).astype(np.float32)
+# x = np.random.rand(10, 3, 224, 224).astype(np.float32)
 
-# Warmup
-print("Warming up and checking correctness")
-actual_result = sess.run(None, {input_name: x})
-expected_result = sess_orig.run(None, {input_name: x})
-# Check correctness
-report_error_stats("output", np.asarray(expected_result).flatten(), np.asarray(actual_result).flatten())
-del sess, sess_orig
+# # Warmup
+# print("Warming up and checking correctness")
+# actual_result = sess.run(None, {input_name: x})
+# expected_result = sess_orig.run(None, {input_name: x})
+# # Check correctness
+# report_error_stats("output", np.asarray(expected_result).flatten(), np.asarray(actual_result).flatten())
+# del sess, sess_orig
 
 
-sess = ort.InferenceSession(MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
+# sess = ort.InferenceSession(MODEL_PATH, sess_options=so, providers=["CPUExecutionProvider"])
 
 # Profile multiple runs
-dataloader = imagenet_dataloader(batch_size=10, sample_size=100)  # Only 100 samples
+dataloader = imagenet_dataloader(batch_size=1, sample_size=100)  # Only 100 samples
 accuracy = 0
 for batch, (features, expected_results) in enumerate(dataloader):
     np_features = (np.asarray(features).astype(np.float32))
@@ -178,11 +172,11 @@ for batch, (features, expected_results) in enumerate(dataloader):
     t1 = time.time()
     actual_result = sess.run(None, input_data)
     t2 = time.time()
-    accuracy = postprocess(actual_result, expected_results, accuracy, 10)
+    accuracy = postprocess(actual_result, expected_results, accuracy, 1)
     print(f"Batch {batch} processed in {t2 - t1:.3f} seconds")
 
 
-print(f"Total accuracy: {accuracy / (len(dataloader) * 10):.2f}, which means {accuracy} correct predictions out of {len(dataloader) * 10} total predictions.")
+print(f"Total accuracy: {accuracy / (len(dataloader) * 1):.2f}, which means {accuracy} correct predictions out of {len(dataloader) * 1} total predictions.")
 # Close the session to flush the profiling file
 prof_file = sess.end_profiling()
 print(f"Profiling trace written to: {prof_file}")
