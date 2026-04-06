@@ -7,9 +7,9 @@ set -euo pipefail
 : "${XRT_LIBDIR:=${SYSROOT}/usr/lib/aarch64-linux-gnu}"
 : "${TP_JSON:=/workspace/NN2FPGA/deps/json/single_include}"
 : "${TP_BASE64:=/workspace/NN2FPGA/deps/cpp-base64}"
-: "${NN2FPGA_HW_LIB:=/workspace/NN2FPGA/nn2fpga/deploy}"
+: "${NN2FPGA_HW_LIB:=/workspace/NN2FPGA/nn2fpga/hw/operator_runtime}"
 
-SRC=${1:-nn2fpga/deploy/register_op.cpp}
+SRC=${1:-nn2fpga/hw/operator_runtime/register_op.cpp}
 OUT_DIR=${2:-artifacts/aarch64}
 OUT_SO=${OUT_DIR}/libnn2fpga_customop.so
 mkdir -p "${OUT_DIR}"

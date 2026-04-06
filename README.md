@@ -49,14 +49,16 @@ The easiest way to get started is by running one of the provided examples.
 2. **Run the framework.**
 
     ```bash id="run02"
-    python3 py/nn2fpga.py --config config_examples/<example>.toml
+    python3 -m nn2fpga.compiler.cli --config config_examples/cifar10/<example>.toml
     ```
 
 3. **Collect the output.**
-   Copy the generated `deploy` directory to the target board. It contains:
+   Copy the generated `build` directory to the target board. It contains:
 
    * The ONNX model with the embedded bitstream
-   * The compiled nn2FPGA custom operator
+   * The compiled nn2FPGA custom operator `libnn2fpga_customop.so`
+   * The script to program the board `pynq_program.py`
+   * The original model (not strictly needed, only to compare performance)
 
 4. **Run the ONNX model.**
    Add the following lines to your inference script to register the custom operator:

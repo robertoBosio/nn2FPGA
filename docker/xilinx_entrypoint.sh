@@ -74,7 +74,7 @@ export ONNXRUNTIME_SDK_INCLUDE=${ONNXRUNTIME_SDK_INCLUDE:-/opt/onnxruntime-sdk/i
 export CC=aarch64-linux-gnu-gcc
 export CXX=aarch64-linux-gnu-g++
 
-cd "$NN2FPGA_ROOT_DIR/nn2fpga"
+cd "$NN2FPGA_ROOT_DIR"
 
 # Drop into interactive shell as the created user
 exec "$@"
