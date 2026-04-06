@@ -327,11 +327,11 @@ class GenerateDriver(Transformation):
             )
 
         # Move generated_spec.hpp files to the deployment directory.
-        shutil.move(spec_file_path, "/workspace/NN2FPGA/nn2fpga/operator_runtime/generated_spec.hpp")
+        shutil.move(spec_file_path, "/workspace/NN2FPGA/nn2fpga/hw/operator_runtime/generated_spec.hpp")
 
         # Compile the custom operator.
         os.system(
-            f"/workspace/NN2FPGA/tools/build_customop.sh /workspace/NN2FPGA/nn2fpga/operator_runtime/register_op.cpp {deploy_dir}"
+            f"/workspace/NN2FPGA/tools/build_customop.sh /workspace/NN2FPGA/nn2fpga/hw/operator_runtime/register_op.cpp {deploy_dir}"
         )
 
         # Check if the custom operator was built successfully.
@@ -340,11 +340,11 @@ class GenerateDriver(Transformation):
             raise RuntimeError(f"Custom operator not built: {custom_op_path}")
 
         # Remove all the copies of the spec file.
-        os.remove("/workspace/NN2FPGA/nn2fpga/operator_runtime/generated_spec.hpp")
+        os.remove("/workspace/NN2FPGA/nn2fpga/hw/operator_runtime/generated_spec.hpp")
 
         # Temporarily copy the pynq utility needed to upload the bitstream.
         shutil.copy(
-            "/workspace/NN2FPGA/nn2fpga/operator_runtime/pynq_program.py",
+            "/workspace/NN2FPGA/nn2fpga/hw/operator_runtime/pynq_program.py",
             f"{deploy_dir}"
         )
 
