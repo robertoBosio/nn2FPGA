@@ -7,7 +7,7 @@ nn2FPGA is a framework for accelerating quantized ONNX inference on AMD FPGAs.
 
 It operates on QONNX models by identifying the largest FPGA-supported subgraph, generating the corresponding hardware accelerator, and reintegrating it into the ONNX model for execution on heterogeneous systems.
 
-The generated accelerator follows a **dataflow execution model**, departing from the traditional Von Neumann architecture. Instead of relying on sequential instruction execution and shared memory, computations are mapped into streaming pipelines, enabling high parallelism and efficient data movement—an approach well suited to FPGA architectures.
+The generated accelerator follows a **dataflow execution model**, departing from the traditional Von Neumann architecture. Instead of relying on sequential instruction execution and shared memory, computations are mapped into streaming pipelines, enabling high parallelism and efficient data movement, an approach well suited to FPGA architectures.
 
 nn2FPGA targets resource-constrained embedded platforms, where performance, latency, and energy efficiency are critical. By offloading supported portions of a neural network to FPGA-based accelerators, it enables efficient heterogeneous execution while maintaining compatibility with ONNX Runtime.
 
@@ -55,10 +55,11 @@ The easiest way to get started is by running one of the provided examples.
 3. **Collect the output.**
    Copy the generated `build` directory to the target board. It contains:
 
-   * The ONNX model with the embedded bitstream
-   * The compiled nn2FPGA custom operator `libnn2fpga_customop.so`
-   * The script to program the board `pynq_program.py`
-   * The original model (not strictly needed, only to compare performance)
+   * The ONNX model with the embedded bitstream.
+   * The compiled nn2FPGA custom operator `libnn2fpga_customop.so`.
+   * The script to program the board `pynq_program.py`.
+   * The original model (not strictly needed, only to compare performance).
+   * A script to test the performance of the nn2FPGA operator alone (not strictly needed).
 
 4. **Run the ONNX model.**
    Add the following lines to your inference script to register the custom operator:
@@ -69,4 +70,4 @@ The easiest way to get started is by running one of the provided examples.
     so.register_custom_ops_library(CUSTOM_OP_SO)
     ```
 
-    Examples of inference scripts are available in the `deploy` directory.
+    Examples of inference scripts are also available under the `config_example` directory.
