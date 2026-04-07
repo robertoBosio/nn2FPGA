@@ -1,0 +1,9 @@
+site_name: nn2FPGA
+repo_url: https://github.com/robertoBosio/nn2FPGA
+repo_name: robertoBosio/nn2FPGA
+
+theme:
+  name: material
+
+nav:
+  - Home: index.md
