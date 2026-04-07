@@ -151,7 +151,8 @@ def generate_pynq_test(nn2FPGA_node: NodeProto) -> str:
         getCustomOp(nn2FPGA_node).get_nodeattr("accelerator_package")
     )
 
-    test_code = """
+    test_code = """# Auto-generated test script for nn2FPGA custom operator on PYNQ
+
 import numpy as np
 from pynq import Overlay
 from pynq import allocate
