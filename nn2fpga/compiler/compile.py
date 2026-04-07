@@ -43,10 +43,6 @@ def nn2fpga_compile(config_dict: dict):
     # Load the original ONNX model.
     original_model = ModelWrapper(config_dict["onnx_path"])
 
-    generate_report_file = f"{config_dict['prj_root']}/generate_{config_dict['top_name']}_{config_dict['board']}.rpt"
-    if os.path.exists(generate_report_file):
-        os.remove(generate_report_file)
-
     # Save the model before any transformations.
     model = original_model
 
@@ -59,6 +55,7 @@ def nn2fpga_compile(config_dict: dict):
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
     model.set_metadata_prop("silvia_packing", str(config_dict["silvia_packing"]))
+    model.set_metadata_prop("simulation", str(config_dict["simulation"]))
 
     # Optional parameters
     dsp_limit = config_dict.get("dsp_limit")

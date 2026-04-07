@@ -45,6 +45,9 @@ class AcceleratorPackage:
     # Version of HLS used for compilation.
     hls_version: str = ""
 
+    # Simulation type.
+    simulation: str = ""
+
     REQUIRED_FIELDS: ClassVar[set] = {
         "hls_code_b64",
         "bitstream_b64",
@@ -56,6 +59,7 @@ class AcceleratorPackage:
         "top_name",
         "frequency",
         "hls_version",
+        "simulation",
     }
 
     # --- Serialization ---

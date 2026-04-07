@@ -43,7 +43,7 @@ def load_config(config_path: str) -> dict:
         # Optional fields with defaults
         config_dict["silvia_packing"] = config.get("options", {}).get("silvia_packing", False)
         config_dict["dsp_limit"] = config.get("options", {}).get("dsp_limit", None)
-
+        config_dict["simulation"] = config.get("options", {}).get("simulation", "csim")
 
     except KeyError as e:
         print(f"Missing configuration field: {e}")
@@ -105,6 +105,8 @@ def check_config(config_dict: dict):
     if not config_dict["xilinx_version"].replace('.', '', 1).isdigit():
         raise ValueError("Invalid 'xilinx_version' in configuration. It must be a string representing a version number (e.g., '2024.2').")
 
+    if config_dict["simulation"] not in ["csim", "cosim"]:
+        raise ValueError("Invalid 'simulation' option. It must be either 'csim' or 'cosim'.")
 
 def main():
     parser = argparse.ArgumentParser(

@@ -24,6 +24,7 @@ def dump_tcl_script(
     input_files,
     reset=True,
     silvia_packing=False,
+    simulation_type="csim"
 ) -> str:
     """Dump a TCL script to set up the HLS project and run the simulation."""
 
@@ -70,9 +71,8 @@ def dump_tcl_script(
             f"create_clock -period {t_clk}",
             "config_compile -pipeline_style flp",
             f'csim_design -argv "{argv}"',
-            f"{csynth_command}",
-            f'cosim_design -argv "{argv}"',
-            # "export_design -flow syn",
+            f"{csynth_command}" if simulation_type == "cosim" else "",
+            f'cosim_design -argv "{argv}"' if simulation_type == "cosim" else "",
             "exit",
         ]
     )
@@ -230,6 +230,7 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
 
     ap = AcceleratorPackage.from_json(accelerator_package_serialized)
     work_dir = ap.work_dir
+    simulation_type = ap.simulation
     work_dir = f"{os.path.abspath(work_dir)}/sim"
     make_build_dir(work_dir)
     internal_context = list()
@@ -270,6 +271,7 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         input_files=[f"{work_dir}/{tensor_name}.npy" for tensor_name, _ in internal_context],
         reset=True,
         silvia_packing=True,
+        simulation_type=simulation_type,
     )
 
     # Write the TCL script to a file
@@ -312,7 +314,7 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         else:
             raise FileNotFoundError(f"Output file {output_file} not found.")
     
-    # Erase the simulation directory if everything went well
+    # Erase the simulation directory if everything went as expected.
     # if os.path.exists(work_dir):
     #     subprocess.run(["rm", "-rf", work_dir], check=True)
 
