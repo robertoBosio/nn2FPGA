@@ -1,7 +1,10 @@
 from nn2fpga.compiler.transforms.split_concat import SplitConcat
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.infer_shapes import InferShapes
+import qonnx.core.onnx_exec as oxe
 from onnx import TensorProto, helper
+import numpy as np
 
 def build_concat_graph(
     inputs: int,
@@ -21,7 +24,7 @@ def build_concat_graph(
         outputs=["output"],
         name="concat_node",
         axis=1,
-        domain="ai.onnx"
+        domain=""
     )
 
     graph = helper.make_graph(
@@ -77,3 +80,22 @@ def test_concat7():
     concat_nodes = [n for n in transformed_model.graph.node if n.op_type == "Concat"]
 
     assert len(concat_nodes) == 6
+
+def test_correctness():
+
+    model_wrapper = build_concat_graph(5)
+    transformed_model = model_wrapper.transform(SplitConcat())
+    transformed_model = transformed_model.transform(InferShapes())
+
+    input_names = [f"input{i+1}" for i in range(5)]
+    output_name = "output"
+
+    input_dict = {
+        name: np.array([[i, i + 1]], dtype=np.float32)
+        for i, name in enumerate(input_names)
+    }
+    expected_output = np.array([[0, 1, 1, 2, 2, 3, 3, 4, 4, 5]], dtype=np.float32)
+
+    output_dict = oxe.execute_onnx(transformed_model, input_dict)
+
+    np.testing.assert_allclose(output_dict[output_name], expected_output)

@@ -11,7 +11,11 @@ class SplitConcat(Transformation):
     Replace:
         Concat(x0, x1, x2, ..., xN, axis)
     with:
-        multiple binary Concat operations.
+        a chain of binary Concat operations that preserves input order:
+            t0 = Concat(x0, x1)
+            t1 = Concat(t0, x2)
+            ...
+            out = Concat(t{k}, xN)
     """
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
@@ -23,43 +27,49 @@ class SplitConcat(Transformation):
             if node.op_type != "Concat" or len(node.input) <= 2:
                 continue
 
-            logger.info(f"Splitting Concat node '{node.name}' with {len(node.input)} inputs.")
+            logger.info(
+                "Splitting Concat node '%s' with %d inputs.",
+                node.name,
+                len(node.input),
+            )
             changed = True
 
             inputs = list(node.input)
             output = node.output[0]
-            axis = next(attr.i for attr in node.attribute if attr.name == "axis")
+
+            axis_attr = next((attr for attr in node.attribute if attr.name == "axis"), None)
+            axis = axis_attr.i if axis_attr is not None else 0
 
             new_nodes = []
+
+            current = inputs[0]
             split_idx = 0
 
-            while len(inputs) > 2:
-                in0 = inputs.pop(0)
-                in1 = inputs.pop(0)
+            for next_input in inputs[1:-1]:
                 tmp_out = f"{node.name}_split_{split_idx}"
-
                 new_node = helper.make_node(
                     "Concat",
-                    inputs=[in0, in1],
+                    inputs=[current, next_input],
                     outputs=[tmp_out],
                     name=f"{node.name}_split_{split_idx}",
                     axis=axis,
                 )
                 new_nodes.append(new_node)
-                inputs.append(tmp_out)
+                current = tmp_out
                 split_idx += 1
 
-            # Final binary concat writes to the original output name
             final_node = helper.make_node(
                 "Concat",
-                inputs=[inputs[0], inputs[1]],
+                inputs=[current, inputs[-1]],
                 outputs=[output],
                 name=f"{node.name}_split_{split_idx}",
                 axis=axis,
             )
             new_nodes.append(final_node)
 
+            insert_idx = list(graph.node).index(node)
             graph.node.remove(node)
-            graph.node.extend(new_nodes)
+            for offset, new_node in enumerate(new_nodes):
+                graph.node.insert(insert_idx + offset, new_node)
 
         return model, changed
