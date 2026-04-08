@@ -22,3 +22,5 @@ nn2fpga/.ipcache/
 nn2fpga/proj_unit_test/
 
 reports/
+
+site/
