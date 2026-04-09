@@ -197,21 +197,24 @@ class ConvertToQCDQ(Transformation):
             new_inputs_map = {}
             for i, inp in enumerate(partition_node.input):
 
-                if model.find_producer(inp) is not None and model.find_producer(inp).op_type == "QuantizeLinear":
+                if (
+                    model.find_producer(inp) is not None
+                    and model.find_producer(inp).op_type == "QuantizeLinear"
+                ):
                     # Skip if the input is already quantized
                     continue
 
                 inp_shape = model.get_tensor_shape(inp)
                 if inp_shape is None:
                     continue  # Skip if input shape is not available
-            
+
                 inp_shape_nhwc = toNHWC(inp_shape)
 
                 # If the input is already in NHWC format, skip the transpose
                 quant_input_name = inp
                 if inp_shape != inp_shape_nhwc:
                     quant_input_name = f"{inp}_transposed"
-                    
+
                     perm = list(range(len(inp_shape_nhwc)))
                     perm = toNHWC(perm)  # Convert to NHWC permutation
                     transpose_before = helper.make_node(
@@ -271,8 +274,11 @@ class ConvertToQCDQ(Transformation):
 
             new_outputs_map = {}
             for i, out in enumerate(partition_node.output):
+                consumers = model.find_consumers(out)
 
-                if model.find_consumer(out) is not None and model.find_consumer(out).op_type == "DequantizeLinear":
+                if consumers is not None and all(
+                    consumer.op_type == "DequantizeLinear" for consumer in consumers
+                ):
                     # Skip if the output is already dequantized
                     continue
 
