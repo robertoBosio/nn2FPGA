@@ -1,4 +1,5 @@
 import time
+from xml.parsers.expat import model
 import onnx
 import numpy as np
 from collections import deque, defaultdict
@@ -259,7 +260,7 @@ class MulQuantized(Pattern):
 
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
-
+'''
 class FusedSoftmaxTransposeMatmul(Pattern):
     """
     Match:  MatMul( Transpose( Softmax( Quant(x) ), perm=[0,1,3,2] ), Quant(y) )
@@ -288,6 +289,11 @@ class FusedSoftmaxTransposeMatmul(Pattern):
 
         if pa is not None and pa.op_type == "Transpose":
             trans = pa
+            other_prod = pb
+        elif pa is not None and pa.op_type in ("Quant", "IntQuant"):
+            upstream = model.find_producer(pa.input[0])
+        if upstream is not None and upstream.op_type == "Transpose":
+            trans = upstream
             other_prod = pb
         elif pb is not None and pb.op_type == "Transpose":
             trans = pb
@@ -337,6 +343,119 @@ class FusedSoftmaxTransposeMatmul(Pattern):
 
         # Covered nodes
         covered.update({anchor_node.name, trans.name, softmax.name, q.name, other_prod.name})
+
+        return Match(True, self.name, covered, reasons)
+'''
+class FusedSoftmaxTransposeMatmul(Pattern):
+    """
+    Matches:
+    MatMul
+     - Quant_out(Transpose(Quant_trans(Softmax(Quant_in(x)))))  perm=[0,1,3,2]
+     - Quant(y)
+    If MatMul output feeds a graph output directly, or feeds a Reshape/Transpose
+    that feeds a graph output, MatMul is excluded from covered (boundary guard).
+    """
+    name = "MatMul(Quant(Transpose(Quant(Softmax(Quant(x))))), Quant(y))"
+    anchor_op = "MatMul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        a, b = anchor_node.input
+        pa = model.find_producer(a)
+        pb = model.find_producer(b)
+
+        # identify which side has Quant(Transpose(Quant(Softmax(Quant))))
+        quant_out = None
+        other_prod = None
+
+        for side_prod, other in [(pa, pb), (pb, pa)]:
+            if side_prod is None:
+                continue
+            if side_prod.op_type not in ("Quant", "IntQuant"):
+                continue
+            trans = model.find_producer(side_prod.input[0])
+            if trans is None or trans.op_type != "Transpose":
+                continue
+            quant_trans = model.find_producer(trans.input[0])
+            if quant_trans is None or quant_trans.op_type not in ("Quant", "IntQuant"):
+                continue
+            softmax = model.find_producer(quant_trans.input[0])
+            if softmax is None or softmax.op_type != "Softmax":
+                continue
+            quant_in = model.find_producer(softmax.input[0])
+            if quant_in is None or quant_in.op_type not in ("Quant", "IntQuant"):
+                continue
+            quant_out = side_prod
+            other_tensor = b if side_prod is pa else a
+            other_prod = model.find_producer(other_tensor)
+            break
+
+        if quant_out is None:
+            reasons.append(
+                "No Quant(Transpose(Quant(Softmax(Quant(x))))) chain found on either input"
+            )
+            return Match(False, self.name, covered, reasons)
+
+        # re-resolve chain nodes
+        trans       = model.find_producer(quant_out.input[0])
+        quant_trans = model.find_producer(trans.input[0])
+        softmax     = model.find_producer(quant_trans.input[0])
+        quant_in    = model.find_producer(softmax.input[0])
+
+        # validate outer Quant
+        if not check_act_quant(model, quant_out, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        # validate Transpose perm
+        if not check_attribute(trans, "perm", [0, 1, 3, 2], reasons):
+            return Match(False, self.name, covered, reasons)
+
+        # validate middle Quant
+        if not check_act_quant(model, quant_trans, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        # validate inner Quant
+        if not check_act_quant(model, quant_in, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        # validate other MatMul input
+        if other_prod is None or not (
+            check_act_quant(model, other_prod, []) or
+            check_params_quant(model, other_prod, [])
+        ):
+            reasons.append("Other MatMul input must be produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({
+            anchor_node.name,
+            quant_out.name,
+            trans.name,
+            quant_trans.name,
+            softmax.name,
+            quant_in.name,
+            other_prod.name,
+        })
+
+        # boundary guard: exclude MatMul if output feeds graph output
+        # or feeds a Reshape/Transpose/Flatten that feeds graph output
+        graph_output_names = {o.name for o in model.graph.output}
+        is_boundary = any(o in graph_output_names for o in anchor_node.output)
+        if not is_boundary:
+            for out in anchor_node.output:
+                for c in (model.find_consumers(out) or []):
+                    if c.op_type in ("Reshape", "Transpose", "Flatten"):
+                        if any(co in graph_output_names for co in c.output):
+                            is_boundary = True
+                            break
+
+        if is_boundary:
+            covered.discard(anchor_node.name)
 
         return Match(True, self.name, covered, reasons)
 
@@ -928,15 +1047,12 @@ class ActivationQuantNodePattern(Pattern):
 
         covered.add(anchor_node.name)
         return Match(True, self.name, covered, reasons)
-
 class QuantNodePattern(ActivationQuantNodePattern):
     anchor_op = "Quant"
     name = "Activation Quant node"
-
 class IntQuantNodePattern(ActivationQuantNodePattern):
     anchor_op = "IntQuant"
     name = "Activation IntQuant node"
-
 class SliceSplitTreeFeasibleQuantized(Pattern):
     """
     Supported iff:
@@ -1151,29 +1267,610 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
                 return False
             prev_end = en
         return prev_end == dim
+class MatMulQuant(Pattern):
+    name = "MatMul(Quant(x), Quant(y))"
+    anchor_op = "MatMul"
 
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        a, b = anchor_node.input
+        pa = model.find_producer(a)
+        pb = model.find_producer(b)
+
+        if pa is None or pa.op_type not in ("Quant", "IntQuant"):
+            reasons.append("MatMul input A must be produced by Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        if pb is None or pb.op_type not in ("Quant", "IntQuant"):
+            reasons.append("MatMul input B must be produced by Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        ok_a = check_act_quant(model, pa, []) or check_params_quant(model, pa, [])
+        ok_b = check_act_quant(model, pb, []) or check_params_quant(model, pb, [])
+
+        if not ok_a:
+            reasons.append("MatMul input A Quant is not valid")
+            return Match(False, self.name, covered, reasons)
+        if not ok_b:
+            reasons.append("MatMul input B Quant is not valid")
+            return Match(False, self.name, covered, reasons)
+
+        # find output consumer
+        out_q = None
+        out_reshape = None
+        if len(anchor_node.output) >= 1:
+            for node in model.graph.node:
+                if anchor_node.output[0] in node.input:
+                    if node.op_type in ("Quant", "IntQuant"):
+                        out_q = node
+                    elif node.op_type == "Reshape":
+                        out_reshape = node
+                    break
+
+        if out_q is None and out_reshape is None:
+            reasons.append("MatMul output must be consumed by Quant/IntQuant or Reshape")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({anchor_node.name, pa.name, pb.name})
+        if out_reshape is not None:
+            covered.add(out_reshape.name)
+            # also absorb Reshape's shape constant node if present
+            if len(out_reshape.input) >= 2:
+                shape_prod = model.find_producer(out_reshape.input[1])
+                if shape_prod is not None and shape_prod.op_type == "Constant":
+                    covered.add(shape_prod.name)
+
+        return Match(True, self.name, covered, reasons)
+class TransposeMatMulQuant(Pattern):
+    name = "MatMul(Transpose(x), Quant(y))"
+    anchor_op = "MatMul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        a, b = anchor_node.input
+        pa = model.find_producer(a)
+        pb = model.find_producer(b)
+
+        trans, trans_quant, other_prod = None, None, None
+
+        for side_prod, other in [(pa, pb), (pb, pa)]:
+            # Case A: Quant(Transpose(x))
+            if side_prod is not None and side_prod.op_type in ("Quant", "IntQuant"):
+                inner = model.find_producer(side_prod.input[0])
+                if inner is not None and inner.op_type == "Transpose":
+                    trans = inner
+                    trans_quant = side_prod
+                    other_prod = model.find_producer(other)
+                    break
+
+            # Case B/C: Transpose directly or Transpose(Quant(x))
+            if side_prod is not None and side_prod.op_type == "Transpose":
+                if len(side_prod.input) >= 1:
+                    inner = model.find_producer(side_prod.input[0])
+                    # Case C: Transpose(Quant(x))
+                    if inner is not None and inner.op_type in ("Quant", "IntQuant"):
+                        trans = side_prod
+                        trans_quant = inner
+                        other_prod = model.find_producer(other)
+                        break
+                # Case B: plain Transpose
+                trans = side_prod
+                trans_quant = None
+                other_prod = model.find_producer(other)
+                break
+
+        if trans is None:
+            reasons.append("No Transpose found on MatMul inputs")
+            return Match(False, self.name, covered, reasons)
+
+        if trans_quant is not None:
+            if not check_act_quant(model, trans_quant, reasons):
+                return Match(False, self.name, covered, reasons)
+
+        if other_prod is not None:
+            ok = check_act_quant(model, other_prod, []) or check_params_quant(model, other_prod, [])
+            if not ok:
+                reasons.append("Non-Transpose input must be Quant/IntQuant")
+                return Match(False, self.name, covered, reasons)
+            covered.add(other_prod.name)
+
+        covered.add(anchor_node.name)
+        covered.add(trans.name)
+        if trans_quant is not None:
+            covered.add(trans_quant.name)
+        return Match(True, self.name, covered, reasons)
+class TransposePattern(Pattern):
+    name = "Transpose(x)"
+    anchor_op = "Transpose"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        covered = {anchor_node.name}
+        return Match(True, self.name, covered, [])
+class SoftmaxPattern(Pattern):
+    name = "Softmax(x)"
+    anchor_op = "Softmax"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        covered = {anchor_node.name}
+        return Match(True, self.name, covered, [])
+class ReshapeSpatialPattern(Pattern):
+    """Accepts Reshape to any 4D shape: [B, C, H, W]"""
+    name = "Reshape 4D spatial"
+    anchor_op = "Reshape"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 2:
+            return Match(False, self.name, covered, ["Reshape missing shape input"])
+
+        shape_input = anchor_node.input[1]
+        shape_arr = None
+        const_node_name = None
+
+        init = get_by_name(model.graph.initializer, shape_input)
+        if init is not None:
+            shape_arr = numpy_helper.to_array(init)
+        else:
+            p = model.find_producer(shape_input)
+            if p is not None and p.op_type == "Constant":
+                v = get_by_name(p.attribute, "value")
+                if v is not None:
+                    shape_arr = numpy_helper.to_array(v.t)
+                    const_node_name = p.name
+
+        if shape_arr is None:
+            reasons.append("Reshape shape must be constant")
+            return Match(False, self.name, covered, reasons)
+
+        vec = [int(x) for x in shape_arr.flatten()]
+        if len(vec) != 4:
+            reasons.append(f"Expected 4D shape, got {vec}")
+            return Match(False, self.name, covered, reasons)
+
+        covered.add(anchor_node.name)
+        if const_node_name:
+            covered.add(const_node_name)
+        return Match(True, self.name, covered, reasons)
+class MulPattern(Pattern):
+    """Accept any Mul node."""
+    name = "Mul(x, y)"
+    anchor_op = "Mul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        covered = {anchor_node.name}
+        return Match(True, self.name, covered, [])
+class SoftmaxQuantPattern(Pattern):
+    name = "Softmax(Quant(x))"
+    anchor_op = "Softmax"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.output) < 1:
+            reasons.append("Softmax has no output")
+            return Match(False, self.name, covered, reasons)
+
+        for node in model.graph.node:
+            if anchor_node.output[0] in node.input:
+                if node.op_type in ("Quant", "IntQuant"):
+                    if check_act_quant(model, node, []):
+                        covered.update({anchor_node.name, node.name})
+                        return Match(True, self.name, covered, reasons)
+                break
+
+        reasons.append("Softmax output must be consumed by activation Quant")
+        return Match(False, self.name, covered, reasons)
+class TransposeQuantPattern(Pattern):
+    name = "Transpose(Quant(x))"
+    anchor_op = "Transpose"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.output) < 1:
+            reasons.append("Transpose has no output")
+            return Match(False, self.name, covered, reasons)
+
+        for node in model.graph.node:
+            if anchor_node.output[0] in node.input:
+                if node.op_type in ("Quant", "IntQuant"):
+                    if check_act_quant(model, node, []):
+                        covered.update({anchor_node.name, node.name})
+                        return Match(True, self.name, covered, reasons)
+                break
+
+        reasons.append("Transpose output must be consumed by activation Quant")
+        return Match(False, self.name, covered, reasons)
+class SoftmaxPattern(Pattern):
+    """Accept any Softmax node."""
+    name = "Softmax(x)"
+    anchor_op = "Softmax"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        covered = {anchor_node.name}
+        return Match(True, self.name, covered, [])
+class TransposePattern(Pattern):
+    """Accept any Transpose node."""
+    name = "Transpose(x)"
+    anchor_op = "Transpose"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        covered = {anchor_node.name}
+        return Match(True, self.name, covered, [])    
+class TransposeMatMulQuantExclude(Pattern):
+    """
+    Matches:
+    MatMul
+     - Quant(Transpose(Quant(x)))   ← outer Quant wraps Transpose
+     - Quant(y)
+    """
+    name = "MatMul(Quant(Transpose(Quant(x))), Quant(y))"
+    anchor_op = "MatMul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        a, b = anchor_node.input
+        pa = model.find_producer(a)
+        pb = model.find_producer(b)
+
+        # identify which side has Quant(Transpose(Quant(x)))
+        quant_out = None
+        other_prod = None
+        trans = None
+        quant_in = None
+
+        for side_prod, other_tensor in [(pa, b), (pb, a)]:
+            if side_prod is None:
+                continue
+            if side_prod.op_type not in ("Quant", "IntQuant"):
+                continue
+            t = model.find_producer(side_prod.input[0])
+            if t is None or t.op_type != "Transpose":
+                continue
+            qi = model.find_producer(t.input[0])
+            if qi is None or qi.op_type not in ("Quant", "IntQuant"):
+                continue
+            quant_out = side_prod
+            trans = t
+            quant_in = qi
+            other_prod = model.find_producer(other_tensor)
+            break
+
+        if quant_out is None:
+            reasons.append(
+                "No Quant(Transpose(Quant(x))) chain found on either MatMul input"
+            )
+            return Match(False, self.name, covered, reasons)
+
+        if not check_act_quant(model, quant_out, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        if not check_attribute(trans, "perm", [0, 1, 3, 2], reasons):
+            return Match(False, self.name, covered, reasons)
+
+        if not (check_act_quant(model, quant_in, []) or
+                check_params_quant(model, quant_in, [])):
+            reasons.append("Transpose input must be produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        if other_prod is None or not (
+            check_act_quant(model, other_prod, []) or
+            check_params_quant(model, other_prod, [])
+        ):
+            reasons.append("Other MatMul input must be produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({
+            anchor_node.name,
+            quant_out.name,
+            trans.name,
+            quant_in.name,
+            other_prod.name,
+        })
+
+        # boundary guard
+        graph_output_names = {o.name for o in model.graph.output}
+        is_boundary = any(o in graph_output_names for o in anchor_node.output)
+        if not is_boundary:
+            for out in anchor_node.output:
+                for c in (model.find_consumers(out) or []):
+                    if c.op_type in ("Reshape", "Transpose", "Flatten"):
+                        if any(co in graph_output_names for co in c.output):
+                            is_boundary = True
+                            break
+
+        if is_boundary:
+            covered.discard(anchor_node.name)
+        logger.info(f"MatMul pattern covered: {covered}")
+        return Match(True, self.name, covered, reasons)
+class ReshapeQuant(Pattern):
+    """
+    Matches Reshape(Quant(x)) with a constant 4D spatial shape.
+    If the Reshape output feeds a graph output directly,
+    the Reshape itself is excluded from covered so it stays CPU-side,
+    leaving the upstream Quant as the last FPGA node.
+    """
+    name = "Reshape 4D spatial"
+    anchor_op = "Reshape"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 2:
+            return Match(False, self.name, covered, ["Reshape missing shape input"])
+
+        # data input must come from activation Quant
+        actq = model.find_producer(anchor_node.input[0])
+        if actq is None or not check_act_quant(model, actq, reasons):
+            reasons.append(
+                "Reshape input must be produced by supported activation Quant/IntQuant"
+            )
+            return Match(False, self.name, covered, reasons)
+
+        # shape must be a constant 4D vector
+        shape_input = anchor_node.input[1]
+        shape_arr = None
+        const_node_name = None
+
+        init = get_by_name(model.graph.initializer, shape_input)
+        if init is not None:
+            shape_arr = numpy_helper.to_array(init)
+        else:
+            p = model.find_producer(shape_input)
+            if p is not None and p.op_type == "Constant":
+                v = get_by_name(p.attribute, "value")
+                if v is not None:
+                    shape_arr = numpy_helper.to_array(v.t)
+                    const_node_name = p.name
+
+        if shape_arr is None:
+            reasons.append("Reshape shape must be a constant initializer or Constant node")
+            return Match(False, self.name, covered, reasons)
+
+        vec = [int(x) for x in shape_arr.flatten()]
+        if len(vec) != 4:
+            reasons.append(f"Expected 4D shape, got {vec}")
+            return Match(False, self.name, covered, reasons)
+
+        covered.add(actq.name)
+        if const_node_name:
+            covered.add(const_node_name)
+
+        # boundary guard: if Reshape feeds graph output, exclude self from covered
+        graph_output_names = {o.name for o in model.graph.output}
+        is_boundary = any(o in graph_output_names for o in anchor_node.output)
+        if not is_boundary:
+            covered.add(anchor_node.name)
+
+        return Match(True, self.name, covered, reasons)
+class MatMulQuantQuantPattern(Pattern):
+    name = "MatMul(Quant(x), Quant(y))"
+    anchor_op = "MatMul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        pa = model.find_producer(anchor_node.input[0]) 
+        pb = model.find_producer(anchor_node.input[1])
+
+        a_ok = pa is not None and (
+            check_act_quant(model, pa, []) or check_params_quant(model, pa, [])
+        )
+        b_ok = pb is not None and (
+            check_act_quant(model, pb, []) or check_params_quant(model, pb, [])
+        )
+
+        if not a_ok:
+            reasons.append("MatMul input A not produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+        if not b_ok:
+            reasons.append("MatMul input B not produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({pa.name, pb.name})
+
+        # Exclude self if output goes to graph output OR to a Reshape/Transpose
+        # that itself goes to a graph output (i.e. MatMul is a boundary node)
+        graph_output_names = {o.name for o in model.graph.output}
+
+        is_boundary = any(o in graph_output_names for o in anchor_node.output)
+
+        if not is_boundary:
+            # check if all consumers are boundary non-Quant ops
+            for out in anchor_node.output:
+                consumers = model.find_consumers(out)
+                if consumers:
+                    for c in consumers:
+                        if c.op_type in ("Reshape", "Transpose", "Flatten"):
+                            if any(co in graph_output_names for co in c.output):
+                                is_boundary = True
+                                break
+
+        if not is_boundary:
+            covered.add(anchor_node.name)
+        logger.info(f"MatMul pattern covered: {covered}")
+        return Match(True, self.name, covered, reasons)
+class ReshapeAfterMatMulPattern(Pattern):
+    """
+    Matches Reshape(MatMul(...)) where the MatMul inputs are Quant nodes.
+    Since MatMul is not a Quant, ReshapeSpatialPattern rejects this.
+    Excludes both Reshape and MatMul from covered — they stay CPU-side.
+    Only the upstream Quant nodes are covered (last FPGA nodes).
+    Used when Reshape is the final graph output node.
+    """
+    name = "Reshape(MatMul(Quant(x), Quant(y))) boundary"
+    anchor_op = "Reshape"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 1:
+            return Match(False, self.name, covered, ["Reshape missing input"])
+
+        # only fire when Reshape feeds graph output
+        graph_output_names = {o.name for o in model.graph.output}
+        if not any(o in graph_output_names for o in anchor_node.output):
+            reasons.append("Reshape does not feed a graph output — not a boundary node")
+            return Match(False, self.name, covered, reasons)
+
+        # data input must come from MatMul
+        matmul = model.find_producer(anchor_node.input[0])
+        if matmul is None or matmul.op_type != "MatMul":
+            reasons.append("Reshape input not produced by MatMul")
+            return Match(False, self.name, covered, reasons)
+
+        if len(matmul.input) != 2:
+            reasons.append(f"MatMul expects 2 inputs, got {len(matmul.input)}")
+            return Match(False, self.name, covered, reasons)
+
+        pa = model.find_producer(matmul.input[0])
+        pb = model.find_producer(matmul.input[1])
+
+        a_ok = pa is not None and (
+            check_act_quant(model, pa, []) or check_params_quant(model, pa, [])
+        )
+        b_ok = pb is not None and (
+            check_act_quant(model, pb, []) or check_params_quant(model, pb, [])
+        )
+
+        if not a_ok:
+            reasons.append("MatMul input A not produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+        if not b_ok:
+            reasons.append("MatMul input B not produced by supported Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        # cover only the upstream Quants — NOT MatMul, NOT Reshape
+        covered.update({pa.name, pb.name})
+        return Match(True, self.name, covered, reasons)
+class TransposeMatMulQuantPattern(Pattern):
+    """
+    Matches:
+    MatMul
+     ├── Transpose(Quant(x))   ← Quant is first inside partition
+     └── Quant(y)
+    """
+    name = "MatMul(Transpose(Quant(x)), Quant(y))"
+    anchor_op = "MatMul"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) != 2:
+            return Match(False, self.name, covered,
+                         [f"MatMul expects 2 inputs, got {len(anchor_node.input)}"])
+
+        a, b = anchor_node.input
+        pa = model.find_producer(a)
+        pb = model.find_producer(b)
+        # DEBUG
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] MatMul {anchor_node.name}: input A={a} producer={pa.op_type if pa else None}, input B={b} producer={pb.op_type if pb else None}")
+        # find which side has Transpose(Quant)
+        trans = None
+        quant_in = None
+        other_prod = None
+
+        for side_prod, other_tensor in [(pa, b), (pb, a)]:
+            if side_prod is None or side_prod.op_type != "Transpose":
+                continue
+            qi = model.find_producer(side_prod.input[0])
+            if qi is None or qi.op_type not in ("Quant", "IntQuant"):
+                continue
+            trans = side_prod
+            quant_in = qi
+            other_prod = model.find_producer(other_tensor)
+            break
+
+        if trans is None:
+            reasons.append("No Transpose(Quant(x)) on either input")
+            return Match(False, self.name, covered, reasons)
+
+        if not (check_act_quant(model, quant_in, []) or
+                check_params_quant(model, quant_in, [])):
+            reasons.append("Quant under Transpose is not valid")
+            return Match(False, self.name, covered, reasons)
+
+        if other_prod is None or not (
+            check_act_quant(model, other_prod, []) or
+            check_params_quant(model, other_prod, [])
+        ):
+            reasons.append("Other MatMul input not produced by Quant/IntQuant")
+            return Match(False, self.name, covered, reasons)
+
+        covered.update({anchor_node.name, trans.name, quant_in.name, other_prod.name})
+
+        # boundary guard
+        graph_output_names = {o.name for o in model.graph.output}
+        is_boundary = any(o in graph_output_names for o in anchor_node.output)
+        if not is_boundary:
+            for out in anchor_node.output:
+                for c in (model.find_consumers(out) or []):
+                    if c.op_type in ("Reshape", "Transpose", "Flatten"):
+                        if any(co in graph_output_names for co in c.output):
+                            is_boundary = True
+                            break
+        if is_boundary:
+            covered.discard(anchor_node.name)
+
+        return Match(True, self.name, covered, reasons)
+    
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     #"Add": [AddQuant()],
     #"Concat": [ConcatQuantSameParamsAxis1()],
     #"Flatten": [FlattenFCOnly()],
-    "Reshape": [ReshapeFCOnly()],
+    "Reshape": [ReshapeFCOnly(), ReshapeQuant(),ReshapeAfterMatMulPattern()],
     #"HardSigmoid": [HardSigmoidQuant()],
     #"LeakyRelu": [LeakyReluQuant()],
     #"Relu": [ReluQuantOrFusable()],
     #"Sigmoid": [SigmoidQuant()],
     #"Swish": [SwishQuant()],
-    "Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
+    #"Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
     "IntQuant": [IntQuantNodePattern()],
-    "Quant": [QuantNodePattern()],
+    "Quant": [QuantNodePattern(debug_allowlist={"Quant_9"})],
     #"AveragePool": [AveragePoolQuantPattern()],
     #"Conv": [ConvQuantPattern()],  # debug allowlist by node name prefix
     #"Gemm": [GemmQuantPattern()],
     #"GlobalMaxPool": [GlobalMaxPoolQuantPattern()],
     #"GlobalAveragePool": [GlobalAveragePoolQuantPattern()],
     #"MaxPool": [MaxPoolQuantPattern()],
-    "Mul": [MulHardSigmoidTimesConst(), MulQuantized()],  # order = priority
+    #"Mul": [MulHardSigmoidTimesConst(), MulQuantized(), MulPattern()],  # order = priority
     #"Resize": [ResizeQuantUpsampleNearestAsymmetric()],
-    "MatMul": [FusedSoftmaxTransposeMatmul()],
+    "MatMul": [TransposeMatMulQuantExclude()],
+    #"MatMul": [MatMulQuantQuantPattern()],
+    #"Transpose": [TransposeQuantPattern(), TransposePattern()],
+    #"Softmax": [SoftmaxPattern()],
 }
 
 def match_supported_patterns(model, node) -> Match:
@@ -1397,7 +2094,7 @@ class SupportedPartition(Transformation):
 
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
-        
+    
         fpga_nodes = self.__repair_convexity_remove_reentries(model, fpga_nodes)
 
         # Build adjacency list between FPGA nodes

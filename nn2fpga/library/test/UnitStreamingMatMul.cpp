@@ -12,7 +12,7 @@
 
 using TInputWordA = std::array<test_config::TInputA, test_config::W_PAR>;
 using TInputWordB = std::array<test_config::TInputB, test_config::W_PAR>;
-using TOutputWord = ap_axis<test_config::CH_PAR * test_config::OUTPUT_DATAWIDTH, 0, 0, 0>;
+using TOutputWord = ap_axiu<test_config::CH_PAR * test_config::OUTPUT_DATAWIDTH, 0, 0, 0>;
 
 void wrap_run(hls::stream<TInputWordA> in_data_A[test_config::CH_PAR],
               hls::stream<TInputWordB> in_data_B[test_config::CH_PAR],
@@ -43,7 +43,7 @@ bool test_run() {
         for (int i_ch = 0; i_ch < (int)test_config::CH_PAR; i_ch++) {
           TInputWordA pktA;
           for (int i_w = 0; i_w < (int)test_config::W_PAR; i_w++){
-            pktA[i_w] = test_config::input_tensor0[0][ch + i_ch][r][k + i_w];
+            pktA[i_w] = test_config::input_tensor0[0][ch + i_ch][r][k + i_w]; //2*400*32
           }
           in_data_A[i_ch].write(pktA);
         }
@@ -52,7 +52,7 @@ bool test_run() {
   }
 
   // Stream B: read at r==0, order: j → k (step W_PAR) → i_ch
-  // local_B[j][i_ch][k] = B[0][i_ch][k][j]  ← k/j transposed
+  // local_B[j][i_ch][k] = B[0][i_ch][k][j]  ← k/j transposed 1*2*32*400
   for (int j = 0; j < (int)test_config::IN_WIDTH_B; j++) {
     for (int k = 0; k < (int)test_config::IN_WIDTH_A; k += test_config::W_PAR) {
       

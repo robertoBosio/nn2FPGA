@@ -210,7 +210,8 @@ private:
             // Write output packet for this ch group when dot-product complete
             if (k == (int)IN_WIDTH - (int)W_PAR) {
                 for (int i_ch = 0; i_ch < (int)CH_PAR; i_ch++) {
-                    pktOut_reg.data.range((i_ch * 8) + 7, i_ch * 8) = q(acc[ch + i_ch]);
+                    constexpr int OBW = TOutput::width;
+                    pktOut_reg.data.range((i_ch * OBW) + 7, i_ch * OBW) = q(acc[ch + i_ch]);
                 }
                 pktOut_reg.keep = -1;
                 pktOut_reg.last = (ch + (int)CH_PAR == (int)IN_CH &&

@@ -1,7 +1,7 @@
 [project]
 top_name = "attention"
 onnx_path = "/workspace/NN2FPGA/models/onnx/attention_test_quant_clean.onnx"
-project_root = "/workspace/NN2FPGA/work/attention_test"
+project_root = "./work/attention_test"
 hls_version = 2025.2
 
 [platform]

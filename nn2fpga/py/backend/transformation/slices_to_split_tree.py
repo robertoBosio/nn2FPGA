@@ -1,3 +1,5 @@
+from pyexpat import model
+
 import onnx
 import numpy as np
 from onnx import helper, numpy_helper

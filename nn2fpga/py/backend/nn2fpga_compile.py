@@ -1,6 +1,7 @@
 import os
 import logging
 import copy
+from venv import logger
 import numpy as np
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.core.modelwrapper import ModelWrapper
@@ -83,35 +84,41 @@ def nn2fpga_compile(config_dict: dict):
     model = model.transform(transformation.SplitConcat())
     model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
-
-    # Extract implementable partition.
+    model.save("after_propagate_quant.onnx") 
     nn2fpga_model = model.transform(
         transformation.SupportedPartition(config_dict["prj_root"])
     )
-    exit(0)
+    nn2fpga_model.save("after_supported_partition.onnx")
     # Insert custom nodes.
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
+    
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveSqueeze())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
-
+   
+    #exit(0)
+   
     # Handle quantization.
     if config_dict["steps"].get("OptimizeBitwidth", True):
         nn2fpga_model = nn2fpga_model.transform(transformation.OptimizeBitwidth())
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
+    nn2fpga_model.save("before_LowerToNN2FPGALayers.onnx")
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
+    nn2fpga_model.save("after_LowerToNN2FPGALayers.onnx")
+    nn2fpga_model = nn2fpga_model.transform(transformation.FoldQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
-
+    exit(0)
     # Start of the backend.
     nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldAsymmetricActQuant())
+   
     nn2fpga_model = nn2fpga_model.transform(
         transformation.BalanceComputation(nn2fpga_root=config_dict["prj_root"])
     )
@@ -120,9 +127,11 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(
         transformation.AdjustStreamingCommunication()
     )
+    nn2fpga_model.save("after_adjust_streaming_communication.onnx")
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
-
+    nn2fpga_model.save("after_infer_quant.onnx")
+    
     # nn2fpga_model.save("dse_baseline.onnx")
     # nn2fpga_model = ModelWrapper("dse_baseline.onnx")
     if config_dict["steps"].get("AddStreamingParams", True):
@@ -132,7 +141,7 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(GiveUniqueNodeNames())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
-
+    
     if config_dict["steps"].get("ComputeFifoDepth", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.ComputeFifoDepth(
@@ -149,7 +158,7 @@ def nn2fpga_compile(config_dict: dict):
             nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"]
         )
     )
-
+    
     # Simulate the model to check correctness.
     if config_dict["steps"].get("Simulate", True):
         model.save("final_model_before_sim.onnx")

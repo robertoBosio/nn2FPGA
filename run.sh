@@ -13,7 +13,7 @@ XILINX_VERSION="2025.1"
 DATASET_DIR="/home-ssd/datasets"
 WORKSPACE_ROOT_DIR="/workspace"
 CONTAINER_NAME="nn2fpga-container-${USERNAME}"
-WORK_DIR="/home/roberto/Documents/nn2FPGA-work"
+WORK_DIR="/home-ssd/stephanop/NN2FPGA/work"
 
 # Per-user home dir for the container (on the host)
 DOCKER_HOME_DIR="$(pwd)/.docker_home_${USERNAME}"

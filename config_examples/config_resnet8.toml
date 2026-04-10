@@ -1,7 +1,7 @@
 [project]
 top_name = "resnet8"
 onnx_path = "/workspace/NN2FPGA/models/onnx/resnet8_a8w8b16.onnx"
-project_root = "/workspace/NN2FPGA/work/resnet8"
+project_root = "./work/NN2FPGA/work/resnet8"
 hls_version = 2025.2
 
 [platform]

@@ -25,6 +25,7 @@ from backend.custom_op.streamingswish import StreamingSwish
 from backend.custom_op.streamingupsample import StreamingUpsample
 from backend.custom_op.streamtonhwc import StreamToNHWC
 from backend.custom_op.tensorduplicator import TensorDuplicator
+from backend.custom_op.streamingmatmul import StreamingMatMul #streamingmatmul
 
 custom_op = {
     "BandwidthAdjustDecreaseChannels": BandwidthAdjustDecreaseChannels,
@@ -54,4 +55,5 @@ custom_op = {
     "StreamingUpsample": StreamingUpsample,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
+    "StreamingMatMul": StreamingMatMul, #streamingmatmul
 }
