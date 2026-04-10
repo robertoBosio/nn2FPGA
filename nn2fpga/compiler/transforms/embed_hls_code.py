@@ -43,7 +43,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                     rel_path = rel_path.replace(os.sep, "/")
                     if "testbench" not in rel_path:
                         cwr.include(rel_path)
-    
+
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
     function.add_code("#pragma HLS TOP")
@@ -71,7 +71,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
-    
+
     stream_vars = {}
     for fifo in model.graph.value_info:
 
@@ -85,7 +85,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                 array=tensor_fifo.n_array,
             )
             stream_vars[trimmed_name] = (var, [1] * tensor_fifo.n_array)
-    
+
     for fifo in model.graph.value_info:
 
         # Read the index in the array from the name of the fifo.
@@ -96,6 +96,12 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
         index = int(m.group(2))
         if base_name not in stream_vars:
             raise ValueError(f"Stream {base_name} not found in stream_vars.")
+
+        # Checks that the fifo name does not start with a digit, as Vitis HLS
+        # does not allow it in the variable name.
+        if re.match(r"^\d", base_name):
+            raise ValueError(f"Stream name {base_name} cannot start with a digit.")
+
         tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
         var, arr = stream_vars[base_name]
         arr[index] = tensor_fifo.depth
@@ -135,7 +141,6 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
             else:
                 function.add_code(f'std::cout << "{trimmed_name}," << {base_name}[{index}].size() << std::endl;')
             function.add_code(f'#endif') 
-
 
     cwr.add_function_definition(function)
     return cwr.code

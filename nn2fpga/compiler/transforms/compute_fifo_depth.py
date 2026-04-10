@@ -121,6 +121,11 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     stream_vars = []
     stream_count = len(model.graph.value_info)
     for fifo in model.graph.value_info:
+        
+        # Checks that the fifo name does not start with a digit, as Vitis HLS
+        # does not allow it in the variable name.
+        if re.match(r"^\d", fifo.name):
+            raise ValueError(f"Stream name {fifo.name} cannot start with a digit.")
 
         # Declare the array of streams only for the first stream of the array.
         if fifo.name.endswith("_0_"):
