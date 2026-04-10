@@ -105,8 +105,8 @@ def check_config(config_dict: dict):
     if not config_dict["xilinx_version"].replace('.', '', 1).isdigit():
         raise ValueError("Invalid 'xilinx_version' in configuration. It must be a string representing a version number (e.g., '2024.2').")
 
-    if config_dict["simulation"] not in ["csim", "cosim"]:
-        raise ValueError("Invalid 'simulation' option. It must be either 'csim' or 'cosim'.")
+    if config_dict["simulation"] not in ["csim", "cosim", "export"]:
+        raise ValueError("Invalid 'simulation' option. It must be either 'csim', 'cosim', or 'export'.")
 
 def main():
     parser = argparse.ArgumentParser(

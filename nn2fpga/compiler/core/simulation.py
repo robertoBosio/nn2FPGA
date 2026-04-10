@@ -71,8 +71,9 @@ def dump_tcl_script(
             f"create_clock -period {t_clk}",
             "config_compile -pipeline_style flp",
             f'csim_design -argv "{argv}"',
-            f"{csynth_command}" if simulation_type == "cosim" else "",
+            f"{csynth_command}" if simulation_type in ["cosim", "export"] else "",
             f'cosim_design -argv "{argv}"' if simulation_type == "cosim" else "",
+            f'export_design -flow syn' if simulation_type == "export" else "",
             "exit",
         ]
     )
