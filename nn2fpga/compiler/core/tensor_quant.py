@@ -185,7 +185,7 @@ class TensorQuant:
     @staticmethod
     def from_canonical_name(s):
         m = re.fullmatch(
-            r"Q\[(\d+),(0|1),([0-9.eE+-]+),(\d+),(0|1),(\w+)\]",
+            r"Q\[(\d+),(0|1),([0-9.eE+-]+),(-?\d+),(0|1),(\w+)\]",
             s
         )
         if not m:
