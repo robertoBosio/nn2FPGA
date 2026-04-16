@@ -404,3 +404,125 @@ def test_simple_propagate_backward_quant_with_constant():
     ), "Quant node should have been propagated to the output."
     assert len(transformed_model.graph.output) == 1, "The output should still be a single tensor after quantization propagation."
     assert len(transformed_model.graph.input) == 1, "The input should still be a single tensor after quantization propagation."
+
+def test_backward_propagate_quant_with_branching():
+    # Test backward propagation with branching in the graph.
+    input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 3, 224, 224])
+    output_tensor1 = helper.make_tensor_value_info("output1", TensorProto.FLOAT, [1, 3, 224, 112])
+    output_tensor2 = helper.make_tensor_value_info("output2", TensorProto.FLOAT, [1, 3, 224, 112])
+    left_tensor = helper.make_tensor_value_info("left_input", TensorProto.FLOAT, [1, 3, 224, 112])
+
+    start_node = helper.make_node(
+        "Constant",
+        value=helper.make_tensor(
+            name="starts",
+            data_type=TensorProto.INT64,
+            dims=[1],
+            vals=[0]
+        ),
+        outputs=["starts"],
+        inputs=[],
+    )
+
+    end_node = helper.make_node(
+        "Constant",
+        value=helper.make_tensor(
+            name="ends",
+            data_type=TensorProto.INT64,
+            dims=[1],
+            vals=[224]
+        ),
+        outputs=["ends"],
+        inputs=[],
+    )
+
+    axes_node = helper.make_node(
+        "Constant",
+        value=helper.make_tensor(
+            name="axes",
+            data_type=TensorProto.INT64,
+            dims=[1],
+            vals=[-1]
+        ),
+        outputs=["axes"],
+        inputs=[],
+    )
+
+    step_node = helper.make_node(
+        "Constant",
+        value=helper.make_tensor(
+            name="step",
+            data_type=TensorProto.INT64,
+            dims=[1],
+            vals=[2]
+        ),
+        outputs=["step"],
+        inputs=[],
+    )
+
+    slice_node = helper.make_node(
+        "Slice",
+        inputs=["input", "starts", "ends", "axes", "step"],
+        outputs=["sliced_input"],
+        name="slice_node"
+    )
+
+    identity_node_right = helper.make_node(
+        "Identity",
+        inputs=["sliced_input"],
+        outputs=["right_output"],
+        name="identity_node2"
+    )
+
+    identity_node_left = helper.make_node(
+        "Identity",
+        inputs=["sliced_input"],
+        outputs=["left_output"],
+        name="identity_node3"
+    )
+
+    quant_node1 = helper.make_node(
+        "Quant",
+        inputs=["right_output", "scale", "zero_point", "bitwidth"],
+        outputs=["output1"],
+        domain="qonnx.custom_op.general",
+        name="quantize_node1",
+        signed=1,
+        narrow=0,
+        rounding_mode="ROUND",
+    )
+
+    quant_node2 = helper.make_node(
+        "Quant",
+        inputs=["left_output", "scale", "zero_point", "bitwidth"],
+        outputs=["output2"],
+        domain="qonnx.custom_op.general",
+        name="quantize_node2",
+        signed=1,
+        narrow=0,
+        rounding_mode="ROUND",
+    )
+
+    graph = helper.make_graph(
+        [slice_node, identity_node_right, identity_node_left, quant_node1, quant_node2, start_node, end_node, axes_node, step_node],
+        "test_graph",
+        [input_tensor],
+        [output_tensor1, output_tensor2],
+        initializer=[
+            helper.make_tensor("scale", TensorProto.FLOAT, [1], [0.1]),
+            helper.make_tensor("zero_point", TensorProto.INT8, [1], [0]),
+            helper.make_tensor("bitwidth", TensorProto.INT32, [1], [8]),
+        ],
+        value_info=[left_tensor]
+    )
+
+    model = qonnx_make_model(graph, producer_name="test_producer")
+    model = ModelWrapper(model)
+
+    # Apply the PropagateQuant transformation
+    transformed_model = model.transform(PropagateQuant())
+
+    # Check if the quantization was propagated correctly
+    assert (
+        len(transformed_model.get_nodes_by_op_type("Quant")) == 4
+    ), "Quant nodes should have been propagated to the outputs."
