@@ -1772,6 +1772,7 @@ class ReshapeAfterMatMulPattern(Pattern):
         # cover only the upstream Quants — NOT MatMul, NOT Reshape
         covered.update({pa.name, pb.name})
         return Match(True, self.name, covered, reasons)
+        
 class TransposeMatMulQuantPattern(Pattern):
     """
     Matches:
@@ -1850,7 +1851,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     #"Add": [AddQuant()],
     #"Concat": [ConcatQuantSameParamsAxis1()],
     #"Flatten": [FlattenFCOnly()],
-    "Reshape": [ReshapeFCOnly(), ReshapeQuant(),ReshapeAfterMatMulPattern()],
+    # "Reshape": [ReshapeFCOnly(), ReshapeQuant(),ReshapeAfterMatMulPattern()],
     #"HardSigmoid": [HardSigmoidQuant()],
     #"LeakyRelu": [LeakyReluQuant()],
     #"Relu": [ReluQuantOrFusable()],
@@ -1858,7 +1859,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     #"Swish": [SwishQuant()],
     #"Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
     "IntQuant": [IntQuantNodePattern()],
-    "Quant": [QuantNodePattern(debug_allowlist={"Quant_9"})],
+    "Quant": [QuantNodePattern(debug_allowlist={"Quant_4", "Quant_7", "Quant_5"})],
     #"AveragePool": [AveragePoolQuantPattern()],
     #"Conv": [ConvQuantPattern()],  # debug allowlist by node name prefix
     #"Gemm": [GemmQuantPattern()],
@@ -1869,7 +1870,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     #"Resize": [ResizeQuantUpsampleNearestAsymmetric()],
     "MatMul": [TransposeMatMulQuantExclude()],
     #"MatMul": [MatMulQuantQuantPattern()],
-    #"Transpose": [TransposeQuantPattern(), TransposePattern()],
+    "Transpose": [TransposeQuantPattern(), TransposePattern()],
     #"Softmax": [SoftmaxPattern()],
 }
 

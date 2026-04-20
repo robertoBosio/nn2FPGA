@@ -1,17 +1,24 @@
-from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import SortGraph
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+from onnx import NodeProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import (
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
+    SortGraph,
 )
-from onnx import helper, NodeProto
+
 import backend.transformation as transformation
 from backend.core.tensor_quant import TensorQuant
-import copy
-import logging
+
 logger = logging.getLogger(__name__)
+
+QUANT_NODE_TYPES = {"IntQuant", "Quant"}
 
 QUANT_INVARIANT_NODES = [
     "BandwidthAdjustDecreaseChannels",  # nn2FPGA
@@ -37,264 +44,334 @@ QUANT_INVARIANT_NODES = [
     "Transpose",
 ]
 
+
+def _initializer_names(model: ModelWrapper) -> set[str]:
+    """Return the set of initializer tensor names in the model."""
+    return {init.name for init in model.model.graph.initializer}
+
+
+def _graph_output_names(model: ModelWrapper) -> set[str]:
+    """Return the set of graph output tensor names."""
+    return {out.name for out in model.graph.output}
+
+
 def get_non_constant_inputs(node: NodeProto, model: ModelWrapper) -> list[str]:
-    """Get non-constant inputs of a node."""
-    init_dict = [init.name for init in model.model.graph.initializer]
-    not_constant_inputs = []
+    """Return the non-constant inputs of a node.
+
+    Initializers and outputs of Constant nodes are excluded.
+    """
+    init_names = _initializer_names(model)
+    non_constant_inputs: list[str] = []
+
     for inp in node.input:
-        if inp in init_dict:
+        if inp in init_names:
             continue
-        node = model.find_producer(inp)
-        if node is not None and node.op_type == "Constant":
+
+        producer = model.find_producer(inp)
+        if producer is not None and producer.op_type == "Constant":
             continue
-        not_constant_inputs.append(inp)
-    return not_constant_inputs
+
+        non_constant_inputs.append(inp)
+
+    return non_constant_inputs
+
 
 def get_non_constant_outputs(node: NodeProto, model: ModelWrapper) -> list[str]:
-    """Get non-constant outputs of a node."""
-    init_dict = [init.name for init in model.model.graph.initializer]
-    not_constant_outputs = []
-    for out in node.output:
-        if out in init_dict:
-            continue
-        node = model.find_producer(out)
-        if node is not None and node.op_type == "Constant":
-            continue
-        not_constant_outputs.append(out)
-    return not_constant_outputs
+    """Return the non-initializer outputs of a node.
+
+    In practice, normal computational node outputs are not initializers, but this
+    helper keeps the filtering symmetric with get_non_constant_inputs.
+    """
+    init_names = _initializer_names(model)
+    return [out for out in node.output if out not in init_names]
+
+
+def _all_nodes_have_same_quant(
+    quant_nodes: list[NodeProto], model: ModelWrapper
+) -> TensorQuant | None:
+    """Return the shared TensorQuant if all nodes have identical quant params."""
+    if not quant_nodes:
+        return None
+
+    if not all(node.op_type in QUANT_NODE_TYPES for node in quant_nodes):
+        return None
+
+    reference_quant = TensorQuant.from_quant_node(quant_nodes[0], model)
+    if all(TensorQuant.from_quant_node(node, model) == reference_quant for node in quant_nodes):
+        return reference_quant
+
+    return None
+
+
+def _record_quant_proposal(
+    tensor_name: str,
+    reference_quant: TensorQuant,
+    proposed_quant_nodes: dict[str, str],
+    conflicted_tensors: set[str],
+) -> None:
+    """Record a proposed quantization for a tensor, tracking conflicts explicitly."""
+    if tensor_name in conflicted_tensors:
+        return
+
+    new_quant_canonical = reference_quant.get_canonical_name()
+    existing_quant_canonical = proposed_quant_nodes.get(tensor_name)
+
+    if existing_quant_canonical is None:
+        proposed_quant_nodes[tensor_name] = new_quant_canonical
+        return
+
+    if existing_quant_canonical != new_quant_canonical:
+        logger.warning(
+            "Conflict in proposed quantization for tensor %s: existing quantization %s "
+            "vs new quantization %s. Skipping propagation for this tensor.",
+            tensor_name,
+            existing_quant_canonical,
+            new_quant_canonical,
+        )
+        proposed_quant_nodes.pop(tensor_name, None)
+        conflicted_tensors.add(tensor_name)
+
 
 def forward_propagate_quantization(
-    producers: list[NodeProto],
-    consumers: list[NodeProto],
+    producers: list[NodeProto | None],
+    consumers: list[NodeProto | None],
     node: NodeProto,
     model: ModelWrapper,
-) -> list[NodeProto] | None:
+    proposed_quant_nodes: dict[str, str],
+    conflicted_tensors: set[str],
+) -> None:
+    """Propose quantization on node outputs from quantized node inputs.
+
+    Propagation is allowed when:
+    - all non-constant input producers exist and are quant nodes
+    - all such quant nodes have identical quantization parameters
+    - none of the output consumers are quant nodes
     """
-    Try to propagate quantization forward from producer nodes to consumer nodes.
-    This function checks if all producer nodes are quantized with the same parameters and if none of the consumer nodes are quantized.
-    If these conditions are met, it inserts new quantization nodes after the given node, rewires the consumers,
-    and returns the list of newly created quantization nodes.
-    Args:
-        producers (list[NodeProto]): List of producer nodes that provide inputs to the current node.
-        consumers (list[NodeProto]): List of consumer nodes that use outputs from the current node.
-        node (NodeProto): The current node in the graph where quantization propagation is considered.
-        model (ModelWrapper): The model wrapper containing the graph and related utilities.
-    Returns:
-        list[NodeProto] | None: List of newly created quantization nodes if propagation is possible, otherwise None.
-    """
+    if not producers or any(producer is None for producer in producers):
+        return
 
-    # The behavior when there is a producer which is None (i.e. an input) should
-    # be defined in the future, but for now we avoid it.
-    if len(producers) == 0 or any(p is None for p in producers):
-        return None
-
-    # To propagate forward a quantization, all the inputs must be quantized
-    # and with the same quantization parameters, while the consumers must not be quantized
-    if not all(
-        p.op_type in ["IntQuant", "Quant"] for p in producers
-    ):
-        # If not all producers are quantized, we cannot propagate quantization
-        return None
-
-    quant_node = producers[0]
-    reference_quant = TensorQuant.from_quant_node(quant_node, model)
-    if not all(
-        TensorQuant.from_quant_node(p, model) == reference_quant
-        for p in producers
-    ):
-        # If producers are not quantized with the same parameters, we cannot propagate quantization
-        return None
+    quantized_producers = [producer for producer in producers if producer is not None]
+    reference_quant = _all_nodes_have_same_quant(quantized_producers, model)
+    if reference_quant is None:
+        return
 
     if any(
-        c.op_type in ["IntQuant", "Quant"] for c in consumers if c is not None
+        consumer is not None and consumer.op_type in QUANT_NODE_TYPES
+        for consumer in consumers
     ):
-        # If any consumers are quantized, we cannot propagate quantization
-        return None
+        return
 
-    # If the producer is quantized and consumers are not, propagate quantization
-    added_quant_nodes = []
-    for out in get_non_constant_outputs(node, model):
-        logger.info(
-            f"Propagating forward quantization of {quant_node.name} to tensor {out}"
+    for output_tensor in get_non_constant_outputs(node, model):
+        _record_quant_proposal(
+            output_tensor,
+            reference_quant,
+            proposed_quant_nodes,
+            conflicted_tensors,
         )
 
-        # Insert new quant node after current node
-        new_output = out + "_quant_forward_propagated"
-        new_quant_node = helper.make_node(
-            quant_node.op_type,
-            inputs=[
-                new_output,
-                quant_node.input[1],
-                quant_node.input[2],
-                quant_node.input[3],
-            ],  # Use the same quantization parameters
-            outputs=[out],
-            name=quant_node.name + "_forward_propagated",
-            domain=quant_node.domain,
-        )
-        for attr in quant_node.attribute:
-            new_quant_node.attribute.append(copy.deepcopy(attr))
-
-        # Rewire the consumer to use the new quantized output
-        for j, node_output in enumerate(node.output):
-            if node_output == out:
-                node.output[j] = new_output
-
-        # Append the new quant node created
-        added_quant_nodes.append(new_quant_node)
-
-    return added_quant_nodes
 
 def backward_propagate_quantization(
-    consumers: list[NodeProto],
-    producers: list[NodeProto],
+    consumers: list[NodeProto | None],
+    producers: list[NodeProto | None],
     node: NodeProto,
     model: ModelWrapper,
-) -> list[NodeProto] | None:
+    proposed_quant_nodes: dict[str, str],
+    conflicted_tensors: set[str],
+) -> None:
+    """Propose quantization on node inputs from quantized node outputs.
+
+    Propagation is allowed when:
+    - all non-constant output consumers exist and are quant nodes
+    - all such quant nodes have identical quantization parameters
+    - none of the input producers are quant nodes
     """
-    Try to propagate quantization backward from consumer nodes to producer nodes.
-    This function checks if all consumer nodes are quantized with the same parameters and if none of the producer nodes are quantized.
-    If these conditions are met, it inserts new quantization nodes before the given node, rewires the producers,
-    and returns the list of newly created quantization nodes.
-    Args:
-        consumers (list[NodeProto]): List of consumer nodes that use outputs from the current node.
-        producers (list[NodeProto]): List of producer nodes that provide inputs to the current node.
-        node (NodeProto): The current node in the graph where quantization propagation is considered.
-        model (ModelWrapper): The model wrapper containing the graph and related utilities.
-    Returns:
-        list[NodeProto] | None: List of newly created quantization nodes if propagation is possible, otherwise None.
-    """
+    if not consumers or any(consumer is None for consumer in consumers):
+        return
 
-    if len(consumers) == 0 or any(c is None for c in consumers):
-        return None
-
-    # To propagate backward a quantization, all the outputs must be quantized
-    # and with the same quantization parameters, while the producers must not be quantized
-    if not all(
-        c.op_type in ["IntQuant", "Quant"] for c in consumers
-    ):
-        # If not all consumers are quantized, we cannot propagate quantization
-        return None
-
-    quant_node = consumers[0]
-    reference_quant = TensorQuant.from_quant_node(quant_node, model)
-    if not all(
-        TensorQuant.from_quant_node(c, model) == reference_quant
-        for c in consumers
-    ):
-        # If consumers are not quantized with the same parameters, we cannot propagate quantization
-        return None
+    quantized_consumers = [consumer for consumer in consumers if consumer is not None]
+    reference_quant = _all_nodes_have_same_quant(quantized_consumers, model)
+    if reference_quant is None:
+        return
 
     if any(
-        p.op_type in ["IntQuant", "Quant"] for p in producers if p is not None
+        producer is not None and producer.op_type in QUANT_NODE_TYPES
+        for producer in producers
     ):
-        # If any producers are quantized, we cannot propagate quantization
-        return None
+        return
 
-    # If the consumers are quantized and producers are not, propagate quantization
-    added_quant_nodes = []
-    for inp in get_non_constant_inputs(node, model):
-        logger.info(
-            f"Propagating backward quantization of {quant_node.name} to tensor {inp}"
+    for input_tensor in get_non_constant_inputs(node, model):
+        _record_quant_proposal(
+            input_tensor,
+            reference_quant,
+            proposed_quant_nodes,
+            conflicted_tensors,
         )
 
-        # Insert new quant node before current node
-        new_quant_output = inp + "_quant_backward_propagated"
+
+def _unique_consumers_for_outputs(
+    output_tensors: list[str], model: ModelWrapper
+) -> list[NodeProto]:
+    """Return a deduplicated list of consumers for the provided output tensors."""
+    consumers: list[NodeProto] = []
+    seen: set[str] = set()
+
+    for tensor_name in output_tensors:
+        for consumer in model.find_consumers(tensor_name):
+            consumer_name = consumer.name if consumer.name != "" else str(id(consumer))
+            if consumer_name in seen:
+                continue
+            seen.add(consumer_name)
+            consumers.append(consumer)
+
+    return consumers
+
+
+def _materialize_quant_node_for_tensor(
+    model: ModelWrapper,
+    tensor_name: str,
+    tensor_quant: TensorQuant,
+) -> NodeProto:
+    """Insert a Quant node for tensor_name and rewire graph edges accordingly."""
+    graph_output_names = _graph_output_names(model)
+
+    scale_name = f"{tensor_name}_quant_scale"
+    zeropt_name = f"{tensor_name}_quant_zero_point"
+    bitwidth_name = f"{tensor_name}_quant_bitwidth"
+    quantized_tensor_name = f"{tensor_name}_quant"
+
+    model.set_initializer(
+        scale_name,
+        np.array([tensor_quant.scale], dtype=np.float32),
+    )
+    model.set_initializer(
+        zeropt_name,
+        np.array([tensor_quant.zeropt], dtype=tensor_quant.get_numpy_dtype()),
+    )
+    model.set_initializer(
+        bitwidth_name,
+        np.array([tensor_quant.bitwidth], dtype=np.int32),
+    )
+
+    if tensor_name not in graph_output_names:
         new_quant_node = helper.make_node(
-            quant_node.op_type,
+            "Quant",
             inputs=[
-                inp,
-                quant_node.input[1],
-                quant_node.input[2],
-                quant_node.input[3],
-            ],  # Use the same quantization parameters
-            outputs=[new_quant_output],
-            name=quant_node.name + "_backward_propagated",
-            domain=quant_node.domain,
+                tensor_name,
+                scale_name,
+                zeropt_name,
+                bitwidth_name,
+            ],
+            outputs=[quantized_tensor_name],
+            name=f"Quant_propagated_{tensor_name}",
+            signed=tensor_quant.signed,
+            narrow=tensor_quant.narrow,
+            rounding_mode=tensor_quant.rounding_mode,
+            domain="qonnx.custom_op.general",
         )
-        for attr in quant_node.attribute:
-            new_quant_node.attribute.append(copy.deepcopy(attr))
 
-        # Rewire the node to use the new quantized inputs
-        for j, node_input in enumerate(node.input):
-            if node_input == inp:
-                node.input[j] = new_quant_output
+        for consumer in model.find_consumers(tensor_name):
+            for idx, inp in enumerate(consumer.input):
+                if inp == tensor_name:
+                    consumer.input[idx] = quantized_tensor_name
 
-        # Append the new quant node created
-        added_quant_nodes.append(new_quant_node)
+        return new_quant_node
 
-    return added_quant_nodes
+    # Special case: preserve the public graph output tensor name.
+    producer = model.find_producer(tensor_name)
+    if producer is not None:
+        for idx, out in enumerate(producer.output):
+            if out == tensor_name:
+                producer.output[idx] = quantized_tensor_name
+
+    new_quant_node = helper.make_node(
+        "Quant",
+        inputs=[
+            quantized_tensor_name,
+            scale_name,
+            zeropt_name,
+            bitwidth_name,
+        ],
+        outputs=[tensor_name],
+        name=f"Quant_propagated_{tensor_name}",
+        signed=tensor_quant.signed,
+        narrow=tensor_quant.narrow,
+        rounding_mode=tensor_quant.rounding_mode,
+        domain="qonnx.custom_op.general",
+    )
+    return new_quant_node
 
 
 class PropagateQuant(Transformation):
-    """Propagate quantization parameters through quantization invariant nodes.
+    """Propagate quantization parameters through quantization-invariant nodes.
 
-    This transformation analyzes nodes that are quantization invariant and propagates quantization
-    parameters either forward (from producers to consumers) or backward (from consumers to producers)
-    through the graph. It inserts new Quant nodes where appropriate, inferring the quantization parameters.
+    This transformation identifies quantization-invariant operators and propagates
+    quantization metadata through them in two directions:
 
-    Forward propagation occurs when all input tensors to a quantization invariant node are quantized with identical parameters,
-    and none of the output tensors are quantized. In this case, quantization is propagated to the outputs.
+    - Forward propagation:
+      if all non-constant inputs are produced by quant nodes with identical
+      parameters, and none of the outputs are already consumed by quant nodes,
+      propose quantization on the outputs.
 
-    Backward propagation occurs when all output tensors from a node are quantized with identical parameters,
-    and none of the input tensors are quantized. In this case, quantization is propagated to the inputs.
+    - Backward propagation:
+      if all non-constant outputs are consumed by quant nodes with identical
+      parameters, and none of the inputs are already produced by quant nodes,
+      propose quantization on the inputs.
 
-    After any changes, the graph is re-sorted and additional transformations are applied to maintain
-    graph integrity, infer shapes, and ensure unique and readable tensor and node names.
-
-    Args:
-        model (ModelWrapper): The model wrapper containing the computational graph.
-
-    Returns:
-        tuple[ModelWrapper, bool]: The transformed model and a boolean indicating if the transformation should be run again.
+    Proposals are collected first, then materialized as Quant nodes in a second pass.
+    Conflicting proposals for the same tensor are dropped.
     """
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         is_changed = False
-        new_quant_nodes = []
 
-        # Iterate through all quantization invariant nodes
-        for node in list(filter(lambda n: n.op_type in QUANT_INVARIANT_NODES, graph.node)):
+        proposed_quant_nodes: dict[str, str] = {}
+        conflicted_tensors: set[str] = set()
 
-            # Retrieve all the producers of the inputs of the current node
-            # removing Quant nodes that have all constat inputs (i.e., weights)
-            producers = [
-                model.find_producer(inp) for inp in get_non_constant_inputs(node, model)
-            ]
+        invariant_nodes = [
+            node for node in graph.node if node.op_type in QUANT_INVARIANT_NODES
+        ]
 
-            # Retrieve all the consumers of the outputs of the current node
-            # removing Quant nodes that have all constant inputs (i.e., weights)
-            # Consumers of a tensor can be multiple nodes, so we collect them in a list
-            consumers = list()
-            for out in get_non_constant_outputs(node, model):
-                consumers.extend(model.find_consumers(out))
+        for node in invariant_nodes:
+            non_constant_inputs = get_non_constant_inputs(node, model)
+            non_constant_outputs = get_non_constant_outputs(node, model)
 
-            quant_forward_nodes = forward_propagate_quantization(
-                producers, consumers, node, model
+            producers = [model.find_producer(inp) for inp in non_constant_inputs]
+            consumers = _unique_consumers_for_outputs(non_constant_outputs, model)
+
+            forward_propagate_quantization(
+                producers=producers,
+                consumers=consumers,
+                node=node,
+                model=model,
+                proposed_quant_nodes=proposed_quant_nodes,
+                conflicted_tensors=conflicted_tensors,
             )
-            if quant_forward_nodes is not None and len(quant_forward_nodes) > 0:
-                new_quant_nodes.extend(quant_forward_nodes)
-
-            quant_backward_nodes = backward_propagate_quantization(
-                consumers, producers, node, model
+            backward_propagate_quantization(
+                consumers=consumers,
+                producers=producers,
+                node=node,
+                model=model,
+                proposed_quant_nodes=proposed_quant_nodes,
+                conflicted_tensors=conflicted_tensors,
             )
-            if quant_backward_nodes is not None and len(quant_backward_nodes) > 0:
-                new_quant_nodes.extend(quant_backward_nodes)
 
-        if new_quant_nodes:
-            # Insert all new quant nodes into the graph
-            graph.node.extend(new_quant_nodes)
+        for tensor_name, quant_canonical in proposed_quant_nodes.items():
+            tensor_quant = TensorQuant.from_canonical_name(quant_canonical)
+            new_quant_node = _materialize_quant_node_for_tensor(
+                model=model,
+                tensor_name=tensor_name,
+                tensor_quant=tensor_quant,
+            )
+            graph.node.append(new_quant_node)
             is_changed = True
 
-            # If any changes were made, sort the graph to maintain a valid topological order
-            model = model.transform(SortGraph())
-        else:
-            # If no changes were made, just ensure the model is sorted and has unique names
-            model = model.transform(SortGraph())
-            model = model.transform(transformation.CustomInferShapes())
-            model = model.transform(GiveUniqueParameterTensors())
-            model = model.transform(GiveUniqueNodeNames())
-            model = model.transform(GiveReadableTensorNames())
+        # Always normalize the graph after this pass. This is especially important
+        # when the graph was modified, but it is also harmless and useful otherwise.
+        model = model.transform(SortGraph())
+        model = model.transform(transformation.CustomInferShapes())
+        model = model.transform(GiveUniqueParameterTensors())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
 
-        return (model, is_changed)
+        return model, is_changed
