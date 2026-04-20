@@ -68,53 +68,36 @@ public:
     return inst;
   }
 
-  void load_bitstream(const std::string &bit, const std::string &hwh,
-                      const nlohmann::json &pkg) {
-
-    // Create overlay files
-    if (std::system("mkdir -p Overlay") != 0) {
-      throw std::runtime_error("Failed to create Overlay directory");
-    }
-    {
-      std::ofstream f("Overlay/design.bit", std::ios::binary);
-      if (!f)
-        throw std::runtime_error("Failed to open bitstream file");
-      f.write(bit.data(), bit.size());
-    }
-    {
-      std::ofstream f("Overlay/design.hwh");
-      if (!f)
-        throw std::runtime_error("Failed to open HWH file");
-      f.write(hwh.data(), hwh.size());
-    }
-
-    // Program PL via PYNQ
-    program_with_pynq_cli_or_throw("pynq_program.py", "Overlay/design.bit");
-
-    // AXI-Lite map
-    mmio_ = map_axil_window(Spec::AXIL_BASE, Spec::AXIL_SIZE);
-
-    // Set FPGA clock
-    float actual_freq =
-        set_pl_from_iopll(static_cast<ZynqPllIndex>(Spec::PllIndex),
-                          Spec::Freq_MHz, Spec::PLLFreq_MHz);
-
-    fprintf(stderr, "FPGA clock set to %.2f MHz (IO PLL: %.2d MHz)\n",
-            actual_freq, Spec::PLLFreq_MHz);
-
-    // Build DMA ports and buffers
-    build_ports();
-
-    // One-shot upload of static inputs (e.g., weights) if provided in pkg
-    upload_static_inputs_from_pkg(pkg);
+  // Ensures that FPGA initialization (bitstream load, DMA setup, etc.) is
+  // performed exactly once per process.
+  //
+  // We use std::call_once to guarantee:
+  //   * thread-safe initialization
+  //   * exactly-once execution across all kernel instances
+  void ensure_loaded(const std::string &bit, const std::string &hwh,
+                     const nlohmann::json &pkg) {
+    std::call_once(init_once_, [&]() {
+      load_bitstream(bit, hwh, pkg);
+      initialized_ = true;
+    });
   }
 
+  // Runs the nn2FPGA kernel on a batch of inputs, producing outputs in host memory.
   void run(const std::vector<const void *> &in_ptrs,
            const std::vector<void *> &out_ptrs, size_t batch) {
-    if (out_ptrs.size() != Spec::Outputs.size())
+
+    // Check that the bitstream has been loaded.
+    if (!initialized_) {
+      throw std::runtime_error("FPGA runner used before initialization");
+    }
+
+    // Basic sanity checks on input/output pointers and batch size.
+    if (out_ptrs.size() != Spec::Outputs.size()) {
       throw std::invalid_argument("wrong #outputs");
-    if (batch == 0 || batch > static_cast<size_t>(Spec::N_MAX))
+    }
+    if (batch == 0 || batch > static_cast<size_t>(Spec::N_MAX)) {
       ORT_CXX_API_THROW("Invalid batch (0 or > N_MAX).", ORT_INVALID_ARGUMENT);
+    }
 
     std::lock_guard<std::mutex> lock(mtx_);
 
@@ -163,12 +146,52 @@ public:
       out_bos_[o].sync(XCL_BO_SYNC_BO_FROM_DEVICE, bytes, 0);
       std::memcpy(out_ptrs[o], out_host_ptrs_[o], bytes);
     }
-
   }
 
 private:
   FpgaRunnerT() : dev_(0) {}
   ~FpgaRunnerT() = default;
+  
+  void load_bitstream(const std::string &bit, const std::string &hwh,
+                      const nlohmann::json &pkg) {
+
+    // Create overlay files
+    if (std::system("mkdir -p Overlay") != 0) {
+      throw std::runtime_error("Failed to create Overlay directory");
+    }
+    {
+      std::ofstream f("Overlay/design.bit", std::ios::binary);
+      if (!f)
+        throw std::runtime_error("Failed to open bitstream file");
+      f.write(bit.data(), bit.size());
+    }
+    {
+      std::ofstream f("Overlay/design.hwh");
+      if (!f)
+        throw std::runtime_error("Failed to open HWH file");
+      f.write(hwh.data(), hwh.size());
+    }
+
+    // Program PL via PYNQ
+    program_with_pynq_cli_or_throw("pynq_program.py", "Overlay/design.bit");
+
+    // AXI-Lite map
+    mmio_ = map_axil_window(Spec::AXIL_BASE, Spec::AXIL_SIZE);
+
+    // Set FPGA clock
+    float actual_freq =
+        set_pl_from_iopll(static_cast<ZynqPllIndex>(Spec::PllIndex),
+                          Spec::Freq_MHz, Spec::PLLFreq_MHz);
+
+    fprintf(stderr, "FPGA clock set to %.2f MHz (IO PLL: %.2d MHz)\n",
+            actual_freq, Spec::PLLFreq_MHz);
+
+    // Build DMA ports and buffers
+    build_ports();
+
+    // One-shot upload of static inputs (e.g., weights) if provided in pkg
+    upload_static_inputs_from_pkg(pkg);
+  }
 
   void build_ports() {
     in_bos_.clear();
@@ -260,6 +283,9 @@ private:
 
   std::vector<std::optional<Mm2sSimple>> tx_;
   std::vector<std::optional<S2mmSG>> rx_;
+
+  std::once_flag init_once_;
+  bool initialized_ = false;
 };
 
 // ORT Kernel
@@ -273,7 +299,7 @@ template <class Spec> struct Nn2FpgaKernelT {
         base64_decode(pkg.at("bitstream_b64").get<std::string>());
     const std::string hwh = base64_decode(pkg.at("hwh_b64").get<std::string>());
 
-    FpgaRunnerT<Spec>::instance().load_bitstream(bit, hwh, pkg);
+    FpgaRunnerT<Spec>::instance().ensure_loaded(bit, hwh, pkg);
   }
 
   void Compute(OrtKernelContext *ctx) {
