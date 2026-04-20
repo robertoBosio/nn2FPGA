@@ -24,3 +24,6 @@ nn2fpga/proj_unit_test/
 reports/
 
 site/
+
+# Local configuration files
+.run.local.sh
