@@ -96,6 +96,37 @@ private:
   }
 };
 
+template <int Num, int Den, typename TAcc, typename TOut> struct DequantQuantFloat {
+
+  TOut operator()(TAcc acc) const {
+#pragma HLS inline
+    constexpr float Scale = float(Num) / float(Den);
+    const float x = float(acc) * Scale;
+
+    const float f = hls::floorf(x);
+    const float frac = x - f;
+
+    float r;
+    if (frac < 0.5f) {
+      r = f;
+    } else if (frac > 0.5f) {
+      r = f + 1.0f;
+    } else {
+      const int fi = int(f);
+      r = (fi & 1) ? (f + 1.0f) : f;
+    }
+
+    float lo = float(LimitsImpl<TOut>::min());
+    float hi = float(LimitsImpl<TOut>::max());
+    if (r < lo) r = lo;
+    if (r > hi) r = hi;
+
+    std::cout << "DequantQuantFloat: acc=" << acc << ", x=" << x << ", r=" << r << std::endl;
+
+    return TOut(r);
+  }
+};
+
 template <typename T>
 struct DequantQuantEqual
 {
