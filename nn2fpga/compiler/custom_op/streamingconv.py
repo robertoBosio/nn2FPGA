@@ -223,7 +223,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             input_list = [node.input[0], node.input[1]] + node.input[2:5]
         elif len(node.input) == 9:
             # Conv with bias
-            input_list = [node.input[0], node.input[1], node.input[5]] + node.input[2:5] + node.input[6:9]
+            input_list = (
+                [node.input[0], node.input[1], node.input[5]]
+                + node.input[2:5]
+                + node.input[6:9]
+            )
         else:
             raise ValueError(
                 f"Unexpected number of inputs for StreamingConv node {node.name}: {len(node.input)}"
@@ -400,9 +404,10 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             )
             return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {get_hls_quant_type(output_quant)}>"
         else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingConv.  "
-            )
+            inv_scale = output_quant.scale / (weights_scale * input_quant.scale)
+            num = int(inv_scale * (2 ** 16))  # Fixed-point representation
+            den = 2 ** 16
+            return f"DequantQuantFloat<{num}, {den}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {get_hls_quant_type(output_quant)}>"
 
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingConv operation. """
@@ -476,7 +481,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 (self.__get_partial_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TPartialSum"),
                 (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
                 (
-                    self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
+                    f"{self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape)}",
                     "Quantizer",
                 ),
                 (output_shape[1], "OUT_CH"),
@@ -503,6 +508,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         Returns:
             str: A string representing the declaration of internal variables.
         """
+        variables_code = ""
 
         weights_quant = TensorQuant(
             scale=model.get_initializer(self.onnx_node.input[2]),
@@ -585,7 +591,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 ),
             )
 
-            return (
+            return variables_code + (
                 weights_var.generate_declaration() 
                 + ";\n"
                 + weights_var.generate_pragma()
@@ -595,7 +601,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 + bias_var.generate_pragma()
             )
         else:
-            return ""
+            return variables_code
 
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
@@ -1000,7 +1006,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                         continue
 
                     # Heuristic to spread unrolling across dimensions
-                    if (width_unroll > 4 or out_channel_unroll > 5 or in_channel_unroll > 40):
+                    if (width_unroll > 1 or out_channel_unroll > 2 or in_channel_unroll > 40):
                         continue
 
                     DSE_points.append(
