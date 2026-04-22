@@ -4,19 +4,18 @@
 #include <cstdint>
 #include "etc/autopilot_ssdm_op.h"
 
-template <typename TWord, typename TData, size_t DIM, size_t CHUNK_SIZE,
+template <typename TWord, typename TData, size_t DIM, size_t BURST_SIZE, size_t WORD_BYTES,
           size_t PAR, size_t DEPTH>
 class DDRstream {
 
   static_assert(DIM % PAR == 0, "DIM must be a multiple of PAR");
-  static_assert(DIM % CHUNK_SIZE == 0, "DIM must be a multiple of CHUNK_SIZE");
-  static_assert(CHUNK_SIZE % PAR == 0, "CHUNK_SIZE must be a multiple of PAR");
+  static_assert(WORD_BYTES % PAR == 0, "CHUNK_SIZE must be a multiple of PAR");
 
   void pack_data(hls::stream<TWord> input_stream[1],
                  hls::stream<TData> &packed_data) {
     TData temp_data;
     for (size_t i = 0; i < DIM; ++i) {
-      for (size_t j = 0; j < CHUNK_SIZE / PAR; ++j) {
+      for (size_t j = 0; j < WORD_BYTES / PAR; ++j) {
 #pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
         TWord input_data = input_stream[0].read();
@@ -25,7 +24,7 @@ class DDRstream {
           temp_data.range((j * PAR + k + 1) * 8 - 1, (j * PAR + k) * 8) =
               input_data[k];
         }
-        if (j == (CHUNK_SIZE / PAR) - 1) {
+        if (j == (WORD_BYTES / PAR) - 1) {
           packed_data.write(temp_data);
         }
       }
@@ -36,14 +35,11 @@ class DDRstream {
                     TData ddr_buffer[DIM], hls::stream<bool> &valid_stream,
                     hls::stream<bool> &start_stream) {
 
-    for (size_t i = 0; i < DIM; ++i) {
-      TData input_data = input_stream.read();
-//       for (size_t k = 0; k < CHUNK_SIZE; ++k) {
-// #pragma HLS loop_flatten
-// #pragma HLS unroll
-//         ddr_buffer[i * CHUNK_SIZE + k] = input_data[k];
-//       }
-      ddr_buffer[i] = input_data;
+    for (size_t i = 0; i < DIM / BURST_SIZE; ++i) {
+      for (size_t j = 0; j < BURST_SIZE; ++j) {
+        TData input_data = input_stream.read();
+        ddr_buffer[i * BURST_SIZE + j] = input_data;
+      }
       hls::fence(ddr_buffer, valid_stream);
       valid_stream.write(true);
       if (i == 0) {
@@ -57,17 +53,14 @@ class DDRstream {
                      hls::stream<TData> &output_stream) {
     TData output_data;
     start_stream.read(); // Wait for the signal to start reading
-    for (size_t i = 0; i < DIM; ++i) {
+    for (size_t i = 0; i < DIM / BURST_SIZE; ++i) {
       bool valid = valid_stream.read();
       hls::fence(valid_stream, ddr_buffer);
-      (void)valid; // Suppress unused variable warning
-//       for (size_t k = 0; k < CHUNK_SIZE; ++k) {
-// // #pragma HLS loop_flatten disable
-// #pragma HLS unroll
-//         output_data[k] = ddr_buffer[i * CHUNK_SIZE + k];
-//       }
-      output_data = ddr_buffer[i];
-      output_stream.write(output_data);
+      (void)valid; 
+      for (size_t j = 0; j < BURST_SIZE; ++j) {
+        output_data = ddr_buffer[i * BURST_SIZE + j];
+        output_stream.write(output_data);
+      }
     }
   }
 
@@ -76,7 +69,7 @@ class DDRstream {
     TData input_data;
     for (size_t i = 0; i < DIM; ++i) {
       TWord output_data;
-      for (size_t j = 0; j < CHUNK_SIZE / PAR; ++j) {
+      for (size_t j = 0; j < WORD_BYTES / PAR; ++j) {
 #pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
         if (j == 0) {
@@ -97,10 +90,10 @@ public:
            TData ddr_buffer_write[DIM], hls::stream<TWord> output_stream[1]) {
 #pragma HLS dataflow
 #pragma HLS inline
-    hls::stream<bool, DEPTH> valid_stream;
+    hls::stream<bool, (DEPTH / (BURST_SIZE * WORD_BYTES / PAR)) + 1> valid_stream;
     hls::stream<bool, 2> start_stream;
-    hls::stream<TData, 2> packed_input_stream;
-    hls::stream<TData, 2> packed_output_stream;
+    hls::stream<TData, BURST_SIZE + 1> packed_input_stream;
+    hls::stream<TData, BURST_SIZE + 1> packed_output_stream;
     pack_data(input_stream, packed_input_stream);
     write_to_ddr(packed_input_stream, ddr_buffer_write, valid_stream, start_stream);
     read_from_ddr(start_stream, valid_stream, ddr_buffer_read, packed_output_stream);
