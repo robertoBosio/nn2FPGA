@@ -215,17 +215,18 @@ def _same_quant_params(model: ModelWrapper, nodeA: onnx.NodeProto, nodeB: onnx.N
     # Get scale and zero_point initializers
     scale_name = nodeA.input[1]
     zeropt_name = nodeA.input[2]
-    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name))
-    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name))
+    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name)).flatten()
+    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name)).flatten()
     scales.append(scale)
     zeropts.append(zeropt)
 
     scale_name = nodeB.input[1]
     zeropt_name = nodeB.input[2]
-    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name))
-    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name))
+    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name)).flatten()
+    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name)).flatten()
     scales.append(scale)
     zeropts.append(zeropt)
+    logger.info(f"Comparing quant params: scales {scales}, zeropts {zeropts}")
 
     # Check if all scales and zero points are the same
     supported = True
@@ -712,12 +713,12 @@ class AddQuant(Pattern):
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
 
-class ConcatQuantSameParamsAxis1(Pattern):
+class ConcatQuantSameParamsAxis(Pattern):
     """
     Matches Concat where all inputs come from activation Quant/IntQuant
-    AND have identical (scale, zeropt), AND axis==1.
+    AND have identical (scale, zeropt).
     """
-    name = "Concat(Quant(...)) same params + axis=1"
+    name = "Concat(Quant(...)) same params"
     anchor_op = "Concat"
 
     def _match_impl(self, model, anchor_node) -> Match:
@@ -734,6 +735,7 @@ class ConcatQuantSameParamsAxis1(Pattern):
         ):
             return Match(False, self.name, covered, reasons)
 
+        reasons = []  # reset reasons for quant checks
         qnodes = []
         for inp in anchor_node.input:
             q = model.find_producer(inp)
@@ -1483,7 +1485,7 @@ class YoloAttentionFromInputReshape(Pattern):
 
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
-    "Concat": [ConcatQuantSameParamsAxis1()],
+    "Concat": [ConcatQuantSameParamsAxis()],
     "Flatten": [FlattenFCOnly()],
     "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "HardSigmoid": [HardSigmoidQuant()],
