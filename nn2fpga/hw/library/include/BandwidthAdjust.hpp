@@ -1,49 +1,50 @@
 #pragma once
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
-          size_t IN_CH_PAR, size_t OUT_CH_PAR>
+          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
+          size_t IN_DIM2, size_t IN_DIM1_UNROLL, size_t OUT_DIM1_UNROLL,
+          size_t IN_DIM2_UNROLL, size_t OUT_DIM2_UNROLL>
 class BandwidthAdjustIncreaseStreams {
 public:
-  static_assert(IN_W_PAR > 0, "IN_W_PAR must be greater than 0");
-  static_assert(OUT_W_PAR > 0, "OUT_W_PAR must be greater than 0");
-  static_assert(IN_W_PAR < OUT_W_PAR, "IN_W_PAR must be less than OUT_W_PAR");
-  static_assert(OUT_W_PAR % IN_W_PAR == 0,
-                "OUT_W_PAR must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % IN_W_PAR == 0,
-                "IN_WIDTH must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % OUT_W_PAR == 0,
-                "IN_WIDTH must be a multiple of OUT_W_PAR");
-  static_assert(IN_CH % IN_CH_PAR == 0,
-                "IN_CH_PAR must be a multiple of CH_PAR");
-  static_assert(IN_CH % OUT_CH_PAR == 0,
-                "OUT_CH_PAR must be a multiple of CH_PAR");
-  static_assert(IN_CH_PAR == OUT_CH_PAR,
-                "IN_CH_PAR must be equal to OUT_CH_PAR");
+  static_assert(IN_DIM1_UNROLL > 0, "IN_DIM1_UNROLL must be greater than 0");
+  static_assert(OUT_DIM1_UNROLL > 0, "OUT_DIM1_UNROLL must be greater than 0");
+  static_assert(IN_DIM1_UNROLL < OUT_DIM1_UNROLL,
+                "IN_DIM1_UNROLL must be less than OUT_DIM1_UNROLL");
+  static_assert(OUT_DIM1_UNROLL % IN_DIM1_UNROLL == 0,
+                "OUT_DIM1_UNROLL must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % IN_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % OUT_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of OUT_DIM1_UNROLL");
+  static_assert(IN_DIM2 % IN_DIM2_UNROLL == 0,
+                "IN_DIM2_UNROLL must be a multiple of IN_DIM2");
+  static_assert(IN_DIM2 % OUT_DIM2_UNROLL == 0,
+                "OUT_DIM2_UNROLL must be a multiple of IN_DIM2");
+  static_assert(IN_DIM2_UNROLL == OUT_DIM2_UNROLL,
+                "IN_DIM2_UNROLL must be equal to OUT_DIM2_UNROLL");
 
   BandwidthAdjustIncreaseStreams() = default;
 
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_out_stream = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_out_dim1_par = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < OUT_W_PAR; i++) {
+      for (size_t i = 0; i < OUT_DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                            (OUT_CH_PAR * IN_W_PAR));
+      actor_status = ActorStatus(depth, IN_DIM0 * IN_DIM1 * IN_DIM2 /
+                                            (OUT_DIM2_UNROLL * IN_DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -60,23 +61,32 @@ public:
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += OUT_W_PAR) {
-      for (size_t i_out_stream = 0; i_out_stream < OUT_W_PAR;
-           i_out_stream += IN_W_PAR) {
+  void run(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
+
+    // This is the case in which we increment the number of output streams, i.e.
+    // the unrolling factor of DIM 1 over the streams.
+
+    // Iterate over the input at groups of OUT_DIM1_UNROLL.
+    for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1;
+         i_dim01 += OUT_DIM1_UNROLL) {
+      // Iterate over the groups with a step of IN_DIM1_UNROLL.
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           i_out_dim1_par += IN_DIM1_UNROLL) {
+
+        // Iterate over the last dimension with a step of OUT_DIM2_UNROLL.
       BANDWIDTHADJUSTINCREASESTREAMS_RUN_LOOP:
-        for (size_t i_ch = 0; i_ch < IN_CH; i_ch += OUT_CH_PAR) {
+        for (size_t i_dim2 = 0; i_dim2 < IN_DIM2; i_dim2 += OUT_DIM2_UNROLL) {
 #pragma HLS pipeline II = 1
-          BandwidthAdjustIncreaseStreams::pipeline_body(
-              input_data_stream, output_data_stream, i_out_stream);
+          BandwidthAdjustIncreaseStreams::pipeline_body(i_data, o_data,
+                                                        i_out_dim1_par);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -84,53 +94,52 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
-      if (input_data_stream[i_in_stream].empty()) {
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      if (i_data[i_in_dim1_par].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
 
-      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_DIM1_UNROLL];
       BandwidthAdjustIncreaseStreams::pipeline_body(
-          input_data_stream, instant_output_stream, st.i_out_stream);
+          i_data, instant_output_stream, st.i_out_dim1_par);
 
-      st.i_ch += OUT_CH_PAR;
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all input channels, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_out_stream += IN_W_PAR;
+      // Update the loop iteration indexes for the next step.
+      st.i_dim2 += OUT_DIM2_UNROLL;
+      if (st.i_dim2 >= IN_DIM2) {
+        st.i_dim2 = 0;
+        st.i_out_dim1_par += IN_DIM1_UNROLL;
       }
-      if (st.i_out_stream >= OUT_W_PAR) {
-        // If we have processed all output streams, reset the index and
-        // increment the height/width index.
-        st.i_out_stream = 0;
-        st.i_hw += OUT_W_PAR;
+      if (st.i_out_dim1_par >= OUT_DIM1_UNROLL) {
+        st.i_out_dim1_par = 0;
+        st.i_dim01 += OUT_DIM1_UNROLL;
       }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
-        // Reset height and width index if we have processed all data.
-        st.i_hw = 0;
+      if (st.i_dim01 >= IN_DIM0 * IN_DIM1) {
+        st.i_dim01 = 0;
       }
 
       // Insert the firing status for the current step.
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-        if (!instant_output_stream[i_w_par].empty()) {
-          st.delayed_output[i_w_par].push(instant_output_stream[i_w_par].read(),
-                                          true);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           i_out_dim1_par++) {
+        if (!instant_output_stream[i_out_dim1_par].empty()) {
+          st.delayed_output[i_out_dim1_par].push(
+              instant_output_stream[i_out_dim1_par].read(), true);
         } else {
           // If the output stream is empty, push a placeholder.
-          st.delayed_output[i_w_par].push(TOutputWord(), false);
+          st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
-      for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-        st.delayed_output[i_w_par].push(TOutputWord(), false);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           i_out_dim1_par++) {
+        st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -139,9 +148,10 @@ public:
 
     // Write the output data to the output stream.
     TOutputWord out;
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out)) {
-        output_data_stream[i_w_par].write(out);
+    for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+         i_out_dim1_par++) {
+      if (st.delayed_output[i_out_dim1_par].pop(out)) {
+        o_data[i_out_dim1_par].write(out);
       }
     }
 
@@ -150,75 +160,77 @@ public:
   }
 
 private:
-  static void
-  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                size_t i_out_stream) {
+  static void pipeline_body(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL],
+                            size_t i_out_dim1_par) {
 #pragma HLS inline
-    TInputWord
-        s_input_struct; // Input structure to read data from the input stream.
-    TOutputWord s_output_struct; // Output structure to hold the results.
-    Quantizer quantizer;           // Quantizer instance for quantization.
+    // Input word to read data from the input stream.
+    TInputWord in_word;
+    TOutputWord out_word; // Output word to hold the results.
+    Quantizer quantizer;  // Quantizer instance for quantization.
 
-    for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-      // Read the input data structure from the input stream.
-      s_input_struct = input_data_stream[i_w_par].read();
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      // Read the input data word from the input stream.
+      in_word = i_data[i_in_dim1_par].read();
 
-      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
-        // Extract the data for the current pixel output channel.
-        TInput s_input_data = s_input_struct[i_och_par];
+      for (size_t i_out_dim2_par = 0; i_out_dim2_par < OUT_DIM2_UNROLL;
+           i_out_dim2_par++) {
+        TInput in_data = in_word[i_out_dim2_par];
 
         // Quantize the input data.
-        TOutput s_output_data = quantizer(s_input_data);
+        TOutput out_data = quantizer(in_data);
 
-        // Store the quantized data in the output structure.
-        s_output_struct[i_och_par] = s_output_data;
+        // Store the quantized data in the output word.
+        out_word[i_out_dim2_par] = out_data;
       }
-      output_data_stream[i_out_stream + i_w_par].write(s_output_struct);
+      o_data[i_out_dim1_par + i_in_dim1_par].write(out_word);
     }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
-          size_t IN_CH_PAR, size_t OUT_CH_PAR>
+          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
+          size_t IN_DIM2, size_t IN_DIM1_UNROLL, size_t OUT_DIM1_UNROLL,
+          size_t IN_DIM2_UNROLL, size_t OUT_DIM2_UNROLL>
 class BandwidthAdjustDecreaseStreams {
 public:
-  static_assert(IN_W_PAR > 0, "IN_W_PAR must be greater than 0");
-  static_assert(OUT_W_PAR > 0, "OUT_W_PAR must be greater than 0");
-  static_assert(IN_W_PAR > OUT_W_PAR, "OUT_W_PAR must be less than IN_W_PAR");
-  static_assert(IN_W_PAR % OUT_W_PAR == 0,
-                "OUT_W_PAR must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % IN_W_PAR == 0,
-                "IN_WIDTH must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % OUT_W_PAR == 0,
-                "IN_WIDTH must be a multiple of OUT_W_PAR");
-  static_assert(IN_CH % IN_CH_PAR == 0,
-                "IN_CH_PAR must be a multiple of CH_PAR");
-  static_assert(IN_CH % OUT_CH_PAR == 0,
-                "OUT_CH_PAR must be a multiple of CH_PAR");
-  static_assert(IN_CH_PAR == OUT_CH_PAR,
-                "IN_CH_PAR must be equal to OUT_CH_PAR");
+  static_assert(IN_DIM1_UNROLL > 0, "IN_DIM1_UNROLL must be greater than 0");
+  static_assert(OUT_DIM1_UNROLL > 0, "OUT_DIM1_UNROLL must be greater than 0");
+  static_assert(IN_DIM1_UNROLL > OUT_DIM1_UNROLL,
+                "OUT_DIM1_UNROLL must be less than IN_DIM1_UNROLL");
+  static_assert(IN_DIM1_UNROLL % OUT_DIM1_UNROLL == 0,
+                "OUT_DIM1_UNROLL must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % IN_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % OUT_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of OUT_DIM1_UNROLL");
+  static_assert(IN_DIM2 % IN_DIM2_UNROLL == 0,
+                "IN_DIM2_UNROLL must be a multiple of IN_DIM2");
+  static_assert(IN_DIM2 % OUT_DIM2_UNROLL == 0,
+                "OUT_DIM2_UNROLL must be a multiple of IN_DIM2");
+  static_assert(IN_DIM2_UNROLL == OUT_DIM2_UNROLL,
+                "IN_DIM2_UNROLL must be equal to OUT_DIM2_UNROLL");
 
   BandwidthAdjustDecreaseStreams() = default;
 
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_in_stream = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_in_dim1_par = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < OUT_W_PAR; i++) {
+      for (size_t i = 0; i < OUT_DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                            (OUT_CH_PAR * OUT_W_PAR));
+      actor_status =
+          ActorStatus(depth, IN_DIM0 * IN_DIM1 * IN_DIM2 /
+                                 (OUT_DIM2_UNROLL * OUT_DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -235,23 +247,24 @@ public:
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
-      for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR;
-           i_in_stream += OUT_W_PAR) {
+  void run(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
+    for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1;
+         i_dim01 += IN_DIM1_UNROLL) {
+      for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+           i_in_dim1_par += OUT_DIM1_UNROLL) {
       BANDWIDTHADJUSTDECREASESTREAMS_RUN_LOOP:
-        for (size_t i_ch = 0; i_ch < IN_CH; i_ch += OUT_CH_PAR) {
+        for (size_t i_dim2 = 0; i_dim2 < IN_DIM2; i_dim2 += OUT_DIM2_UNROLL) {
 #pragma HLS pipeline II = 1
-          BandwidthAdjustDecreaseStreams::pipeline_body(
-              input_data_stream, output_data_stream, i_in_stream);
+          BandwidthAdjustDecreaseStreams::pipeline_body(i_data, o_data,
+                                                        i_in_dim1_par);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -259,47 +272,47 @@ public:
 
     // Check if there is data in the input streams considered in this step.
     bool firing_condition = true;
-    for (size_t i_in_stream = 0; i_in_stream < OUT_W_PAR; i_in_stream++) {
-      if (input_data_stream[st.i_in_stream + i_in_stream].empty()) {
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < OUT_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      if (i_data[st.i_in_dim1_par + i_in_dim1_par].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
 
-      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[OUT_DIM1_UNROLL];
       BandwidthAdjustDecreaseStreams::pipeline_body(
-          input_data_stream, instant_output_stream, st.i_in_stream);
+          i_data, instant_output_stream, st.i_in_dim1_par);
 
-      st.i_ch += OUT_CH_PAR;
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all input channels, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_in_stream += OUT_W_PAR;
+      // Update the loop iteration indexes for the next step.
+      st.i_dim2 += OUT_DIM2_UNROLL;
+      if (st.i_dim2 >= IN_DIM2) {
+        st.i_dim2 = 0;
+        st.i_in_dim1_par += OUT_DIM1_UNROLL;
       }
-      if (st.i_in_stream >= IN_W_PAR) {
-        // If we have processed all output streams, reset the index and
-        // increment the height/width index.
-        st.i_in_stream = 0;
-        st.i_hw += IN_W_PAR;
+      if (st.i_in_dim1_par >= IN_DIM1_UNROLL) {
+        st.i_in_dim1_par = 0;
+        st.i_dim01 += IN_DIM1_UNROLL;
       }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
-        st.i_hw =
-            0; // Reset height and width index if we have processed all data.
+      if (st.i_dim01 >= IN_DIM0 * IN_DIM1) {
+        st.i_dim01 = 0;
       }
 
       // Insert the firing status for the current step.
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        st.delayed_output[i].push(instant_output_stream[i].read(), true);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        st.delayed_output[i_out_dim1_par].push(
+            instant_output_stream[i_out_dim1_par].read(), true);
       }
     } else {
       // If no data is available, push empty outputs.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        st.delayed_output[i].push(TOutputWord(), false);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -307,11 +320,12 @@ public:
     st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out)) {
-        output_data_stream[i_w_par].write(
-            out); // Write the output to the stream.
+    TOutputWord out_word;
+    for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+         i_out_dim1_par++) {
+      if (st.delayed_output[i_out_dim1_par].pop(out_word)) {
+        o_data[i_out_dim1_par].write(
+            out_word); // Write the output to the stream.
       }
     }
 
@@ -320,78 +334,79 @@ public:
   }
 
 private:
-  static void
-  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                size_t i_in_stream) {
+  static void pipeline_body(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL],
+                            size_t i_in_dim1_par) {
 #pragma HLS inline
-    TInputWord
-        s_input_struct; // Input structure to read data from the input stream.
-    TOutputWord s_output_struct; // Output structure to hold the results.
-    Quantizer quantizer;           // Quantizer instance for quantization.
+    // Input word to read data from the input stream.
+    TInputWord in_word;
+    TOutputWord out_word; // Output word to hold the results.
+    Quantizer quantizer;  // Quantizer instance for quantization.
 
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      // Read the input data structure from the input stream.
-      s_input_struct = input_data_stream[i_in_stream + i_w_par].read();
+    for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+         i_out_dim1_par++) {
+      // Read the input data word from the input stream.
+      in_word = i_data[i_in_dim1_par + i_out_dim1_par].read();
 
-      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
-        // Extract the data for the current pixel output channel.
-        TInput s_input_data = s_input_struct[i_och_par];
+      for (size_t i_out_dim2_par = 0; i_out_dim2_par < OUT_DIM2_UNROLL;
+           i_out_dim2_par++) {
+        TInput in_data = in_word[i_out_dim2_par];
 
         // Quantize the input data.
-        TOutput s_output_data = quantizer(s_input_data);
+        TOutput out_data = quantizer(in_data);
 
-        // Store the quantized data in the output structure.
-        s_output_struct[i_och_par] = s_output_data;
+        // Store the quantized data in the output word.
+        out_word[i_out_dim2_par] = out_data;
       }
-      output_data_stream[i_w_par].write(s_output_struct);
+      o_data[i_out_dim1_par].write(out_word);
     }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
-          size_t IN_CH_PAR, size_t OUT_CH_PAR>
-class BandwidthAdjustIncreaseChannels {
+          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
+          size_t IN_DIM2, size_t IN_DIM1_UNROLL, size_t OUT_DIM1_UNROLL,
+          size_t IN_DIM2_UNROLL, size_t OUT_DIM2_UNROLL>
+class BandwidthAdjustIncreaseWord {
 public:
-  static_assert(IN_W_PAR > 0, "IN_W_PAR must be greater than 0");
-  static_assert(OUT_W_PAR > 0, "OUT_W_PAR must be greater than 0");
-  static_assert(IN_CH_PAR < OUT_CH_PAR,
-                "IN_CH_PAR must be less than OUT_CH_PAR");
-  static_assert(OUT_CH_PAR % IN_CH_PAR == 0,
-                "OUT_CH_PAR must be a multiple of IN_CH_PAR");
-  static_assert(IN_WIDTH % IN_W_PAR == 0,
-                "IN_WIDTH must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % OUT_W_PAR == 0,
-                "IN_WIDTH must be a multiple of OUT_W_PAR");
-  static_assert(IN_W_PAR == OUT_W_PAR, "IN_W_PAR must be equal to OUT_W_PAR");
-  static_assert(IN_CH % IN_CH_PAR == 0,
-                "IN_CH must be a multiple of IN_CH_PAR");
-  static_assert(IN_CH % OUT_CH_PAR == 0,
-                "IN_CH must be a multiple of OUT_CH_PAR");
+  static_assert(IN_DIM1_UNROLL > 0, "IN_DIM1_UNROLL must be greater than 0");
+  static_assert(OUT_DIM1_UNROLL > 0, "OUT_DIM1_UNROLL must be greater than 0");
+  static_assert(IN_DIM2_UNROLL < OUT_DIM2_UNROLL,
+                "IN_DIM2_UNROLL must be less than OUT_DIM2_UNROLL");
+  static_assert(OUT_DIM2_UNROLL % IN_DIM2_UNROLL == 0,
+                "OUT_DIM2_UNROLL must be a multiple of IN_DIM2_UNROLL");
+  static_assert(IN_DIM1 % IN_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % OUT_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of OUT_DIM1_UNROLL");
+  static_assert(IN_DIM1_UNROLL == OUT_DIM1_UNROLL,
+                "IN_DIM1_UNROLL must be equal to OUT_DIM1_UNROLL");
+  static_assert(IN_DIM2 % IN_DIM2_UNROLL == 0,
+                "IN_DIM2 must be a multiple of IN_DIM2_UNROLL");
+  static_assert(IN_DIM2 % OUT_DIM2_UNROLL == 0,
+                "IN_DIM2 must be a multiple of OUT_DIM2_UNROLL");
 
-  BandwidthAdjustIncreaseChannels() = default;
+  BandwidthAdjustIncreaseWord() = default;
 
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_och_par = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_out_dim2_par = 0, i_dim2 = 0;
 
     // Output data buffer
-    TOutputWord output_data[OUT_W_PAR];
+    TOutputWord output_data[OUT_DIM1_UNROLL];
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < OUT_W_PAR; i++) {
+      for (size_t i = 0; i < OUT_DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                            (IN_CH_PAR * IN_W_PAR));
+      actor_status = ActorStatus(depth, IN_DIM0 * IN_DIM1 * IN_DIM2 /
+                                            (IN_DIM2_UNROLL * IN_DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -408,26 +423,27 @@ public:
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+  void run(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
     TOutputWord
-        output_data[OUT_W_PAR]; // Output structure to hold the results.
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
-      for (size_t i_ch = 0; i_ch < IN_CH; i_ch += OUT_CH_PAR) {
-      BANDWIDTHADJUSTINCREASECHANNELS_RUN_LOOP:
-        for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR;
-             i_och_par += IN_CH_PAR) {
+        output_data[OUT_DIM1_UNROLL]; // Output word to hold the results.
+    for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1;
+         i_dim01 += IN_DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < IN_DIM2; i_dim2 += OUT_DIM2_UNROLL) {
+      BANDWIDTHADJUSTINCREASEDIM2_RUN_LOOP:
+        for (size_t i_out_dim2_par = 0; i_out_dim2_par < OUT_DIM2_UNROLL;
+             i_out_dim2_par += IN_DIM2_UNROLL) {
 #pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
-          BandwidthAdjustIncreaseChannels::pipeline_body(
-              input_data_stream, output_data_stream, output_data, i_och_par);
+          BandwidthAdjustIncreaseWord::pipeline_body(
+              i_data, o_data, output_data, i_out_dim2_par);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -435,52 +451,51 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
-      if (input_data_stream[i_in_stream].empty()) {
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      if (i_data[i_in_dim1_par].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
-      BandwidthAdjustIncreaseChannels::pipeline_body(
-          input_data_stream, instant_output_stream, st.output_data,
-          st.i_och_par);
+      hls::stream<TOutputWord> instant_output_stream[OUT_DIM1_UNROLL];
+      BandwidthAdjustIncreaseWord::pipeline_body(
+          i_data, instant_output_stream, st.output_data, st.i_out_dim2_par);
 
-      st.i_och_par += IN_CH_PAR;
-      if (st.i_och_par >= OUT_CH_PAR) {
-        // If we have processed all input channels, reset the index and
-        // increment the height/width index.
-        st.i_och_par = 0;
-        st.i_ch += OUT_CH_PAR;
+      // Update the loop iteration indexes for the next step.
+      st.i_out_dim2_par += IN_DIM2_UNROLL;
+      if (st.i_out_dim2_par >= OUT_DIM2_UNROLL) {
+        st.i_out_dim2_par = 0;
+        st.i_dim2 += OUT_DIM2_UNROLL;
       }
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all output streams, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_hw += IN_W_PAR;
+      if (st.i_dim2 >= IN_DIM2) {
+        st.i_dim2 = 0;
+        st.i_dim01 += IN_DIM1_UNROLL;
       }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
-        st.i_hw =
-            0; // Reset height and width index if we have processed all data.
+      if (st.i_dim01 >= IN_DIM0 * IN_DIM1) {
+        st.i_dim01 = 0;
       }
 
       // Insert the firing status for the current step.
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        if (!instant_output_stream[i].empty()) {
-          st.delayed_output[i].push(instant_output_stream[i].read(), true);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        if (!instant_output_stream[i_out_dim1_par].empty()) {
+          st.delayed_output[i_out_dim1_par].push(
+              instant_output_stream[i_out_dim1_par].read(), true);
         } else {
           // If the output stream is empty, push a placeholder.
-          st.delayed_output[i].push(TOutputWord(), false);
+          st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
         }
       }
     } else {
       // If no data is available, push empty outputs.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        st.delayed_output[i].push(TOutputWord(), false);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -488,10 +503,11 @@ public:
     st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out)) {
-        output_data_stream[i_w_par].write(out);
+    TOutputWord out_word;
+    for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+         i_out_dim1_par++) {
+      if (st.delayed_output[i_out_dim1_par].pop(out_word)) {
+        o_data[i_out_dim1_par].write(out_word);
       }
     }
 
@@ -500,82 +516,83 @@ public:
   }
 
 private:
-  static void
-  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                TOutputWord s_output_struct[OUT_W_PAR], size_t i_och_par) {
+  static void pipeline_body(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL],
+                            TOutputWord out_word[OUT_DIM1_UNROLL],
+                            size_t i_out_dim2_par) {
 #pragma HLS inline
-    TInputWord
-        s_input_struct;  // Input structure to read data from the input stream.
+    TInputWord in_word;  // Input word to read data from the input stream.
     Quantizer quantizer; // Quantizer instance for quantization.
 
-    for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-      // Read the input data structure from the input stream.
-      s_input_struct = input_data_stream[i_w_par].read();
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      // Read the input data word from the input stream.
+      in_word = i_data[i_in_dim1_par].read();
 
-      for (size_t i_ich_par = 0; i_ich_par < IN_CH_PAR; i_ich_par++) {
-        // Extract the data for the current pixel channel.
-        TInput s_input_data = s_input_struct[i_ich_par];
+      for (size_t i_in_dim2_par = 0; i_in_dim2_par < IN_DIM2_UNROLL;
+           i_in_dim2_par++) {
+        TInput in_data = in_word[i_in_dim2_par];
 
         // Quantize the input data.
-        TOutput s_output_data = quantizer(s_input_data);
+        TOutput out_data = quantizer(in_data);
 
-        // Store the quantized data in the output structure.
-        s_output_struct[i_w_par][i_och_par + i_ich_par] = s_output_data;
+        // Store the quantized data in the output word.
+        out_word[i_in_dim1_par][i_out_dim2_par + i_in_dim2_par] = out_data;
       }
 
-      // If we have processed all output channels, write the output structure to
+      // If we have processed all output channels, write the output word to
       // the output stream.
-      if (i_och_par == OUT_CH_PAR - IN_CH_PAR) {
-        output_data_stream[i_w_par].write(s_output_struct[i_w_par]);
+      if (i_out_dim2_par == OUT_DIM2_UNROLL - IN_DIM2_UNROLL) {
+        o_data[i_in_dim1_par].write(out_word[i_in_dim1_par]);
       }
     }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t IN_W_PAR, size_t OUT_W_PAR,
-          size_t IN_CH_PAR, size_t OUT_CH_PAR>
-class BandwidthAdjustDecreaseChannels {
+          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
+          size_t IN_DIM2, size_t IN_DIM1_UNROLL, size_t OUT_DIM1_UNROLL,
+          size_t IN_DIM2_UNROLL, size_t OUT_DIM2_UNROLL>
+class BandwidthAdjustDecreaseWord {
 public:
-  static_assert(IN_W_PAR > 0, "IN_W_PAR must be greater than 0");
-  static_assert(OUT_W_PAR > 0, "OUT_W_PAR must be greater than 0");
-  static_assert(IN_CH_PAR > OUT_CH_PAR,
-                "OUT_CH_PAR must be less than IN_CH_PAR");
-  static_assert(IN_CH_PAR % OUT_CH_PAR == 0,
-                "IN_CH_PAR must be a multiple of OUT_CH_PAR");
-  static_assert(IN_WIDTH % IN_W_PAR == 0,
-                "IN_WIDTH must be a multiple of IN_W_PAR");
-  static_assert(IN_WIDTH % OUT_W_PAR == 0,
-                "IN_WIDTH must be a multiple of OUT_W_PAR");
-  static_assert(IN_W_PAR == OUT_W_PAR, "IN_W_PAR must be equal to OUT_W_PAR");
-  static_assert(IN_CH % IN_CH_PAR == 0,
-                "IN_CH must be a multiple of IN_CH_PAR");
-  static_assert(IN_CH % OUT_CH_PAR == 0,
-                "IN_CH must be a multiple of OUT_CH_PAR");
+  static_assert(IN_DIM1_UNROLL > 0, "IN_DIM1_UNROLL must be greater than 0");
+  static_assert(OUT_DIM1_UNROLL > 0, "OUT_DIM1_UNROLL must be greater than 0");
+  static_assert(IN_DIM2_UNROLL > OUT_DIM2_UNROLL,
+                "OUT_DIM2_UNROLL must be less than IN_DIM2_UNROLL");
+  static_assert(IN_DIM2_UNROLL % OUT_DIM2_UNROLL == 0,
+                "IN_DIM2_UNROLL must be a multiple of OUT_DIM2_UNROLL");
+  static_assert(IN_DIM1 % IN_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of IN_DIM1_UNROLL");
+  static_assert(IN_DIM1 % OUT_DIM1_UNROLL == 0,
+                "IN_DIM1 must be a multiple of OUT_DIM1_UNROLL");
+  static_assert(IN_DIM1_UNROLL == OUT_DIM1_UNROLL,
+                "IN_DIM1_UNROLL must be equal to OUT_DIM1_UNROLL");
+  static_assert(IN_DIM2 % IN_DIM2_UNROLL == 0,
+                "IN_DIM2 must be a multiple of IN_DIM2_UNROLL");
+  static_assert(IN_DIM2 % OUT_DIM2_UNROLL == 0,
+                "IN_DIM2 must be a multiple of OUT_DIM2_UNROLL");
 
-  BandwidthAdjustDecreaseChannels() = default;
+  BandwidthAdjustDecreaseWord() = default;
 
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_ich_par = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_in_dim2_par = 0, i_dim2 = 0;
 
     // Input data buffer
-    TInputWord input_data[IN_W_PAR];
+    TInputWord input_data[IN_DIM1_UNROLL];
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[OUT_DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < OUT_W_PAR; i++) {
+      for (size_t i = 0; i < OUT_DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH /
-                                            (OUT_CH_PAR * IN_W_PAR));
+      actor_status = ActorStatus(depth, IN_DIM0 * IN_DIM1 * IN_DIM2 /
+                                            (OUT_DIM2_UNROLL * IN_DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -592,25 +609,26 @@ public:
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-           hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
-    TInputWord input_data[IN_W_PAR]; // Input structure to hold the data read.
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH; i_hw += IN_W_PAR) {
-      for (size_t i_ch = 0; i_ch < IN_CH; i_ch += IN_CH_PAR) {
-      BANDWIDTHADJUSTDECREASECHANNELS_RUN_LOOP:
-        for (size_t i_ich_par = 0; i_ich_par < IN_CH_PAR;
-             i_ich_par += OUT_CH_PAR) {
+  void run(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
+    TInputWord input_data[IN_DIM1_UNROLL]; // Input word to hold the data read.
+    for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1;
+         i_dim01 += IN_DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < IN_DIM2; i_dim2 += IN_DIM2_UNROLL) {
+      BANDWIDTHADJUSTDECREASEDIM2_RUN_LOOP:
+        for (size_t i_in_dim2_par = 0; i_in_dim2_par < IN_DIM2_UNROLL;
+             i_in_dim2_par += OUT_DIM2_UNROLL) {
 #pragma HLS loop_flatten
 #pragma HLS pipeline II = 1
-          BandwidthAdjustDecreaseChannels::pipeline_body(
-              input_data_stream, output_data_stream, input_data, i_ich_par);
+          BandwidthAdjustDecreaseWord::pipeline_body(i_data, o_data, input_data,
+                                                     i_in_dim2_par);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                   hls::stream<TOutputWord> output_data_stream[OUT_W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -618,49 +636,48 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
-    if (st.i_ich_par == 0) {
-      for (size_t i_in_stream = 0; i_in_stream < IN_W_PAR; i_in_stream++) {
-        if (input_data_stream[i_in_stream].empty()) {
+    if (st.i_in_dim2_par == 0) {
+      for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+           i_in_dim1_par++) {
+        if (i_data[i_in_dim1_par].empty()) {
           firing_condition = false;
         }
       }
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> instant_output_stream[OUT_W_PAR];
-      BandwidthAdjustDecreaseChannels::pipeline_body(
-          input_data_stream, instant_output_stream, st.input_data,
-          st.i_ich_par);
+      hls::stream<TOutputWord> instant_output_stream[OUT_DIM1_UNROLL];
+      BandwidthAdjustDecreaseWord::pipeline_body(
+          i_data, instant_output_stream, st.input_data, st.i_in_dim2_par);
 
-      st.i_ich_par += OUT_CH_PAR;
-      if (st.i_ich_par >= IN_CH_PAR) {
-        // If we have processed all input channels, reset the index and
-        // increment the height/width index.
-        st.i_ich_par = 0;
-        st.i_ch += IN_CH_PAR;
+      // Update the loop iteration indexes for the next step.
+      st.i_in_dim2_par += OUT_DIM2_UNROLL;
+      if (st.i_in_dim2_par >= IN_DIM2_UNROLL) {
+        st.i_in_dim2_par = 0;
+        st.i_dim2 += IN_DIM2_UNROLL;
       }
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all output streams, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_hw += IN_W_PAR;
+      if (st.i_dim2 >= IN_DIM2) {
+        st.i_dim2 = 0;
+        st.i_dim01 += IN_DIM1_UNROLL;
       }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH) {
-        st.i_hw =
-            0; // Reset height and width index if we have processed all data.
+      if (st.i_dim01 >= IN_DIM0 * IN_DIM1) {
+        st.i_dim01 = 0;
       }
 
       // Insert the firing status for the current step.
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        st.delayed_output[i].push(instant_output_stream[i].read(), true);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        st.delayed_output[i_out_dim1_par].push(
+            instant_output_stream[i_out_dim1_par].read(), true);
       }
     } else {
       // If no data is available, push empty outputs.
-      for (size_t i = 0; i < OUT_W_PAR; ++i) {
-        st.delayed_output[i].push(TOutputWord(), false);
+      for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+           ++i_out_dim1_par) {
+        st.delayed_output[i_out_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -668,10 +685,11 @@ public:
     st.actor_status.advance();
 
     // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t i_w_par = 0; i_w_par < OUT_W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out)) {
-        output_data_stream[i_w_par].write(out);
+    TOutputWord out_word;
+    for (size_t i_out_dim1_par = 0; i_out_dim1_par < OUT_DIM1_UNROLL;
+         i_out_dim1_par++) {
+      if (st.delayed_output[i_out_dim1_par].pop(out_word)) {
+        o_data[i_out_dim1_par].write(out_word);
       }
     }
 
@@ -680,33 +698,33 @@ public:
   }
 
 private:
-  static void
-  pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                hls::stream<TOutputWord> output_data_stream[OUT_W_PAR],
-                TInputWord s_input_struct[IN_W_PAR], size_t i_ich_par) {
+  static void pipeline_body(hls::stream<TInputWord> i_data[IN_DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[OUT_DIM1_UNROLL],
+                            TInputWord in_word[IN_DIM1_UNROLL],
+                            size_t i_in_dim2_par) {
 #pragma HLS inline
-    TOutputWord
-        s_output_struct; // Output structure to read data from the input stream.
-    Quantizer quantizer; // Quantizer instance for quantization.
+    TOutputWord out_word; // Output word to read data from the input stream.
+    Quantizer quantizer;  // Quantizer instance for quantization.
 
-    for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-      // Read the input data structure from the input stream.
-      if (i_ich_par == 0) {
-        s_input_struct[i_w_par] = input_data_stream[i_w_par].read();
+    for (size_t i_in_dim1_par = 0; i_in_dim1_par < IN_DIM1_UNROLL;
+         i_in_dim1_par++) {
+      // Read the input data word from the input stream.
+      if (i_in_dim2_par == 0) {
+        in_word[i_in_dim1_par] = i_data[i_in_dim1_par].read();
       }
 
-      for (size_t i_och_par = 0; i_och_par < OUT_CH_PAR; i_och_par++) {
-        // Extract the data for the current pixel channel.
-        TInput s_input_data = s_input_struct[i_w_par][i_ich_par + i_och_par];
+      for (size_t i_out_dim2_par = 0; i_out_dim2_par < OUT_DIM2_UNROLL;
+           i_out_dim2_par++) {
+        TInput in_data = in_word[i_in_dim1_par][i_in_dim2_par + i_out_dim2_par];
 
         // Quantize the input data.
-        TOutput s_output_data = quantizer(s_input_data);
+        TOutput out_data = quantizer(in_data);
 
-        // Store the quantized data in the output structure.
-        s_output_struct[i_och_par] = s_output_data;
+        // Store the quantized data in the output word.
+        out_word[i_out_dim2_par] = out_data;
       }
 
-      output_data_stream[i_w_par].write(s_output_struct);
+      o_data[i_in_dim1_par].write(out_word);
     }
   }
 };
