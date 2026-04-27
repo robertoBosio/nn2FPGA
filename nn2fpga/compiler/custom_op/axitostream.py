@@ -190,6 +190,14 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             self.onnx_node.input[0],
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+    def accepted_input_layouts(self) -> tuple | None:
+        """ AXIToStream is layout agnostic, since it just reads the input tensor as a stream of data. """
+        return None
+    
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple:
+        """ The output layout of AXIToStream is the same as the input layout. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """

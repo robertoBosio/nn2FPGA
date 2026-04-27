@@ -4,7 +4,8 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
@@ -38,8 +39,8 @@ class StreamingAdd(NN2FPGAOp):
     def get_nodeattr_types(self):
         return {
             # Custom attributes for unroll factors
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             # Custom attributes for input/output streams
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -165,7 +166,6 @@ class StreamingAdd(NN2FPGAOp):
     def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
         """ Returns the quantizer type for the Add operation. """
 
-
         if (
             self.__is_power_of_two(input_quantA.scale)
             and self.__is_power_of_two(input_quantB.scale)
@@ -197,22 +197,20 @@ class StreamingAdd(NN2FPGAOp):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quantA is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        input_quantB = get_custom_tensor_datatype(model, self.onnx_node.input[1])
-        if (input_quantB is None):
-            raise ValueError(f"Input {self.onnx_node.input[1]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
+        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        input_shapeA = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shapeA is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_shapeA = self.require_input_shape(model, 0)
+
+        input_shapeA_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shapeB_layout = require_tensor_layout(model, self.onnx_node.input[1])
+        if input_shapeA_layout != input_shapeB_layout:
+            raise ValueError(
+                f"Input layouts for StreamingAdd must be the same. Got {input_shapeA_layout} and {input_shapeB_layout}."
+            )
+
+        input_shape_permuted = [input_shapeA[i] for i in input_shapeA_layout.perm]
 
         StreamingAdd = cpp_object(
             "StreamingAdd",
@@ -253,11 +251,11 @@ class StreamingAdd(NN2FPGAOp):
                 ),
                 (f"{self.__get_align_shift(input_quantA, input_quantB)[0]}", "AlignA"),
                 (f"{self.__get_align_shift(input_quantA, input_quantB)[1]}", "AlignB"),
-                (f"{input_shapeA[2]}", "IN_HEIGHT"),
-                (f"{input_shapeA[3]}", "IN_WIDTH"),
-                (f"{input_shapeA[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
+                (f"{input_shape_permuted[1]}", "DIM0"),
+                (f"{input_shape_permuted[2]}", "DIM1"),
+                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -318,15 +316,19 @@ class StreamingAdd(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.input[1]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingAdd is layout-agnostic, so it accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingAdd is layout-agnostic, so it produces the same layout as input. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -376,11 +378,11 @@ class StreamingAdd(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        input_shape = self.require_input_shape(model, 0)
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
+            "dim1_unroll"
+        )
         return np.prod(input_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -418,5 +420,5 @@ class StreamingAdd(NN2FPGAOp):
         self.set_nodeattr("in_word_array", upstream.out_word_array)
         self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("width_unroll", upstream.out_stream_array)
+        self.set_nodeattr("dim2_unroll", upstream.out_word_array)
+        self.set_nodeattr("dim1_unroll", upstream.out_stream_array)
