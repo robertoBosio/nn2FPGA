@@ -55,6 +55,34 @@ class NN2FPGAOp(CustomOp, ABC):
     @abstractmethod
     def get_dsps(self, model: ModelWrapper) -> int:
         """Return DSP usage for 'point'. If point is None, use current node attrs."""
+    
+    @abstractmethod
+    def accepted_input_layout(self) -> tuple | None:
+        """Return the permutation tuple this op requires on input,
+        or None if layout-transparent."""
+
+    @abstractmethod
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """Return the permutation tuple this op produces on output.
+        Receives the incoming layout so transparent ops can just return it."""
+
+    def require_input_shape(self, model: ModelWrapper, input_index: int = 0) -> list[int]:
+        """Helper to retrieve input shape, raising if not found."""
+        shape = model.get_tensor_shape(self.onnx_node.input[input_index])
+        if shape is None:
+            raise ValueError(
+                f"Tensor shape for input '{self.onnx_node.input[input_index]}' not found in model."
+            )
+        return shape + [1] * (4 - len(shape))  # Pad to 4D if needed.
+    
+    def require_output_shape(self, model: ModelWrapper, output_index: int = 0) -> list[int]:
+        """Helper to retrieve output shape, raising if not found."""
+        shape = model.get_tensor_shape(self.onnx_node.output[output_index])
+        if shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[output_index]}' not found in model."
+            )
+        return shape + [1] * (4 - len(shape))  # Pad to 4D if needed.
 
     def get_port_interface(self) -> NodeInterface:
         return NodeInterface.from_dict({

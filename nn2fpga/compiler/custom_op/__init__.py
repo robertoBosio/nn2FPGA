@@ -1,9 +1,9 @@
 from nn2fpga.compiler.custom_op.bandwidthadjust import (
-    BandwidthAdjustIncreaseChannels, BandwidthAdjustDecreaseChannels,
-    BandwidthAdjustIncreaseStreams, BandwidthAdjustDecreaseStreams,
+    BandwidthAdjustIncreaseStreams, BandwidthAdjustDecreaseWord,
+    BandwidthAdjustIncreaseWord, BandwidthAdjustDecreaseStreams,
 )
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.nhwctostream import NHWCToStream
+from nn2fpga.compiler.custom_op.axitostream import AXIToStream
 from nn2fpga.compiler.custom_op.nn2fpgapartition import nn2fpgaPartition
 from nn2fpga.compiler.custom_op.streamingadd import StreamingAdd
 from nn2fpga.compiler.custom_op.streamingaveragepool import StreamingAveragePool
@@ -24,16 +24,17 @@ from nn2fpga.compiler.custom_op.streamingsplit import StreamingSplit
 from nn2fpga.compiler.custom_op.streamingswish import StreamingSwish
 from nn2fpga.compiler.custom_op.streamingupsample import StreamingUpsample
 from nn2fpga.compiler.custom_op.streamingyoloattention import StreamingYoloAttention
+from nn2fpga.compiler.custom_op.streamingyoloheadsoftmax import StreamingYoloHeadSoftmax
 from nn2fpga.compiler.custom_op.streamtonhwc import StreamToNHWC
 from nn2fpga.compiler.custom_op.tensorduplicator import TensorDuplicator
 
 custom_op = {
-    "BandwidthAdjustDecreaseChannels": BandwidthAdjustDecreaseChannels,
+    "BandwidthAdjustDecreaseWord": BandwidthAdjustDecreaseWord,
     "BandwidthAdjustDecreaseStreams": BandwidthAdjustDecreaseStreams,
-    "BandwidthAdjustIncreaseChannels": BandwidthAdjustIncreaseChannels,
+    "BandwidthAdjustIncreaseWord": BandwidthAdjustIncreaseWord,
     "BandwidthAdjustIncreaseStreams": BandwidthAdjustIncreaseStreams,
     "HLSKernel": HLSKernel,
-    "NHWCToStream": NHWCToStream,
+    "AXIToStream": AXIToStream,
     "nn2fpgaPartition": nn2fpgaPartition,
     "StreamingAdd": StreamingAdd,
     "StreamingAveragePool": StreamingAveragePool,
@@ -54,6 +55,7 @@ custom_op = {
     "StreamingSwish": StreamingSwish,
     "StreamingUpsample": StreamingUpsample,
     "StreamingYoloAttention": StreamingYoloAttention,
+    "StreamingYoloHeadSoftmax": StreamingYoloHeadSoftmax,
     "StreamToNHWC": StreamToNHWC,
     "TensorDuplicator": TensorDuplicator,
 }

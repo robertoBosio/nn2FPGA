@@ -247,3 +247,12 @@ def get_custom_tensor_datatype(model: ModelWrapper, tensor_name):
         return TensorQuant.from_canonical_name(ret_dt.value)
     except Exception as e:
         raise ValueError(f"Invalid TensorQuant string for tensor {tensor_name}: {ret_dt.value}") from e
+
+def require_tensor_quant(model: ModelWrapper, tensor_name) -> TensorQuant:
+    """Gets the custom TensorQuant of a tensor with the given name.
+    Raises an error if not found.
+    """
+    quant = get_custom_tensor_datatype(model, tensor_name)
+    if quant is None:
+        raise ValueError(f"Tensor quantization for tensor '{tensor_name}' not found in model.")
+    return quant
