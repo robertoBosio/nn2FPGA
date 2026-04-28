@@ -5,10 +5,11 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface, DSECapable
+from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
@@ -22,20 +23,20 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
 
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
 
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
             }
 
         @staticmethod
         def from_dict(d: dict) -> "StreamingConcat.DSEPoint":
             return StreamingConcat.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
             )
 
     @staticmethod
@@ -59,8 +60,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         return {
             "axis": ("i", False, 0),
             # Custom attributes for unroll factors
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             # Custom attributes for input/output streams
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -163,54 +164,53 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quantA is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        input_quantB = get_custom_tensor_datatype(model, self.onnx_node.input[1])
-        if (input_quantB is None):
-            raise ValueError(f"Input {self.onnx_node.input[1]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
+        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        input_shapeA = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shapeA is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        input_shapeA = input_shapeA + [1] * (4 - len(input_shapeA))  # Ensure 4D shape.
+        input_shapeA = self.require_input_shape(model, 0)
+        input_shapeB = self.require_input_shape(model, 1)
+        input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
+        input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
+        if input_layoutA != input_layoutB:
+            raise ValueError(
+                f"Input layouts for StreamingConcat must be the same. Got {input_layoutA} and {input_layoutB}."
+            )
 
-        input_shapeB = model.get_tensor_shape(self.onnx_node.input[1])
-        if input_shapeB is None:
-            raise ValueError(f"Input {self.onnx_node.input[1]} has no shape info")
-        input_shapeB = input_shapeB + [1] * (4 - len(input_shapeB))  # Ensure 4D shape.
-
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-
+        # Axis is referred to the standard ONNX layout (NCHW).
+        # We need to map it to the layout in input to the StreamingConcat object.
+        # For example, if the input layout is NWCH and the axis is 2 (so H in the ONNX layout)
+        # then we need to use the StreamingConcatDim2 object, which concatenates along
+        # the last dimension of the input layout.
         axis = self.get_nodeattr("axis")
-        axis_strings = ["Channel", "Height", "Width"] 
-        class_name = f"StreamingConcat{axis_strings[axis - 1]}"
-        if axis == 1:
+        axis_permuted = input_layoutA.perm.index(axis)
+        input_shapeA_permuted = [input_shapeA[i] for i in input_layoutA.perm]
+        input_shapeB_permuted = [input_shapeB[i] for i in input_layoutB.perm]
+        axis_strings = {1: "Dim0", 2: "Dim1", 3: "Dim2"}
+        if axis_permuted not in axis_strings:
+            raise ValueError(f"Unsupported concat axis after permutation: {axis_permuted}")
+        class_name = f"StreamingConcat{axis_strings[axis_permuted]}"
+
+        if axis_permuted == 3:
             template_args = [
-                (f"{input_shapeA[2]}", "IN_HEIGHT"),
-                (f"{input_shapeA[3]}", "IN_WIDTH"),
-                (f"{input_shapeA[1]}", "IN_CH_A"),
-                (f"{input_shapeB[1]}", "IN_CH_B"),
+                (f"{input_shapeA_permuted[1]}", "IN_DIM0"),
+                (f"{input_shapeA_permuted[2]}", "IN_DIM1"),
+                (f"{input_shapeA_permuted[3]}", "IN_DIM2_A"),
+                (f"{input_shapeB_permuted[3]}", "IN_DIM2_B"),
             ]
-        elif axis == 2:
+        elif axis_permuted == 1:
             template_args = [
-                (f"{input_shapeA[2]}", "IN_HEIGHT_A"),
-                (f"{input_shapeB[2]}", "IN_HEIGHT_B"),
-                (f"{input_shapeA[3]}", "IN_WIDTH"),
-                (f"{input_shapeA[1]}", "IN_CH"),
+                (f"{input_shapeA_permuted[1]}", "IN_DIM0_A"),
+                (f"{input_shapeB_permuted[1]}", "IN_DIM0_B"),
+                (f"{input_shapeA_permuted[2]}", "IN_DIM1"),
+                (f"{input_shapeA_permuted[3]}", "IN_DIM2"),
             ]
-        elif axis == 3:
+        elif axis_permuted == 2:
             template_args = [
-                (f"{input_shapeA[2]}", "IN_HEIGHT"),
-                (f"{input_shapeA[3]}", "IN_WIDTH_A"),
-                (f"{input_shapeB[3]}", "IN_WIDTH_B"),
-                (f"{input_shapeA[1]}", "IN_CH"),
+                (f"{input_shapeA_permuted[1]}", "IN_DIM0"),
+                (f"{input_shapeA_permuted[2]}", "IN_DIM1_A"),
+                (f"{input_shapeB_permuted[2]}", "IN_DIM1_B"),
+                (f"{input_shapeA_permuted[3]}", "IN_DIM2"),
             ]
         else:
             raise ValueError(f"Unsupported concat axis: {axis}")
@@ -243,8 +243,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                 template_args[1],
                 template_args[2],
                 template_args[3],
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -305,15 +305,19 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             self.__get_stream_name(self.onnx_node.input[1]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingConcat is layout-agnostic, so it accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingConcat is layout-agnostic, so it produces the same layout as input. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -355,7 +359,7 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         hls_tag += 1
 
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
-    
+
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingConcat.DSEPoint"]:
         """ Generate the DSE points for the StreamingConcat operation.
         Args:
@@ -371,79 +375,75 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                 if (all(x % i == 0 for x in n) and i <= clip)
             ]
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape0 = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape0 is None:
+        input_shapeA = self.require_input_shape(model, 0)
+        input_shapeB = self.require_input_shape(model, 1)
+        input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
+        input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
+        if input_layoutA != input_layoutB:
             raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
+                f"Input layouts for StreamingConcat must be the same. Got {input_layoutA} and {input_layoutB}."
             )
-        input_shape0 = input_shape0 + [1] * (4 - len(input_shape0))  # Ensure 4D shape.
+        input_shapeA_permuted = [input_shapeA[i] for i in input_layoutA.perm]
+        input_shapeB_permuted = [input_shapeB[i] for i in input_layoutB.perm]
 
-        input_shape1 = model.get_tensor_shape(self.onnx_node.input[1])
-        if input_shape1 is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[1]}' not found in model."
-            )
-        input_shape1 = input_shape1 + [1] * (4 - len(input_shape1))  # Ensure 4D shape.
+        output_shape = self.require_output_shape(model, 0)
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape_permuted = [output_shape[i] for i in output_layout.perm]
 
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-
-        # As of now, kernel height and width are completely unrolled.
+        # The unrolling factor must divide the dimensions of the input and output tensors along the concatenation axis.
         DSE_points = []
-        for channel_unroll in divisors(
-            [input_shape0[1], input_shape1[1], output_shape[1]],
-            min(input_shape0[1], input_shape1[1], output_shape[1]),
+        for dim2_unroll in divisors(
+            [
+                input_shapeA_permuted[3],
+                input_shapeB_permuted[3],
+                output_shape_permuted[3],
+            ],
+            min(
+                input_shapeA_permuted[3],
+                input_shapeB_permuted[3],
+                output_shape_permuted[3],
+            ),
         ):
-            for width_unroll in divisors(
-                [input_shape0[3], input_shape1[3], output_shape[3]],
-                min(input_shape0[3], input_shape1[3], output_shape[3]),
+            for dim1_unroll in divisors(
+                [
+                    input_shapeA_permuted[2],
+                    input_shapeB_permuted[2],
+                    output_shape_permuted[2],
+                ],
+                min(
+                    input_shapeA_permuted[2],
+                    input_shapeB_permuted[2],
+                    output_shape_permuted[2],
+                ),
             ):
                 # Check dimension of input streams
-                if (input_bits * channel_unroll) > 4096:
+                if (input_bits * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
-                if (output_bits * channel_unroll) > 4096:
+                if (output_bits * dim2_unroll) > 4096:
                     continue
 
-                DSE_points.append(
-                    self.DSEPoint(
-                        channel_unroll, width_unroll
-                    )
-                )
+                DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))
 
         return DSE_points
 
     def get_latency(self, model: ModelWrapper) -> int:
-        """ Estimate the latency of the StreamingConcat operation.
+        """Estimate the latency of the StreamingConcat operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        output_shape = self.require_output_shape(model, 0)
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr(
-            "width_unroll"
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
+            "dim1_unroll"
         )
         return np.prod(output_shape) // unroll_factor
 
@@ -477,10 +477,10 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingConcat.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

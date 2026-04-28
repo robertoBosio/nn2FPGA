@@ -1,65 +1,61 @@
 #pragma once
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
+
+/** @brief A class for concatenating streams along the second dimension.
+ *
+ * @tparam TInputWord The type of the input stream words.
+ * @tparam TInput The type of the input data elements.
+ * @tparam TOutputWord The type of the output stream words.
+ * @tparam TOutput The type of the output data elements.
+ * @tparam Quantizer A functor type for quantizing the output data.
+ * @tparam IN_DIM0 The size of the first dimension of the input tensors.
+ * @tparam IN_DIM1 The size of the second dimension of the input tensors.
+ * @tparam IN_DIM2_A The size of the third dimension of the first input tensor.
+ * @tparam IN_DIM2_B The size of the third dimension of the second input tensor.
+ * @tparam DIM1_UNROLL The unrolling factor for the second dimension.
+ * @tparam DIM2_UNROLL The unrolling factor for the third dimension.
+ */
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH_A, size_t IN_CH_B, size_t W_PAR,
-          size_t CH_PAR>
-class StreamingConcatChannel {
+          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
+          size_t IN_DIM2_A, size_t IN_DIM2_B, size_t DIM1_UNROLL,
+          size_t DIM2_UNROLL>
+class StreamingConcatDim2 {
+  static_assert(IN_DIM1 % DIM1_UNROLL == 0, "DIM1_UNROLL must divide IN_DIM1");
+  static_assert(IN_DIM2_A % DIM2_UNROLL == 0,
+                "DIM2_UNROLL must divide IN_DIM2_A");
+  static_assert(IN_DIM2_B % DIM2_UNROLL == 0,
+                "DIM2_UNROLL must divide IN_DIM2_B");
 
-  struct StepState {
-    // Loop iteration indexes.
-    size_t i_hw = 0, i_ch = 0;
-
-    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
-    ActorStatus actor_status{1, 1};
-    bool initialized = false;
-
-    void init(size_t depth) {
-      if (initialized)
-        return;
-      for (size_t i = 0; i < W_PAR; i++) {
-        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
-      }
-      actor_status = ActorStatus(
-          depth, IN_HEIGHT * IN_WIDTH * (IN_CH_A + IN_CH_B) / (CH_PAR * W_PAR));
-      initialized = true;
-    }
-  };
-
-  using Registry = std::unordered_map<const void *, StepState>;
-  static Registry &registry() {
-    static Registry r;
-    return r;
-  }
-
-  public:
+public:
   void step_init(size_t pipeline_depth = 1) {
     auto &st = registry()[this];
     st.init(pipeline_depth);
   }
 
-  StreamingConcatChannel() = default;
+  StreamingConcatDim2() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[W_PAR],
-           hls::stream<TInputWord> i_dataB[W_PAR],
-           hls::stream<TOutputWord> o_data[W_PAR]) {
-  STREAMINGCONCATCHANNEL_RUN_LOOP:
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH / W_PAR; i_hw++) {
-      for (size_t i_ch = 0; i_ch < (IN_CH_A + IN_CH_B) / CH_PAR; i_ch++) {
+  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
+    for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1 / DIM1_UNROLL;
+         i_dim01++) {
+    STREAMINGCONCATCHANNEL_RUN_LOOP:
+      for (size_t i_dim2 = 0; i_dim2 < (IN_DIM2_A + IN_DIM2_B) / DIM2_UNROLL;
+           i_dim2++) {
 #pragma HLS PIPELINE II = 1
-        StreamingConcatChannel::pipeline_body(i_dataA, i_dataB, o_data, i_ch);
+        StreamingConcatDim2::pipeline_body(i_dataA, i_dataB, o_data, i_dim2);
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[W_PAR],
-                   hls::stream<TInputWord> i_dataB[W_PAR],
-                   hls::stream<TOutputWord> o_data[W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -67,14 +63,14 @@ class StreamingConcatChannel {
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.i_ch < IN_CH_A / CH_PAR) {
-        if (i_dataA[i_w_par].empty()) {
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.i_dim2 < IN_DIM2_A / DIM2_UNROLL) {
+        if (i_dataA[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
       } else {
-        if (i_dataB[i_w_par].empty()) {
+        if (i_dataB[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
@@ -82,16 +78,17 @@ class StreamingConcatChannel {
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> o_data_instant[W_PAR];
-      StreamingConcatChannel::pipeline_body(i_dataA, i_dataB,  o_data_instant, st.i_ch);
+      hls::stream<TOutputWord> o_data_instant[DIM1_UNROLL];
+      StreamingConcatDim2::pipeline_body(i_dataA, i_dataB, o_data_instant,
+                                         st.i_dim2);
 
       // Update iterators
-      st.i_ch++;
-      if (st.i_ch >= (IN_CH_A + IN_CH_B) / CH_PAR) {
-        st.i_ch = 0;
-        st.i_hw++;
-        if (st.i_hw >= IN_HEIGHT * IN_WIDTH / W_PAR) {
-          st.i_hw = 0;
+      st.i_dim2++;
+      if (st.i_dim2 >= (IN_DIM2_A + IN_DIM2_B) / DIM2_UNROLL) {
+        st.i_dim2 = 0;
+        st.i_dim01++;
+        if (st.i_dim01 >= IN_DIM0 * IN_DIM1 / DIM1_UNROLL) {
+          st.i_dim01 = 0;
         }
       }
 
@@ -100,14 +97,14 @@ class StreamingConcatChannel {
 
       // Add the output to the delayed output buffers
       TOutputWord out_value;
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        out_value = o_data_instant[i_w_par].read();
-        st.delayed_output[i_w_par].push(out_value, true);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        out_value = o_data_instant[i_dim1_par].read();
+        st.delayed_output[i_dim1_par].push(out_value, true);
       }
     } else {
       // If not firing, push invalid data to maintain pipeline timing
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        st.delayed_output[i_w_par].push(TOutputWord(), false);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output[i_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -116,9 +113,9 @@ class StreamingConcatChannel {
 
     // Read from the delayed output buffers
     TOutputWord out_value;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out_value)) {
-        o_data[i_w_par].write(out_value);
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output[i_dim1_par].pop(out_value)) {
+        o_data[i_dim1_par].write(out_value);
       }
     }
 
@@ -126,59 +123,23 @@ class StreamingConcatChannel {
   }
 
 private:
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[W_PAR],
-                            hls::stream<TInputWord> i_dataB[W_PAR],
-                            hls::stream<TOutputWord> o_data[W_PAR], size_t i_ch) {
-#pragma HLS inline
-    TInputWord s_input_struct;
-    TOutputWord s_output_struct;
-    Quantizer quantizer;
-
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      // Read the input data structure from the input streams.
-      if (i_ch < IN_CH_A / CH_PAR) {
-        s_input_struct = i_dataA[i_w_par].read();
-      } else {
-        s_input_struct = i_dataB[i_w_par].read();
-      }
-
-      for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-        // Extract the data for the current pixel channel.
-        TInput s_input_data = s_input_struct[i_ch_par];
-
-        // Quantize the sum.
-        TOutput s_output_data = quantizer(s_input_data);
-
-        // Store the quantized data in the output structure.
-        s_output_struct[i_ch_par] = s_output_data;
-      }
-      o_data[i_w_par].write(s_output_struct);
-    }
-  }
-};
-
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT_A,
-          size_t IN_HEIGHT_B, size_t IN_WIDTH, size_t IN_CH, size_t W_PAR,
-          size_t CH_PAR>
-class StreamingConcatHeight {
-
   struct StepState {
     // Loop iteration indexes.
-    size_t i_h = 0, i_w = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(
-          depth, (IN_HEIGHT_A + IN_HEIGHT_B) * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
+      actor_status =
+          ActorStatus(depth, IN_DIM0 * IN_DIM1 * (IN_DIM2_A + IN_DIM2_B) /
+                                 (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -189,32 +150,72 @@ class StreamingConcatHeight {
     return r;
   }
 
-  public:
+  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[DIM1_UNROLL],
+                            size_t i_dim2) {
+#pragma HLS inline
+    TInputWord input_word;
+    TOutputWord output_word;
+    Quantizer quantizer;
+
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      // Read the input data structure from the input streams.
+      if (i_dim2 < IN_DIM2_A / DIM2_UNROLL) {
+        input_word = i_dataA[i_dim1_par].read();
+      } else {
+        input_word = i_dataB[i_dim1_par].read();
+      }
+
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        // Extract the data for the current pixel channel.
+        TInput input_data = input_word[i_dim2_par];
+
+        // Quantize the sum.
+        TOutput output_data = quantizer(input_data);
+
+        // Store the quantized data in the output structure.
+        output_word[i_dim2_par] = output_data;
+      }
+      o_data[i_dim1_par].write(output_word);
+    }
+  }
+};
+
+template <typename TInputWord, typename TInput, typename TOutputWord,
+          typename TOutput, typename Quantizer, size_t IN_DIM0_A,
+          size_t IN_DIM0_B, size_t IN_DIM1, size_t IN_DIM2, size_t DIM1_UNROLL,
+          size_t DIM2_UNROLL>
+class StreamingConcatDim0 {
+  static_assert(IN_DIM1 % DIM1_UNROLL == 0, "DIM1_UNROLL must divide IN_DIM1");
+  static_assert(IN_DIM2 % DIM2_UNROLL == 0, "DIM2_UNROLL must divide IN_DIM2");
+
+public:
   void step_init(size_t pipeline_depth = 1) {
     auto &st = registry()[this];
     st.init(pipeline_depth);
   }
 
-  StreamingConcatHeight() = default;
+  StreamingConcatDim0() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[W_PAR],
-           hls::stream<TInputWord> i_dataB[W_PAR],
-           hls::stream<TOutputWord> o_data[W_PAR]) {
-    for (size_t i_h = 0; i_h < (IN_HEIGHT_A + IN_HEIGHT_B); i_h++) {
-      for (size_t i_w = 0; i_w < IN_WIDTH / W_PAR; i_w++) {
-  STREAMINGCONCATHEIGHT_RUN_LOOP:
-        for (size_t i_ch = 0; i_ch < IN_CH / CH_PAR; i_ch++) {
+  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
+    for (size_t i_dim0 = 0; i_dim0 < (IN_DIM0_A + IN_DIM0_B); i_dim0++) {
+      for (size_t i_dim1 = 0; i_dim1 < IN_DIM1 / DIM1_UNROLL; i_dim1++) {
+      STREAMINGCONCATDIM0_RUN_LOOP:
+        for (size_t i_dim2 = 0; i_dim2 < IN_DIM2 / DIM2_UNROLL; i_dim2++) {
 #pragma HLS PIPELINE II = 1
-          StreamingConcatHeight::pipeline_body(i_dataA, i_dataB, o_data, i_h);
+          StreamingConcatDim0::pipeline_body(i_dataA, i_dataB, o_data, i_dim0);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[W_PAR],
-                   hls::stream<TInputWord> i_dataB[W_PAR],
-                   hls::stream<TOutputWord> o_data[W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -222,14 +223,14 @@ class StreamingConcatHeight {
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.i_h < IN_HEIGHT_A) {
-        if (i_dataA[i_w_par].empty()) {
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.i_dim0 < IN_DIM0_A) {
+        if (i_dataA[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
       } else {
-        if (i_dataB[i_w_par].empty()) {
+        if (i_dataB[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
@@ -237,21 +238,22 @@ class StreamingConcatHeight {
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> o_data_instant[W_PAR];
-      StreamingConcatHeight::pipeline_body(i_dataA, i_dataB,  o_data_instant, st.i_h);
+      hls::stream<TOutputWord> o_data_instant[DIM1_UNROLL];
+      StreamingConcatDim0::pipeline_body(i_dataA, i_dataB, o_data_instant,
+                                         st.i_dim0);
 
       // Update iterators
-      st.i_ch++;
-      if (st.i_ch >= IN_CH / CH_PAR) {
-        st.i_ch = 0;
-        st.i_w++;
+      st.i_dim2++;
+      if (st.i_dim2 >= IN_DIM2 / DIM2_UNROLL) {
+        st.i_dim1 = 0;
+        st.i_dim0++;
       }
-      if (st.i_w >= IN_WIDTH / W_PAR) {
-        st.i_w = 0;
-        st.i_h++;
+      if (st.i_dim0 >= IN_DIM1 / DIM1_UNROLL) {
+        st.i_dim0 = 0;
+        st.i_dim1++;
       }
-      if (st.i_h >= (IN_HEIGHT_A + IN_HEIGHT_B)) {
-        st.i_h = 0;
+      if (st.i_dim1 >= (IN_DIM0_A + IN_DIM0_B)) {
+        st.i_dim1 = 0;
       }
 
       // Insert the firing status for the current step.
@@ -259,14 +261,14 @@ class StreamingConcatHeight {
 
       // Add the output to the delayed output buffers
       TOutputWord out_value;
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        out_value = o_data_instant[i_w_par].read();
-        st.delayed_output[i_w_par].push(out_value, true);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        out_value = o_data_instant[i_dim1_par].read();
+        st.delayed_output[i_dim1_par].push(out_value, true);
       }
     } else {
       // If not firing, push invalid data to maintain pipeline timing
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        st.delayed_output[i_w_par].push(TOutputWord(), false);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output[i_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -275,9 +277,9 @@ class StreamingConcatHeight {
 
     // Read from the delayed output buffers
     TOutputWord out_value;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out_value)) {
-        o_data[i_w_par].write(out_value);
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output[i_dim1_par].pop(out_value)) {
+        o_data[i_dim1_par].write(out_value);
       }
     }
 
@@ -285,59 +287,23 @@ class StreamingConcatHeight {
   }
 
 private:
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[W_PAR],
-                            hls::stream<TInputWord> i_dataB[W_PAR],
-                            hls::stream<TOutputWord> o_data[W_PAR], size_t i_h) {
-#pragma HLS inline
-    TInputWord s_input_struct;
-    TOutputWord s_output_struct;
-    Quantizer quantizer;
-
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      // Read the input data structure from the input streams.
-      if (i_h < IN_HEIGHT_A) {
-        s_input_struct = i_dataA[i_w_par].read();
-      } else {
-        s_input_struct = i_dataB[i_w_par].read();
-      }
-
-      for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
-        // Extract the data for the current pixel channel.
-        TInput s_input_data = s_input_struct[i_ch_par];
-
-        // Quantize the sum.
-        TOutput s_output_data = quantizer(s_input_data);
-
-        // Store the quantized data in the output structure.
-        s_output_struct[i_ch_par] = s_output_data;
-      }
-      o_data[i_w_par].write(s_output_struct);
-    }
-  }
-};
-
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH_A, size_t IN_WIDTH_B, size_t IN_CH, size_t W_PAR,
-          size_t CH_PAR>
-class StreamingConcatWidth {
-
   struct StepState {
     // Loop iteration indexes.
-    size_t i_h = 0, i_w = 0, i_ch = 0;
+    size_t i_dim0 = 0, i_dim1 = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
-      actor_status = ActorStatus(
-          depth, IN_HEIGHT * (IN_WIDTH_A + IN_WIDTH_B) * IN_CH / (CH_PAR * W_PAR));
+      actor_status =
+          ActorStatus(depth, (IN_DIM0_A + IN_DIM0_B) * IN_DIM1 * IN_DIM2 /
+                                 (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -348,32 +314,76 @@ class StreamingConcatWidth {
     return r;
   }
 
-  public:
+  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[DIM1_UNROLL],
+                            size_t i_dim0) {
+#pragma HLS inline
+    TInputWord input_word;
+    TOutputWord output_word;
+    Quantizer quantizer;
+
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      // Read the input data structure from the input streams.
+      if (i_dim0 < IN_DIM0_A) {
+        input_word = i_dataA[i_dim1_par].read();
+      } else {
+        input_word = i_dataB[i_dim1_par].read();
+      }
+
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        // Extract the data for the current pixel channel.
+        TInput input_data = input_word[i_dim2_par];
+
+        // Quantize the sum.
+        TOutput output_data = quantizer(input_data);
+
+        // Store the quantized data in the output structure.
+        output_word[i_dim2_par] = output_data;
+      }
+      o_data[i_dim1_par].write(output_word);
+    }
+  }
+};
+
+template <typename TInputWord, typename TInput, typename TOutputWord,
+          typename TOutput, typename Quantizer, size_t IN_DIM0,
+          size_t IN_DIM1_A, size_t IN_DIM1_B, size_t IN_DIM2,
+          size_t DIM1_UNROLL, size_t DIM2_UNROLL>
+class StreamingConcatDim1 {
+  static_assert(IN_DIM1_A % DIM1_UNROLL == 0,
+                "DIM1_UNROLL must divide IN_DIM1_A");
+  static_assert(IN_DIM1_B % DIM1_UNROLL == 0,
+                "DIM1_UNROLL must divide IN_DIM1_B");
+  static_assert(IN_DIM2 % DIM2_UNROLL == 0, "DIM2_UNROLL must divide IN_DIM2");
+
+public:
   void step_init(size_t pipeline_depth = 1) {
     auto &st = registry()[this];
     st.init(pipeline_depth);
   }
 
-  StreamingConcatWidth() = default;
+  StreamingConcatDim1() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[W_PAR],
-           hls::stream<TInputWord> i_dataB[W_PAR],
-           hls::stream<TOutputWord> o_data[W_PAR]) {
-    for (size_t i_h = 0; i_h < IN_HEIGHT; i_h++) {
-      for (size_t i_w = 0; i_w < (IN_WIDTH_A + IN_WIDTH_B); i_w += W_PAR) {
+  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
+    for (size_t i_dim0 = 0; i_dim0 < IN_DIM0; i_dim0++) {
+      for (size_t i_dim1 = 0; i_dim1 < (IN_DIM1_A + IN_DIM1_B);
+           i_dim1 += DIM1_UNROLL) {
       STREAMINGCONCATWIDTH_RUN_LOOP:
-        for (size_t i_ch = 0; i_ch < IN_CH / CH_PAR; i_ch++) {
+        for (size_t i_dim2 = 0; i_dim2 < IN_DIM2 / DIM2_UNROLL; i_dim2++) {
 #pragma HLS PIPELINE II = 1
-          StreamingConcatWidth::pipeline_body(i_dataA, i_dataB, o_data, i_w);
+          StreamingConcatDim1::pipeline_body(i_dataA, i_dataB, o_data, i_dim1);
         }
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[W_PAR],
-                   hls::stream<TInputWord> i_dataB[W_PAR],
-                   hls::stream<TOutputWord> o_data[W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -381,14 +391,14 @@ class StreamingConcatWidth {
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.i_w < IN_WIDTH_A) {
-        if (i_dataA[i_w_par].empty()) {
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.i_dim1 < IN_DIM1_A) {
+        if (i_dataA[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
       } else {
-        if (i_dataB[i_w_par].empty()) {
+        if (i_dataB[i_dim1_par].empty()) {
           firing_condition = false;
           break;
         }
@@ -396,21 +406,22 @@ class StreamingConcatWidth {
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> o_data_instant[W_PAR];
-      StreamingConcatWidth::pipeline_body(i_dataA, i_dataB, o_data_instant, st.i_w);
+      hls::stream<TOutputWord> o_data_instant[DIM1_UNROLL];
+      StreamingConcatDim1::pipeline_body(i_dataA, i_dataB, o_data_instant,
+                                         st.i_dim1);
 
       // Update iterators
-      st.i_ch++;
-      if (st.i_ch >= IN_CH / CH_PAR) {
-        st.i_ch = 0;
-        st.i_w+= W_PAR;
+      st.i_dim2++;
+      if (st.i_dim2 >= IN_DIM2 / DIM2_UNROLL) {
+        st.i_dim2 = 0;
+        st.i_dim1 += DIM1_UNROLL;
       }
-      if (st.i_w >= (IN_WIDTH_A + IN_WIDTH_B)) {
-        st.i_w = 0;
-        st.i_h++;
+      if (st.i_dim1 >= (IN_DIM1_A + IN_DIM1_B)) {
+        st.i_dim1 = 0;
+        st.i_dim0++;
       }
-      if (st.i_h >= IN_HEIGHT) {
-        st.i_h = 0;
+      if (st.i_dim0 >= IN_DIM0) {
+        st.i_dim0 = 0;
       }
 
       // Insert the firing status for the current step.
@@ -418,14 +429,14 @@ class StreamingConcatWidth {
 
       // Add the output to the delayed output buffers
       TOutputWord out_value;
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        out_value = o_data_instant[i_w_par].read();
-        st.delayed_output[i_w_par].push(out_value, true);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        out_value = o_data_instant[i_dim1_par].read();
+        st.delayed_output[i_dim1_par].push(out_value, true);
       }
     } else {
       // If not firing, push invalid data to maintain pipeline timing
-      for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-        st.delayed_output[i_w_par].push(TOutputWord(), false);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output[i_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -434,9 +445,9 @@ class StreamingConcatWidth {
 
     // Read from the delayed output buffers
     TOutputWord out_value;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out_value)) {
-        o_data[i_w_par].write(out_value);
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output[i_dim1_par].pop(out_value)) {
+        o_data[i_dim1_par].write(out_value);
       }
     }
 
@@ -444,33 +455,61 @@ class StreamingConcatWidth {
   }
 
 private:
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[W_PAR],
-                            hls::stream<TInputWord> i_dataB[W_PAR],
-                            hls::stream<TOutputWord> o_data[W_PAR], size_t i_w) {
+  struct StepState {
+    // Loop iteration indexes.
+    size_t i_dim0 = 0, i_dim1 = 0, i_dim2 = 0;
+
+    PipelineDelayBuffer<TOutputWord> delayed_output[DIM1_UNROLL];
+    ActorStatus actor_status{1, 1};
+    bool initialized = false;
+
+    void init(size_t depth) {
+      if (initialized)
+        return;
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
+        delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
+      }
+      actor_status =
+          ActorStatus(depth, IN_DIM0 * (IN_DIM1_A + IN_DIM1_B) * IN_DIM2 /
+                                 (DIM2_UNROLL * DIM1_UNROLL));
+      initialized = true;
+    }
+  };
+
+  using Registry = std::unordered_map<const void *, StepState>;
+  static Registry &registry() {
+    static Registry r;
+    return r;
+  }
+
+  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[DIM1_UNROLL],
+                            size_t i_dim1) {
 #pragma HLS inline
-    TInputWord s_input_struct;
-    TOutputWord s_output_struct;
+    TInputWord input_word;
+    TOutputWord output_word;
     Quantizer quantizer;
 
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       // Read the input data structure from the input streams.
-      if (i_w < IN_WIDTH_A) {
-        s_input_struct = i_dataA[i_w_par].read();
+      if (i_dim1 < IN_DIM1_A) {
+        input_word = i_dataA[i_dim1_par].read();
       } else {
-        s_input_struct = i_dataB[i_w_par].read();
+        input_word = i_dataB[i_dim1_par].read();
       }
 
-      for (size_t i_ch_par = 0; i_ch_par < CH_PAR; i_ch_par++) {
+      for (size_t i_ch_par = 0; i_ch_par < DIM2_UNROLL; i_ch_par++) {
         // Extract the data for the current pixel channel.
-        TInput s_input_data = s_input_struct[i_ch_par];
+        TInput input_data = input_word[i_ch_par];
 
         // Quantize the sum.
-        TOutput s_output_data = quantizer(s_input_data);
+        TOutput output_data = quantizer(input_data);
 
         // Store the quantized data in the output structure.
-        s_output_struct[i_ch_par] = s_output_data;
+        output_word[i_ch_par] = output_data;
       }
-      o_data[i_w_par].write(s_output_struct);
+      o_data[i_dim1_par].write(output_word);
     }
   }
 };
