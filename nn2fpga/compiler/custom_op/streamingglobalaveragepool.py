@@ -6,7 +6,8 @@ from onnxscript.rewriter import pattern
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
@@ -176,24 +177,15 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingGlobalAveragePool operation. """
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        input_shape = self.require_input_shape(model, 0)
+        output_shape = self.require_output_shape(model, 0)
 
         # Create the StreamingGlobalAveragePool object.
         StreamingGlobalAveragePool = cpp_object(
@@ -273,6 +265,14 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             self.__get_stream_name(self.onnx_node.input[0]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingGlobalAveragePool accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingGlobalAveragePool produces only NHWC layout. """
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -285,11 +285,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
           initializers: List[onnx.TensorProto]
           fifo: Dict[str, TensorFifo]
         """
-
-        point = self.__current_dse_point()
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -333,9 +329,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        input_shape = self.require_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -368,26 +362,12 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         def divisors(n, clip):
             return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
+        input_shape = self.require_input_shape(model, 0)
 
         DSE_points = []
         for channel_unroll in divisors(input_shape[1], input_shape[1]):
