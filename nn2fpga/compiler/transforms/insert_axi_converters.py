@@ -27,7 +27,7 @@ class InsertAXIConverters(Transformation):
             if (
                 consumers is not None
                 and len(consumers) == 1
-                and consumers[0].op_type == "NHWCToStream"
+                and consumers[0].op_type == "AXIToStream"
             ):
                 # This input is already transformed, skip it.
                 continue
@@ -35,15 +35,15 @@ class InsertAXIConverters(Transformation):
             orig_input_name = inp.name
             produce_stream_output = f"{orig_input_name}_streamed"
 
-            # Create the custom node NHWCToStream
+            # Create the custom node AXIToStream
             produce_node = helper.make_node(
-                op_type="NHWCToStream",
+                op_type="AXIToStream",
                 domain="nn2fpga.compiler.custom_op",
                 inputs=[orig_input_name],
                 outputs=[produce_stream_output],
                 normalize=0,
                 axi_bitwidth=board_res["axi_bitwidth"],
-                name=f"NHWCToStream_{i}",
+                name=f"AXIToStream_{i}",
             )
 
             model.set_tensor_shape(
@@ -61,7 +61,7 @@ class InsertAXIConverters(Transformation):
                         node.input[j] = produce_stream_output
 
             new_nodes.append(produce_node)
-            logger.info(f"Inserted NHWCToStream node for input {orig_input_name}")
+            logger.info(f"Inserted AXIToStream node for input {orig_input_name}")
 
         # Insert all new nodes at the beginning
         for node in reversed(new_nodes):
@@ -70,21 +70,21 @@ class InsertAXIConverters(Transformation):
         new_nodes = []
         for i, out in enumerate(model.graph.output):
             producer = model.find_producer(out.name)
-            if producer is None or producer.op_type == "StreamToNHWC":
+            if producer is None or producer.op_type == "StreamToAXI":
                 # This output is already transformed, skip it.
                 continue
 
             orig_output_name = out.name
             consume_stream_output = f"{orig_output_name}_streamed"
 
-            # Create the custom node StreamToNHWC
+            # Create the custom node StreamToAXI
             consume_node = helper.make_node(
-                op_type="StreamToNHWC",
+                op_type="StreamToAXI",
                 domain="nn2fpga.compiler.custom_op",
                 inputs=[consume_stream_output],
                 outputs=[orig_output_name],
                 axi_bitwidth=board_res["axi_bitwidth"],
-                name=f"StreamToNHWC_{i}",
+                name=f"StreamToAXI_{i}",
             )
 
             # Rewire all the producers of orig_output_name to produce to consume_stream_output
@@ -99,7 +99,7 @@ class InsertAXIConverters(Transformation):
             if tq is not None:
                 set_custom_tensor_datatype(model, consume_stream_output, tq)
             new_nodes.append(consume_node)
-            logger.info(f"Inserted StreamToNHWC node for output {orig_output_name}")
+            logger.info(f"Inserted StreamToAXI node for output {orig_output_name}")
 
         # Insert all new nodes at the beginning
         for node in new_nodes:

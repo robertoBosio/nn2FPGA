@@ -2,6 +2,8 @@ from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from onnxscript.rewriter import rewrite
 from nn2fpga.compiler.custom_op.register_rewrite_rule import collect_rule_buckets
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.custom_op.base import CustomOp
 from onnxscript import ir
 import logging
 logger = logging.getLogger(__name__)
@@ -29,5 +31,12 @@ class LowerToNN2FPGALayers(Transformation):
             model = rewrite(model, pattern_rewrite_rules=ruleset)
         model = ir.to_proto(model)
         model = ModelWrapper(model)
+
+        for node in model.graph.node:
+            op = getCustomOp(node)
+            if not isinstance(op, CustomOp):
+                raise ValueError(
+                    f"Expected all nodes to be CustomOps after lowering to nn2FPGA layers, but found a non-CustomOp: {node.op_type}"
+                )
 
         return (model, False)

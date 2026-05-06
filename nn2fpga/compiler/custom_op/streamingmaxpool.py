@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from onnx import helper
 from onnxscript.rewriter import pattern
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -20,15 +20,15 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
         filter_width_unroll: int
         filter_height_unroll: int
 
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
                 "filter_width_unroll": self.filter_width_unroll,
                 "filter_height_unroll": self.filter_height_unroll,
             }
@@ -36,8 +36,8 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         @staticmethod
         def from_dict(d: dict) -> "StreamingMaxPool.DSEPoint":
             return StreamingMaxPool.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
                 filter_width_unroll=d["filter_width_unroll"],
                 filter_height_unroll=d["filter_height_unroll"],
             )
@@ -88,8 +88,8 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             "ceil_mode": ("i", False, 0),
 
             # Custom attributes for parallelization of StreamingMaxPool
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             "filter_height_unroll": ("i", False, 1),
             "filter_width_unroll": ("i", False, 1),
 
@@ -154,25 +154,14 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingMaxPool operation. """
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_shape = self.require_output_shape(model, 0)
 
         # Create the StreamingMaxPool object.
         StreamingMaxPool = cpp_object(
@@ -181,12 +170,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             template_args=[
                 (
                     f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
-                    "TInputStruct",
+                    "TInputWord",
                 ),
                 (f"{get_hls_quant_type(input_quant)}", "TInput"),
                 (
                     f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
-                    "TOutputStruct",
+                    "TOutputWord",
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (f"{self.__get_quantizer(input_quant, output_quant)}", "Quantizer"),
@@ -197,8 +186,8 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
                 (self.get_nodeattr("kernel_shape")[1], "FW"),
                 (self.get_nodeattr("strides")[0], "STRIDE_H"),
                 (self.get_nodeattr("strides")[1], "STRIDE_W"),
-                (point.channel_unroll, "CH_PAR"),
-                (point.width_unroll, "W_PAR"),
+                (point.dim2_unroll, "CH_PAR"),
+                (point.dim1_unroll, "W_PAR"),
             ],
         )
 
@@ -223,11 +212,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputStruct>",
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputStruct>",
+                    f"hls::stream<TOutputWord>",
                 ),
             ),
         )
@@ -248,11 +237,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputStruct>",
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputStruct>",
+                    f"hls::stream<TOutputWord>",
                 ),
             ),
         )
@@ -266,11 +255,19 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def __current_dse_point(self) -> "StreamingMaxPool.DSEPoint":
         """ Retrieve the current DSE point from the ONNX attributes. """
         return StreamingMaxPool.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+            dim2_unroll=self.get_nodeattr("dim2_unroll"),
+            dim1_unroll=self.get_nodeattr("dim1_unroll"),
             filter_height_unroll=self.get_nodeattr("filter_height_unroll"),
             filter_width_unroll=self.get_nodeattr("filter_width_unroll"),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingMaxPool accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingMaxPool produces only NHWC layout. """
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -284,10 +281,8 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         FH = self.get_nodeattr("kernel_shape")[0]
         FW = self.get_nodeattr("kernel_shape")[1]
         STRIDE_W = self.get_nodeattr("strides")[1]
-        FW_EXTENDED = FW + (point.width_unroll - 1) * STRIDE_W
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        FW_EXTENDED = FW + (point.dim1_unroll - 1) * STRIDE_W
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -331,17 +326,13 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        input_shape = self.require_input_shape(model, 0)
+        output_shape = self.require_output_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
-        return np.prod(output_shape) // (point.channel_unroll * point.width_unroll)
+        return np.prod(output_shape) // (point.dim2_unroll * point.dim1_unroll)
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingMaxPool operation.
@@ -363,7 +354,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         # It is not actually using any DSPs, but we need to force the DSE to
         # to choose lower unrolling factors to reduce resource usage.
         point = self.__current_dse_point()
-        return (point.channel_unroll * point.width_unroll)
+        return (point.dim2_unroll * point.dim1_unroll)
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingMaxPool.DSEPoint"]:
         """ Generate the DSE points for the StreamingMaxPool operation.
@@ -378,47 +369,27 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
 
         kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_shape = self.require_output_shape(model, 0)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors(output_shape[1], output_shape[1]):
-            for width_unroll in divisors(output_shape[3], output_shape[3]):
+        for dim2_unroll in divisors(output_shape[1], output_shape[1]):
+            for dim1_unroll in divisors(output_shape[3], output_shape[3]):
                 # Check dimension of input streams
-                if (input_bits * channel_unroll) > 4096:
+                if (input_bits * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
-                if (output_bits * channel_unroll) > 4096:
+                if (output_bits * dim2_unroll) > 4096:
                     continue
 
                 DSE_points.append(
                     self.DSEPoint(
-                        channel_unroll, width_unroll, kernel_height, kernel_width
+                        dim2_unroll, dim1_unroll, kernel_height, kernel_width
                     )
                 )
 
@@ -440,7 +411,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         if (
             all(k == 1 for k in kernel_shape)
             and all(s == 1 for s in stride)
-            and point.width_unroll == 1
+            and point.dim1_unroll == 1
             and all(p == 0 for p in pads)
         ):
             return False
@@ -452,12 +423,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingMaxPool.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
         self.set_nodeattr("filter_width_unroll", point.filter_width_unroll)
         self.set_nodeattr("filter_height_unroll", point.filter_height_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

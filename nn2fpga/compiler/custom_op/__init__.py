@@ -25,8 +25,8 @@ from nn2fpga.compiler.custom_op.streamingswish import StreamingSwish
 from nn2fpga.compiler.custom_op.streamingupsample import StreamingUpsample
 from nn2fpga.compiler.custom_op.streamingyoloattention import StreamingYoloAttention
 from nn2fpga.compiler.custom_op.streamingyoloheadsoftmax import StreamingYoloHeadSoftmax
-from nn2fpga.compiler.custom_op.streamtonhwc import StreamToNHWC
-from nn2fpga.compiler.custom_op.tensorduplicator import TensorDuplicator
+from nn2fpga.compiler.custom_op.streamtoaxi import StreamToAXI
+from nn2fpga.compiler.custom_op.streamingtensorduplicator import StreamingTensorDuplicator
 
 custom_op = {
     "BandwidthAdjustDecreaseWord": BandwidthAdjustDecreaseWord,
@@ -56,6 +56,6 @@ custom_op = {
     "StreamingUpsample": StreamingUpsample,
     "StreamingYoloAttention": StreamingYoloAttention,
     "StreamingYoloHeadSoftmax": StreamingYoloHeadSoftmax,
-    "StreamToNHWC": StreamToNHWC,
-    "TensorDuplicator": TensorDuplicator,
+    "StreamToAXI": StreamToAXI,
+    "StreamingTensorDuplicator": StreamingTensorDuplicator,
 }

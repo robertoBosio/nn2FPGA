@@ -27,32 +27,32 @@ class TestStreamingSplit(BaseHLSTest):
 
         split_array = []
         if config_dict['SPLIT_AXIS'] == 1:  # Channel axis
-            config_dict['OUT_CH0'] = config_dict['SPLIT_POINT']
-            config_dict['OUT_CH1'] = config_dict['IN_CH'] - config_dict['SPLIT_POINT']
-            config_dict['OUT_HEIGHT0'] = config_dict['IN_HEIGHT']
-            config_dict['OUT_HEIGHT1'] = config_dict['IN_HEIGHT']
-            config_dict['OUT_WIDTH0'] = config_dict['IN_WIDTH']
-            config_dict['OUT_WIDTH1'] = config_dict['IN_WIDTH']
-            split_array = [config_dict['OUT_CH0'], config_dict['OUT_CH1']]
-            class_name = "StreamingSplitChannels"
+            config_dict['OUT_DIM2_A'] = config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM2_B'] = config_dict['IN_DIM2'] - config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM0_A'] = config_dict['IN_DIM0']
+            config_dict['OUT_DIM0_B'] = config_dict['IN_DIM0']
+            config_dict['OUT_DIM1_A'] = config_dict['IN_DIM1']
+            config_dict['OUT_DIM1_B'] = config_dict['IN_DIM1']
+            split_array = [config_dict['OUT_DIM2_A'], config_dict['OUT_DIM2_B']]
+            class_name = "StreamingSplitDim2"
         elif config_dict['SPLIT_AXIS'] == 2:  # Height axis
-            config_dict['OUT_HEIGHT0'] = config_dict['SPLIT_POINT']
-            config_dict['OUT_HEIGHT1'] = config_dict['IN_HEIGHT'] - config_dict['SPLIT_POINT']
-            config_dict['OUT_CH0'] = config_dict['IN_CH']
-            config_dict['OUT_CH1'] = config_dict['IN_CH']
-            config_dict['OUT_WIDTH0'] = config_dict['IN_WIDTH']
-            config_dict['OUT_WIDTH1'] = config_dict['IN_WIDTH']
-            split_array = [config_dict['OUT_HEIGHT0'], config_dict['OUT_HEIGHT1']]
-            class_name = "StreamingSplitHeights"
+            config_dict['OUT_DIM0_A'] = config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM0_B'] = config_dict['IN_DIM0'] - config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM2_A'] = config_dict['IN_DIM2']
+            config_dict['OUT_DIM2_B'] = config_dict['IN_DIM2']
+            config_dict['OUT_DIM1_A'] = config_dict['IN_DIM1']
+            config_dict['OUT_DIM1_B'] = config_dict['IN_DIM1']
+            split_array = [config_dict['OUT_DIM0_A'], config_dict['OUT_DIM0_B']]
+            class_name = "StreamingSplitDim0"
         elif config_dict['SPLIT_AXIS'] == 3:  # Width axis
-            config_dict['OUT_WIDTH0'] = config_dict['SPLIT_POINT']
-            config_dict['OUT_WIDTH1'] = config_dict['IN_WIDTH'] - config_dict['SPLIT_POINT']
-            config_dict['OUT_CH0'] = config_dict['IN_CH']
-            config_dict['OUT_CH1'] = config_dict['IN_CH']
-            config_dict['OUT_HEIGHT0'] = config_dict['IN_HEIGHT']
-            config_dict['OUT_HEIGHT1'] = config_dict['IN_HEIGHT']
-            split_array = [config_dict['OUT_WIDTH0'], config_dict['OUT_WIDTH1']]
-            class_name = "StreamingSplitWidths"
+            config_dict['OUT_DIM1_A'] = config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM1_B'] = config_dict['IN_DIM1'] - config_dict['SPLIT_POINT']
+            config_dict['OUT_DIM2_A'] = config_dict['IN_DIM2']
+            config_dict['OUT_DIM2_B'] = config_dict['IN_DIM2']
+            config_dict['OUT_DIM0_A'] = config_dict['IN_DIM0']
+            config_dict['OUT_DIM0_B'] = config_dict['IN_DIM0']
+            split_array = [config_dict['OUT_DIM1_A'], config_dict['OUT_DIM1_B']]
+            class_name = "StreamingSplitDim1"
 
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
         out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
@@ -72,9 +72,9 @@ class TestStreamingSplit(BaseHLSTest):
             int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["IN_DIM2"],
+                config_dict["IN_DIM0"],
+                config_dict["IN_DIM1"],
             ),
             dtype=np_in_type,
         )
@@ -82,17 +82,17 @@ class TestStreamingSplit(BaseHLSTest):
         X = helper.make_tensor_value_info(
             "X",
             onnx_in_type,
-            [1, config_dict["IN_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]],
+            [1, config_dict["IN_DIM2"], config_dict["IN_DIM0"], config_dict["IN_DIM1"]],
         )
         Y0 = helper.make_tensor_value_info(
             "Y0",
             onnx_out_type,
-            [1, config_dict["OUT_CH0"], config_dict["OUT_HEIGHT0"], config_dict["OUT_WIDTH0"]],
+            [1, config_dict["OUT_DIM2_A"], config_dict["OUT_DIM0_A"], config_dict["OUT_DIM1_A"]],
         )
         Y1 = helper.make_tensor_value_info(
             "Y1",
             onnx_out_type,
-            [1, config_dict["OUT_CH1"], config_dict["OUT_HEIGHT1"], config_dict["OUT_WIDTH1"]],
+            [1, config_dict["OUT_DIM2_B"], config_dict["OUT_DIM0_B"], config_dict["OUT_DIM1_B"]],
         )
 
         X_scale = helper.make_tensor("X_scale", TensorProto.FLOAT, [], [float(config_dict["X_SCALE"])])
@@ -167,15 +167,15 @@ class TestStreamingSplit(BaseHLSTest):
 
         typedef_suffix = "u" if in_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
-        cwr.add_line(f"using TInputWord = std::array<TInput, CH_PAR>;")
+        cwr.add_line(f"using TInputWord = std::array<TInput, DIM2_UNROLL>;")
 
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
-        cwr.add_line(f"using TOutputWord = std::array<TOutput, CH_PAR>;")
+        cwr.add_line(f"using TOutputWord = std::array<TOutput, DIM2_UNROLL>;")
 
         cwr.add_line(f"typedef DequantQuantPo2<{shift}, TInput, TOutput> Quantizer;")
         cwr.add_line(
-            f"using StreamingSplit = {class_name}<TInputWord, TInput, TOutputWord, TOutput, Quantizer, SPLIT_POINT, IN_HEIGHT, IN_WIDTH, IN_CH, CH_PAR, W_PAR>;"
+            f"using StreamingSplit = {class_name}<TInputWord, TInput, TOutputWord, TOutput, Quantizer, SPLIT_POINT, IN_DIM0, IN_DIM1, IN_DIM2, DIM2_UNROLL, DIM1_UNROLL>;"
         )
 
         cwr.add_lines(
@@ -211,11 +211,11 @@ class TestStreamingSplit(BaseHLSTest):
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": False,
-            "IN_HEIGHT": 2,
-            "IN_WIDTH": 2,
-            "IN_CH": 16,
-            "CH_PAR": 2,
-            "W_PAR": 2,
+            "IN_DIM0": 2,
+            "IN_DIM1": 2,
+            "IN_DIM2": 16,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
             "SPLIT_AXIS": 1,  # Channel axis
             "SPLIT_POINT": 4,
             "X_SCALE": 2**-2,
@@ -233,11 +233,11 @@ class TestStreamingSplit(BaseHLSTest):
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": False,
-            "IN_HEIGHT": 2,
-            "IN_WIDTH": 16,
-            "IN_CH": 2,
-            "CH_PAR": 2,
-            "W_PAR": 2,
+            "IN_DIM0": 2,
+            "IN_DIM1": 16,
+            "IN_DIM2": 2,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
             "SPLIT_AXIS": 3,  # Width axis
             "SPLIT_POINT": 4,
             "X_SCALE": 2**-2,
@@ -255,11 +255,11 @@ class TestStreamingSplit(BaseHLSTest):
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": False,
-            "IN_HEIGHT": 16,
-            "IN_WIDTH": 2,
-            "IN_CH": 2,
-            "CH_PAR": 2,
-            "W_PAR": 2,
+            "IN_DIM0": 16,
+            "IN_DIM1": 2,
+            "IN_DIM2": 2,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
             "SPLIT_AXIS": 2,  # Height axis
             "SPLIT_POINT": 4,
             "X_SCALE": 2**-2,

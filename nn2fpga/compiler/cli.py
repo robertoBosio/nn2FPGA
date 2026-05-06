@@ -36,6 +36,7 @@ def load_config(config_path: str) -> dict:
             "OptimizeBitwidth": True,
             "AddStreamingParams": True,
             "ComputeFifoDepth": True,
+            "OptimizeFifo": True,
             "Simulate": True,
             "Deploy": True,
         })  

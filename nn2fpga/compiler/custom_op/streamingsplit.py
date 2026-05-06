@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from onnx import helper
 from onnxscript.rewriter import pattern
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -29,20 +30,20 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
 
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
 
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
             }
 
         @staticmethod
         def from_dict(d: dict) -> "StreamingSplit.DSEPoint":
             return StreamingSplit.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
             )
 
     @staticmethod
@@ -88,8 +89,8 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
     def get_nodeattr_types(self):
         return {
             # Custom attributes for parallelization of StreamingSplit
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -153,41 +154,30 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingSplit operation. """
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-
+        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         split_point = self.get_nodeattr("split")[0]
         axis = self.get_nodeattr("axis")
+        if axis < 0:
+            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
+        axis_permuted = input_layout.perm.index(axis)
+        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        axis_strings = {1: "Dim0", 2: "Dim1", 3: "Dim2"}
+        if axis_permuted not in axis_strings:
+            raise ValueError(f"Unsupported split axis after permutation: {axis_permuted}. Only splitting along dimensions 1, 2, or 3 is supported.")
 
-        if axis == 1:
-            operator_name = "StreamingSplitChannels"
-        elif axis == 3:
-            operator_name = "StreamingSplitWidths"
-        elif axis == 2:
-            operator_name = "StreamingSplitHeights"
-        else:
-            raise ValueError(f"StreamingSplit does not support splitting along axis {axis}.")
+        class_name = f"StreamingSplit{axis_strings[axis_permuted]}"
 
         # Create the StreamingSplit object.
         StreamingSplit = cpp_object(
-            operator_name,
+            class_name,
             f"{self.onnx_node.name}",
             template_args=[
                 (
@@ -202,11 +192,11 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (f"{self.__get_quantizer(input_quant, output_quant)}", "Quantizer"),
                 (split_point, "SPLIT"),
-                (input_shape[2], "IN_HEIGHT"),
-                (input_shape[3], "IN_WIDTH"),
-                (input_shape[1], "IN_CH"),
-                (point.channel_unroll, "CH_PAR"),
-                (point.width_unroll, "W_PAR"),
+                (input_shape_permuted[1], "DIM0"),
+                (input_shape_permuted[2], "DIM1"),
+                (input_shape_permuted[3], "DIM2"),
+                (point.dim1_unroll, "DIM1_UNROLL"),
+                (point.dim2_unroll, "DIM2_UNROLL"),
             ],
         )
 
@@ -276,9 +266,17 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
     def __current_dse_point(self) -> "StreamingSplit.DSEPoint":
         """ Retrieve the current DSE point from the ONNX attributes. """
         return StreamingSplit.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+            dim2_unroll=self.get_nodeattr("dim2_unroll"),
+            dim1_unroll=self.get_nodeattr("dim1_unroll"),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingSplit is layout-agnostic, so it accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingSplit is layout-agnostic, so it produces the same layout as input. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -288,9 +286,7 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -340,16 +336,12 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_shape = self.require_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
-        return np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        return np.prod(input_shape) // (point.dim2_unroll * point.dim1_unroll)
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingSplit operation.
@@ -384,59 +376,38 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
                 if (all(x % i == 0 for x in n) and i <= clip)
             ]
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-        output_shape0 = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape0 is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape0 = output_shape0 + [1] * (4 - len(output_shape0))  # Ensure 4D shape.
-        output_shape1 = model.get_tensor_shape(self.onnx_node.output[1])
-        if output_shape1 is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[1]}' not found in model."
-            )
-        output_shape1 = output_shape1 + [1] * (4 - len(output_shape1))  # Ensure 4D shape.
+        output_layout0 = require_tensor_layout(model, self.onnx_node.output[0])
+        output_layout1 = require_tensor_layout(model, self.onnx_node.output[1])
+        output_shape0 = self.require_output_shape(model, 0)
+        output_shape1 = self.require_output_shape(model, 1)
+        output_shape0_permuted = [output_shape0[i] for i in output_layout0.perm]
+        output_shape1_permuted = [output_shape1[i] for i in output_layout1.perm]
 
-        # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors(
-            [output_shape0[1], output_shape1[1]],
-            min(output_shape0[1], output_shape1[1]),
+        for dim2_unroll in divisors(
+            [output_shape0_permuted[3], output_shape1_permuted[3]],
+            min(output_shape0_permuted[3], output_shape1_permuted[3]),
         ):
-            for width_unroll in divisors(
-                [output_shape0[3], output_shape1[3]],
-                min(output_shape0[3], output_shape1[3]),
+            for dim1_unroll in divisors(
+                [output_shape0_permuted[2], output_shape1_permuted[2]],
+                min(output_shape0_permuted[2], output_shape1_permuted[2]),
             ):
                 # Check dimension of input streams
-                if (input_bits * channel_unroll) > 4096:
+                if (input_bits * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
-                if (output_bits * channel_unroll) > 4096:
+                if (output_bits * dim2_unroll) > 4096:
                     continue
 
                 DSE_points.append(
                     self.DSEPoint(
-                        channel_unroll, width_unroll
+                        dim2_unroll, dim1_unroll
                     )
                 )
 
@@ -454,10 +425,10 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingSplit.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

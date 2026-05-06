@@ -1,5 +1,5 @@
 #include "DequantQuant.hpp"
-#include "StreamingLUT.hpp"
+#include "StreamingReshape.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -11,17 +11,16 @@
 #include <unordered_map>
 
 using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
-using TOutputWord = std::array<test_config::TOutput, test_config::DIM2_UNROLL>;
+using TOutputWord = TInputWord;
 
 void wrap_run(hls::stream<TInputWord> i_data[test_config::DIM1_UNROLL],
-              const test_config::TOutput LUTmem[test_config::LUT_SIZE],
               hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
-  StreamingLUT<TInputWord, test_config::TInput, TOutputWord,
-               test_config::TOutput, test_config::LUT_SIZE, test_config::DIM0,
-               test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
-               test_config::DIM2_UNROLL>
-      streaming_lut;
-  streaming_lut.run<0>(i_data, LUTmem, o_data);
+  StreamingReshape<TInputWord, test_config::TInput, TOutputWord,
+                test_config::TOutput, test_config::Quantizer, test_config::DIM0,
+                test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+                test_config::DIM2_UNROLL>
+      streaming_reshape;
+  streaming_reshape.run<0>(i_data, o_data);
 }
 
 bool test_run() {
@@ -31,10 +30,10 @@ bool test_run() {
   hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
 
   // Fill input streams with test data
-  for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
-    for (size_t i_dim1 = 0; i_dim1 < test_config::DIM1;
+  for (size_t i_dim0 = 0; i_dim0 < test_config::IN_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < test_config::IN_DIM1;
          i_dim1 += test_config::DIM1_UNROLL) {
-      for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+      for (size_t i_dim2 = 0; i_dim2 < test_config::IN_DIM2;
            i_dim2 += test_config::DIM2_UNROLL) {
         for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
              i_dim1_par++) {
@@ -52,14 +51,14 @@ bool test_run() {
   }
 
   // Run the operator
-  wrap_run(in_stream, test_config::LUTmem, out_stream);
+  wrap_run(in_stream, out_stream);
 
   // Check output
   bool flag = true;
-  for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
-    for (size_t i_dim1 = 0; i_dim1 < test_config::DIM1;
+  for (size_t i_dim0 = 0; i_dim0 < test_config::OUT_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < test_config::OUT_DIM1;
          i_dim1 += test_config::DIM1_UNROLL) {
-      for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+      for (size_t i_dim2 = 0; i_dim2 < test_config::OUT_DIM2;
            i_dim2 += test_config::DIM2_UNROLL) {
         for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
              i_dim1_par++) {
@@ -73,7 +72,8 @@ bool test_run() {
             if (!cmp) {
               std::cout
                   << "Mismatch at index (i_dim0=" << i_dim0
-                  << ", i_dim2=" << i_dim2 << ", i_dim1_par=" << i_dim1_par
+                  << ", i_dim1=" << i_dim1 << ", i_dim2=" << i_dim2
+                  << ", i_dim1_par=" << i_dim1_par
                   << ", i_dim2_par=" << i_dim2_par
                   << "): " << output_word[i_dim2_par] << " != "
                   << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
@@ -100,12 +100,12 @@ bool test_step() {
   hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
   hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
 
-  StreamingLUT<TInputWord, test_config::TInput, TOutputWord,
-               test_config::TOutput, test_config::LUT_SIZE, test_config::DIM0,
-               test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
-               test_config::DIM2_UNROLL>
-      streaming_lut;
-  streaming_lut.step_init(test_config::PIPELINE_DEPTH);
+  StreamingReshape<TInputWord, test_config::TInput, TOutputWord,
+                   test_config::TOutput, test_config::Quantizer, test_config::DIM0,
+                   test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+                   test_config::DIM2_UNROLL>
+      streaming_reshape;
+  streaming_reshape.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;
   size_t clock_cycles = 0;
@@ -118,8 +118,7 @@ bool test_step() {
       in_stream[i_dim1_par].write(input_struct);
     }
 
-    ActorStatus actor_status =
-        streaming_lut.step(in_stream, test_config::LUTmem, out_stream);
+    ActorStatus actor_status = streaming_reshape.step(in_stream, out_stream);
     std::vector<ActorStatus> actor_statuses;
     std::vector<size_t> channel_quantities;
     actor_statuses.push_back(actor_status);

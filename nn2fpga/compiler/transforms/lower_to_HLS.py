@@ -150,8 +150,8 @@ class LowerToHLS(Transformation):
             consumer = model.find_consumer(input.name)
             if consumer is None:
                 raise ValueError(f"Input {input.name} does not have a consumer.")
-            if consumer.op_type != "NHWCToStream":
-                raise ValueError(f"Input {input.name} consumer is not NHWCToStream.")
+            if consumer.op_type != "AXIToStream":
+                raise ValueError(f"Input {input.name} consumer is not AXIToStream.")
             axi_word = getCustomOp(consumer).get_nodeattr("axi_bitwidth")
             tensor_quant = get_custom_tensor_datatype(model, input.name)
             if tensor_quant is None:
@@ -171,8 +171,8 @@ class LowerToHLS(Transformation):
             producer = model.find_producer(output.name)
             if producer is None:
                 raise ValueError(f"Output {output.name} does not have a producer.")
-            if producer.op_type != "StreamToNHWC":
-                raise ValueError(f"Output {output.name} producer is not StreamToNHWC.")
+            if producer.op_type != "StreamToAXI":
+                raise ValueError(f"Output {output.name} producer is not StreamToAXI.")
             axi_word = getCustomOp(producer).get_nodeattr("axi_bitwidth")
             tensor_quant = get_custom_tensor_datatype(model, output.name)
             output_shape = model.get_tensor_shape(output.name)

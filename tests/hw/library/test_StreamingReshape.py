@@ -4,15 +4,15 @@ import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
 
-class TestStreamingReLU(BaseHLSTest):
+class TestStreamingReshape(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return "StreamingReLU"
+        return "StreamingReshape"
 
     @property
     def unit_filename(self):
-        return "StreamingReLU"
+        return "StreamingReshape"
 
     def generate_config_file(self, config_dict):
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
@@ -33,9 +33,9 @@ class TestStreamingReLU(BaseHLSTest):
             int(in_info.max) + 1,
             size=(
                 1,
-                config_dict["DIM2"],
-                config_dict["DIM0"],
-                config_dict["DIM1"],
+                config_dict["IN_DIM2"],
+                config_dict["IN_DIM0"],
+                config_dict["IN_DIM1"],
             ),
             dtype=np_in_type,
         )
@@ -45,9 +45,9 @@ class TestStreamingReLU(BaseHLSTest):
             onnx_in_type,
             [
                 1,
-                config_dict["DIM2"],
-                config_dict["DIM0"],
-                config_dict["DIM1"],
+                config_dict["IN_DIM2"],
+                config_dict["IN_DIM0"],
+                config_dict["IN_DIM1"],
             ],
         )
         Y = helper.make_tensor_value_info(
@@ -55,9 +55,9 @@ class TestStreamingReLU(BaseHLSTest):
             onnx_out_type,
             [
                 1,
-                config_dict["DIM2"],
-                config_dict["DIM0"],
-                config_dict["DIM1"],
+                config_dict["OUT_DIM2"],
+                config_dict["OUT_DIM0"],
+                config_dict["OUT_DIM1"],
             ],
         )
 
@@ -75,10 +75,21 @@ class TestStreamingReLU(BaseHLSTest):
             inputs=["X", "X_scale", "X_zp"],
             outputs=["X_dq"],
         )
+        shape_const = helper.make_node(
+            "Constant",
+            inputs=[],
+            outputs=["shape"],
+            value=helper.make_tensor(
+                name="const_tensor",
+                data_type=TensorProto.INT64,
+                dims=[4],
+                vals=[1, config_dict["OUT_DIM2"], config_dict["OUT_DIM0"], config_dict["OUT_DIM1"]],
+            ),
+        )
 
-        relu = helper.make_node(
-            "Relu",
-            inputs=["X_dq"],
+        reshape = helper.make_node(
+            "Reshape",
+            inputs=["X_dq", "shape"],
             outputs=["Y_dq"],
         )
 
@@ -89,7 +100,7 @@ class TestStreamingReLU(BaseHLSTest):
         )
 
         graph = helper.make_graph(
-            [dqlinear, relu, qlinear],
+            [dqlinear, shape_const, reshape, qlinear],
             "qconv_test",
             [X],
             [Y],
@@ -117,6 +128,9 @@ class TestStreamingReLU(BaseHLSTest):
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
+        cwr.add_line(f"const int DIM0 = {config_dict['IN_DIM0']};")
+        cwr.add_line(f"const int DIM1 = {config_dict['IN_DIM1']};")
+        cwr.add_line(f"const int DIM2 = {config_dict['IN_DIM2']};")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
@@ -142,11 +156,14 @@ class TestStreamingReLU(BaseHLSTest):
             "INPUT_IS_UNSIGNED": 0,
             "OUTPUT_DATAWIDTH": 8,
             "OUTPUT_IS_UNSIGNED": 0,
-            "DIM0": 2,
-            "DIM1": 2,
-            "DIM2": 2,
-            "DIM2_UNROLL": 2,
-            "DIM1_UNROLL": 2,
+            "IN_DIM0": 2,
+            "IN_DIM1": 2,
+            "IN_DIM2": 4,
+            "OUT_DIM0": 1,
+            "OUT_DIM1": 4,
+            "OUT_DIM2": 4,
+            "DIM2_UNROLL": 1,
+            "DIM1_UNROLL": 1,
             "X_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
             "X_ZP": 0,

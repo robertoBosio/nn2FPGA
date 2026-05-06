@@ -1162,6 +1162,64 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
             prev_end = en
         return prev_end == dim
 
+class YoloHeadSoftmax(Pattern):
+    """
+    Match the softmax in the YOLO head, anchored at the Softmax node:
+
+      Quant -> Reshape -> Quant -> Transpose -> Quant -> Softmax -> Quant
+    """
+    name = "YoloHeadSoftmax"
+    anchor_op = "Softmax"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 1:
+            return Match(False, self.name, covered, ["Softmax missing required input"])
+
+        softmax_quant = model.find_producer(anchor_node.input[0])
+        if softmax_quant is None or not check_act_quant(model, softmax_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(anchor_node.name)
+        covered.add(softmax_quant.name)
+
+        softmax_transpose = model.find_producer(softmax_quant.input[0])
+        if softmax_transpose is None or softmax_transpose.op_type != "Transpose":
+            return Match(False, self.name, covered, ["Softmax input quant must be produced by a Transpose"])
+        covered.add(softmax_transpose.name)
+
+        transpose_quant = model.find_producer(softmax_transpose.input[0])
+        if transpose_quant is None or not check_act_quant(model, transpose_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Transpose input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(transpose_quant.name)
+
+        reshape = model.find_producer(transpose_quant.input[0])
+        if reshape is None or reshape.op_type != "Reshape":
+            return Match(False, self.name, covered, ["Transpose input must be produced by a Reshape"])
+        covered.add(reshape.name)
+
+        reshape_quant = model.find_producer(reshape.input[0])
+        if reshape_quant is None or not check_act_quant(model, reshape_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Reshape input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(reshape_quant.name)
+        return Match(True, self.name, covered, reasons)
+
 class YoloAttentionFromInputReshape(Pattern):
     """
     Match the full YOLO attention block anchored at the initial Reshape:
@@ -1184,7 +1242,6 @@ class YoloAttentionFromInputReshape(Pattern):
         -> Reshape
         -> Quant(Y_out)
 
-    Assumes explicit Quant/IntQuant nodes, not Q/DQ.
     """
 
     name = "YoloAttentionFromInputReshape"
@@ -1492,6 +1549,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "LeakyRelu": [LeakyReluQuant()],
     "Relu": [ReluQuantOrFusable()],
     "Sigmoid": [SigmoidQuant()],
+    "Softmax": [YoloHeadSoftmax()],
     "Swish": [SwishQuant()],
     "Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
     "IntQuant": [IntQuantNodePattern()],
@@ -1781,8 +1839,7 @@ class SupportedPartition(Transformation):
         }
 
         if len(partition_dict["FPGA"]) == 0:
-            logger.warning("No FPGA-supported nodes found in the model. Returning original model.")
-            return (model, False)
+            raise ValueError("No supported nodes found for FPGA partition.")
         
         # Since there is something to be run on FPGA, we import the opset of nn2fpga
         model.model.opset_import.append(

@@ -5,11 +5,11 @@ class TestStreamToNHWC(BaseHLSTest):
 
     @property
     def operator_filename(self) -> str:
-        return "StreamToNHWC"
+        return "StreamToAXI"
     
     @property
     def unit_filename(self) -> str:
-        return "StreamToNHWC"
+        return "StreamToAXI"
 
     def generate_config_file(self, config_dict):
 
@@ -41,11 +41,11 @@ class TestStreamToNHWC(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 128,
             "IN_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 4,
-            "IN_W_PAR": 1,
-            "IN_CH_PAR": 2,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 2,
             "DATA_PER_WORD": 16,
             "ITER": 32,
             "PIPELINE_DEPTH": 4,
@@ -56,11 +56,11 @@ class TestStreamToNHWC(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 64,
             "IN_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 3,
-            "IN_W_PAR": 2,
-            "IN_CH_PAR": 3,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 3,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 3,
             "DATA_PER_WORD": 8,
             "ITER": 8,
             "PIPELINE_DEPTH": 1,
@@ -71,11 +71,11 @@ class TestStreamToNHWC(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 64,
             "IN_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 3,
-            "IN_W_PAR": 1,
-            "IN_CH_PAR": 3,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 3,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 3,
             "DATA_PER_WORD": 8,
             "ITER": 16,
             "PIPELINE_DEPTH": 2,
@@ -86,11 +86,11 @@ class TestStreamToNHWC(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 128,
             "IN_DATAWIDTH": 8,
-            "WIDTH": 1,
-            "HEIGHT": 1,
-            "CH": 1000,
-            "IN_W_PAR": 1,
-            "IN_CH_PAR": 10,
+            "DIM1": 1,
+            "DIM0": 1,
+            "DIM2": 1000,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 10,
             "DATA_PER_WORD": 16,
             "ITER": 101,
             "PIPELINE_DEPTH": 4,

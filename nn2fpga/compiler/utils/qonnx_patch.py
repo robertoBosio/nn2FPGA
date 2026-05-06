@@ -142,6 +142,7 @@ def patch_qonnx_ops():
                     "new_name": input.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(input.name),
+                    "layout": None,
                     "quant": None,
                     "value": None,
                 }
@@ -168,6 +169,7 @@ def patch_qonnx_ops():
                     "new_name": output.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(output.name),
+                    "layout": None,
                     "quant": None,
                     "value": None,
                 }

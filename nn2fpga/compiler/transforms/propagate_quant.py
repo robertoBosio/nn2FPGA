@@ -21,16 +21,16 @@ logger = logging.getLogger(__name__)
 QUANT_NODE_TYPES = {"IntQuant", "Quant"}
 
 QUANT_INVARIANT_NODES = [
-    "BandwidthAdjustDecreaseChannels",  # nn2FPGA
+    "BandwidthAdjustDecreaseWord",  # nn2FPGA
     "BandwidthAdjustDecreaseStreams",  # nn2FPGA
-    "BandwidthAdjustIncreaseChannels",  # nn2FPGA
+    "BandwidthAdjustIncreaseWord",  # nn2FPGA
     "BandwidthAdjustIncreaseStreams",  # nn2FPGA
     "Concat",
     "Flatten",
     "GlobalMaxPool",
     "Identity",
     "MaxPool",
-    "NHWCToStream",  # nn2FPGA
+    "AXIToStream",  # nn2FPGA
     "Pad",
     "Reshape",
     "Slice",
@@ -39,8 +39,8 @@ QUANT_INVARIANT_NODES = [
     "StreamingLineBuffer",  # nn2FPGA
     "StreamingMaxPool",  # nn2FPGA
     "StreamingSplit",  # nn2FPGA
-    "StreamToNHWC",  # nn2FPGA
-    "TensorDuplicator",  # nn2FPGA
+    "StreamToAXI",  # nn2FPGA
+    "StreamingTensorDuplicator",  # nn2FPGA
     "Transpose",
 ]
 
@@ -241,15 +241,15 @@ def _materialize_quant_node_for_tensor(
 
     model.set_initializer(
         scale_name,
-        np.array([tensor_quant.scale], dtype=np.float32),
+        np.array(tensor_quant.scale, dtype=np.float32),
     )
     model.set_initializer(
         zeropt_name,
-        np.array([tensor_quant.zeropt], dtype=tensor_quant.get_numpy_dtype()),
+        np.array(tensor_quant.zeropt, dtype=tensor_quant.get_numpy_dtype()),
     )
     model.set_initializer(
         bitwidth_name,
-        np.array([tensor_quant.bitwidth], dtype=np.int32),
+        np.array(tensor_quant.bitwidth, dtype=np.int32),
     )
 
     if tensor_name not in graph_output_names:

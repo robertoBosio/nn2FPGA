@@ -1,30 +1,22 @@
 from attr import dataclass
-
 import numpy as np
-import onnxruntime as rt
-from onnx import TensorProto, helper
-from qonnx.custom_op.base import CustomOp
-from qonnx.util.basic import qonnx_make_model
+from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp, NodeInterface
+from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
-    cpp_function,
     cpp_variable,
     cpp_object,
     get_struct_type,
-    get_stream_type,
     get_hls_quant_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
-from nn2fpga.compiler.utils.par_utils import get_par_attributes
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
-from onnxscript import ir
 from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
-from typing import Optional, Sequence
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -69,9 +61,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
     def yolo_attention_pattern(
         op,
         x,
-
-        # input quant before reshape
-        # in_scale, in_zeropt, in_bitwidth, in_signed, in_narrow, in_rounding_mode,
 
         # reshape
         shape_in,
@@ -124,24 +113,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         # output reshapes
         shape_out_y,
         shape_out_v,
-
-        # final Y quant
-        # y_scale, y_zeropt, y_bitwidth, y_signed, y_narrow, y_rounding_mode,
-
-        # final V-out quant
-        # vo_scale, vo_zeropt, vo_bitwidth, vo_signed, vo_narrow, vo_rounding_mode,
     ):
-        # x_q = op.Quant(
-        #     x,
-        #     in_scale,
-        #     in_zeropt,
-        #     in_bitwidth,
-        #     signed=in_signed,
-        #     narrow=in_narrow,
-        #     rounding_mode=in_rounding_mode,
-        #     _allow_other_attributes=True,
-        #     _domain="qonnx.custom_op.general",
-        # )
 
         x_r = op.Reshape(x, shape_in)
         x_rq = op.Quant(
@@ -284,30 +256,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         )
 
         y_r = op.Reshape(y_q_pre, shape_out_y)
-        # y_out = op.Quant(
-        #     y_r,
-        #     y_scale,
-        #     y_zeropt,
-        #     y_bitwidth,
-        #     signed=y_signed,
-        #     narrow=y_narrow,
-        #     rounding_mode=y_rounding_mode,
-        #     _allow_other_attributes=True,
-        #     _domain="qonnx.custom_op.general",
-        # )
-
         v_r = op.Reshape(v_q, shape_out_v)
-        # v_out = op.Quant(
-        #     v_r,
-        #     vo_scale,
-        #     vo_zeropt,
-        #     vo_bitwidth,
-        #     signed=vo_signed,
-        #     narrow=vo_narrow,
-        #     rounding_mode=vo_rounding_mode,
-        #     _allow_other_attributes=True,
-        #     _domain="qonnx.custom_op.general",
-        # )
 
         return y_r, v_r
 
@@ -315,7 +264,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
     def _condition(
         context,
         x,
-        # in_scale, in_zeropt, in_bitwidth, in_signed, in_narrow, in_rounding_mode,
         shape_in,
         rq_scale, rq_zeropt, rq_bitwidth, rq_signed, rq_narrow, rq_rounding_mode,
         split0, split1, axis0, axis1,
@@ -330,8 +278,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         pt_scale, pt_zeropt, pt_bitwidth, pt_signed, pt_narrow, pt_rounding_mode,
         vp_scale, vp_zeropt, vp_bitwidth, vp_signed, vp_narrow, vp_rounding_mode,
         shape_out_y, shape_out_v,
-        # y_scale, y_zeropt, y_bitwidth, y_signed, y_narrow, y_rounding_mode,
-        # vo_scale, vo_zeropt, vo_bitwidth, vo_signed, vo_narrow, vo_rounding_mode,
         **_,
     ):
         if _get_const_scalar(const_value) is None:
@@ -357,7 +303,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             return False
 
         quant_groups = [
-            # (in_scale, in_zeropt, in_bitwidth, in_signed, in_narrow, in_rounding_mode),
             (rq_scale, rq_zeropt, rq_bitwidth, rq_signed, rq_narrow, rq_rounding_mode),
             (q_scale, q_zeropt, q_bitwidth, q_signed, q_narrow, q_rounding_mode),
             (k_scale, k_zeropt, k_bitwidth, k_signed, k_narrow, k_rounding_mode),
@@ -369,8 +314,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             (p_scale, p_zeropt, p_bitwidth, p_signed, p_narrow, p_rounding_mode),
             (pt_scale, pt_zeropt, pt_bitwidth, pt_signed, pt_narrow, pt_rounding_mode),
             (vp_scale, vp_zeropt, vp_bitwidth, vp_signed, vp_narrow, vp_rounding_mode),
-            # (y_scale, y_zeropt, y_bitwidth, y_signed, y_narrow, y_rounding_mode),
-            # (vo_scale, vo_zeropt, vo_bitwidth, vo_signed, vo_narrow, vo_rounding_mode),
         ]
         if not all(_check_quant_node_attrs(*g) for g in quant_groups):
             return False
@@ -381,7 +324,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
     def rewrite(
         op,
         x,
-        # in_scale, in_zeropt, in_bitwidth, in_signed, in_narrow, in_rounding_mode,
         shape_in,
         rq_scale, rq_zeropt, rq_bitwidth, rq_signed, rq_narrow, rq_rounding_mode,
         split0, split1, axis0, axis1,
@@ -396,8 +338,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         pt_scale, pt_zeropt, pt_bitwidth, pt_signed, pt_narrow, pt_rounding_mode,
         vp_scale, vp_zeropt, vp_bitwidth, vp_signed, vp_narrow, vp_rounding_mode,
         shape_out_y, shape_out_v,
-        # y_scale, y_zeropt, y_bitwidth, y_signed, y_narrow, y_rounding_mode,
-        # vo_scale, vo_zeropt, vo_bitwidth, vo_signed, vo_narrow, vo_rounding_mode,
         **_,
     ):
         const_value_py = _get_const_scalar(const_value)
@@ -405,7 +345,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         y_out, v_out = op.StreamingYoloAttention(
             x,
 
-            # in_scale, in_zeropt, in_bitwidth,
             rq_scale, rq_zeropt, rq_bitwidth,
             q_scale, q_zeropt, q_bitwidth,
             k_scale, k_zeropt, k_bitwidth,
@@ -417,13 +356,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             p_scale, p_zeropt, p_bitwidth,
             pt_scale, pt_zeropt, pt_bitwidth,
             vp_scale, vp_zeropt, vp_bitwidth,
-            # y_scale, y_zeropt, y_bitwidth,
-            # vo_scale, vo_zeropt, vo_bitwidth,
             const_value=const_value_py,
-
-            # in_signed=in_signed.value,
-            # in_narrow=in_narrow.value,
-            # in_rounding_mode=in_rounding_mode.value,
 
             rq_signed=rq_signed.value,
             rq_narrow=rq_narrow.value,
@@ -468,14 +401,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             vp_signed=vp_signed.value,
             vp_narrow=vp_narrow.value,
             vp_rounding_mode=vp_rounding_mode.value,
-
-            # y_signed=y_signed.value,
-            # y_narrow=y_narrow.value,
-            # y_rounding_mode=y_rounding_mode.value,
-
-            # vo_signed=vo_signed.value,
-            # vo_narrow=vo_narrow.value,
-            # vo_rounding_mode=vo_rounding_mode.value,
 
             _domain="nn2fpga.compiler.custom_op",
             _outputs=2,
@@ -526,11 +451,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
             # YoloAttention structural attrs
             "const_value": ("f", True, 0.0),
-
-            # input quant attrs
-            # "in_signed": ("i", True, 0),
-            # "in_narrow": ("i", True, 0),
-            # "in_rounding_mode": ("s", True, ""),
 
             # reshape quant attrs
             "rq_signed": ("i", True, 0),
@@ -586,16 +506,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             "vp_signed": ("i", True, 0),
             "vp_narrow": ("i", True, 0),
             "vp_rounding_mode": ("s", True, ""),
-
-            # Y output quant attrs
-            # "y_signed": ("i", True, 0),
-            # "y_narrow": ("i", True, 0),
-            # "y_rounding_mode": ("s", True, ""),
-
-            # V output quant attrs
-            # "vo_signed": ("i", True, 0),
-            # "vo_narrow": ("i", True, 0),
-            # "vo_rounding_mode": ("s", True, ""),
         }
 
     def make_shape_compatible_op(self, model):
@@ -624,47 +534,6 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         Returns the name of the stream for the tensor.
         """
         return f"{name}_stream"
-
-    def __get_accumulator(self, sums, base, input_quant: TensorQuant) -> str:
-        """
-        Get the accumulator type for the given input quantization.
-        """
-        accumulator_bitwidth = base + int(np.floor(np.log2(sums) + 1))
-
-        signed = False
-        acc_quant = TensorQuant(
-            bitwidth=accumulator_bitwidth,
-            signed=signed,
-            scale=input_quant.scale,
-            zeropt=input_quant.zeropt,
-        )
-        return f"{get_hls_quant_type(acc_quant)}"
-
-    def __get_lut_type(self) -> str:
-        """
-        Get the type for the LUT entries in the softmax computation.
-        The LUT stores quantized exponentials.
-        """
-        lut_quant = TensorQuant(
-            bitwidth=EXP_PRECISION,  # Use the output bitwidth for max precision
-            signed=False,
-            scale=0.0, # Not the actual scale, but it is usless for type generation.
-            zeropt=0,
-        )
-        return f"{get_hls_quant_type(lut_quant)}"
-
-    def __get_division_type(self) -> str:
-        """
-        Get the type for the division result in the softmax computation.
-        """
-
-        div_quant = TensorQuant(
-            bitwidth=DIV_PRECISION,
-            signed=False,
-            scale=0.0, # Not the actual scale, but it is usless for type generation.
-            zeropt=0,
-        )
-        return f"{get_hls_quant_type(div_quant)}"
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
@@ -761,6 +630,14 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             value=lut_values,
         )
         return lut_variable.generate_initialization()
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingYoloAttention accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingYoloAttention produces only NHWC layout. """
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
@@ -772,13 +649,8 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         v_shape = [1, 2, 64, 400]
 
         ####### SplitReshapeQKV ########
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_shape = self.require_input_shape(model, 0)
 
         (rq_scale, rq_zeropt, rq_bitwidth) = (1,2,3)
         SplitReshapeQKV_output_quant = TensorQuant(

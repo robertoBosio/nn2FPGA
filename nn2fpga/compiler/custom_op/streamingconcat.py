@@ -183,6 +183,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         # then we need to use the StreamingConcatDim2 object, which concatenates along
         # the last dimension of the input layout.
         axis = self.get_nodeattr("axis")
+        if axis < 0:
+            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
         axis_permuted = input_layoutA.perm.index(axis)
         input_shapeA_permuted = [input_shapeA[i] for i in input_layoutA.perm]
         input_shapeB_permuted = [input_shapeB[i] for i in input_layoutB.perm]

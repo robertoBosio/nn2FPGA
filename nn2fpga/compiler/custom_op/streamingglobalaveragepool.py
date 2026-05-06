@@ -7,7 +7,6 @@ from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
-from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules

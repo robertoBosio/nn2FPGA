@@ -150,17 +150,17 @@ class EmbedHLSCode(Transformation):
     Class to handle the conversion of ONNX models to HLS (High-Level Synthesis) format.
     """
 
-    def __init__(self, nn2fpga_model: ModelWrapper, work_root: str = "/tmp", erase: bool = True):
+    def __init__(self, hls_model: ModelWrapper, work_root: str = "/tmp", erase: bool = True):
         """
         Initializes the OnnxToHLS transformation.
         Args:
             work_root (str): The root directory of the project.
-            nn2fpga_model (ModelWrapper): The model ready to be converted to HLS.
+            hls_model (ModelWrapper): The model ready to be converted to HLS.
             erase (bool): If True, the starting onnx models will be erased after the transformation.
         """
         super().__init__()
         self.work_root = work_root
-        self.nn2fpga_model = nn2fpga_model
+        self.hls_model = hls_model
         self.erase = erase
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
@@ -174,12 +174,12 @@ class EmbedHLSCode(Transformation):
         partition_node = partition_nodes[0]
 
         ap = AcceleratorPackage.from_json(
-            self.nn2fpga_model.get_metadata_prop("accelerator_package")
+            self.hls_model.get_metadata_prop("accelerator_package")
         )
 
         # Update the accelerator package with the HLS code and driver
         ap.work_dir = self.work_root
-        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.nn2fpga_model, ap).encode()).decode("ascii")
+        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.hls_model, ap).encode()).decode("ascii")
 
         getCustomOp(partition_node).set_nodeattr(
             "accelerator_package", ap.to_json()

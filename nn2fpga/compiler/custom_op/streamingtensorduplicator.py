@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
@@ -13,14 +14,14 @@ from nn2fpga.compiler.utils.codegen_utils import (
 import numpy as np
 
 
-class TensorDuplicator(NN2FPGAOp):
+class StreamingTensorDuplicator(NN2FPGAOp):
     """Node duplicating a tensor to ensure that each consumer gets a separate copy."""
 
     def get_nodeattr_types(self):
         return {
             # Custom attributes for unroll factors
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             # Custom attributes for input/output streams
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -67,7 +68,7 @@ class TensorDuplicator(NN2FPGAOp):
         return f"{name}_stream"
 
     def __get_variable_declaration(self, model) -> str:
-        """Get the internal cpp variables of the TensorDuplicator node.
+        """Get the internal cpp variables of the StreamingTensorDuplicator node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -76,42 +77,33 @@ class TensorDuplicator(NN2FPGAOp):
         return ""
 
     def __get_object_declaration(self, model) -> str:
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_input_shape(model, 0)
+        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
 
-        # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
-
-        # Create the TensorDuplicator object.
-        TensorDuplicator = cpp_object(
-            "TensorDuplicator",
+        # Create the StreamingTensorDuplicator object.
+        StreamingTensorDuplicator = cpp_object(
+            "StreamingTensorDuplicator",
             f"{self.onnx_node.name}",
             template_args=[
                 (
                     f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     "TWord",
                 ),
-                (input_shape[2], "IN_HEIGHT"),
-                (input_shape[3], "IN_WIDTH"),
-                (input_shape[1], "IN_CH"),
-                (self.get_nodeattr("channel_unroll"), "CH_PAR"),
-                (self.get_nodeattr("width_unroll"), "W_PAR"),
+                (input_shape_permuted[1], "DIM0"),
+                (input_shape_permuted[2], "DIM1"),
+                (input_shape_permuted[3], "DIM2"),
+                (self.get_nodeattr("dim1_unroll"), "DIM1_UNROLL"),
+                (self.get_nodeattr("dim2_unroll"), "DIM2_UNROLL"),
             ],
         )
-        return TensorDuplicator.generate_declaration()
+        return StreamingTensorDuplicator.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
-        """Generates the C++ code necessary to run the TensorDuplicator node."""
+        """Generates the C++ code necessary to run the StreamingTensorDuplicator node."""
 
-        # Generate the call to the TensorDuplicator run method.
+        # Generate the call to the StreamingTensorDuplicator run method.
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
@@ -139,7 +131,7 @@ class TensorDuplicator(NN2FPGAOp):
         )
 
     def __get_step_call(self) -> str:
-        """Generates the C++ code necessary to run the TensorDuplicator node in step mode."""
+        """Generates the C++ code necessary to run the StreamingTensorDuplicator node in step mode."""
 
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
@@ -166,6 +158,14 @@ class TensorDuplicator(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
             self.__get_stream_name(self.onnx_node.output[1]),
         )
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingTensorDuplicator is layout agnostic, since it just reads the input tensor as a stream of data. """
+        return None
+    
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple:
+        """ The output layout of StreamingTensorDuplicator is the same as the input layout. """
+        return input_layout
 
     def lower_to_hls(
         self, model: ModelWrapper, hls_tag: int
@@ -177,12 +177,7 @@ class TensorDuplicator(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
             for i in range(self.get_nodeattr("in_stream_array"))
@@ -225,42 +220,41 @@ class TensorDuplicator(NN2FPGAOp):
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
 
     def has_linebuffer(self) -> bool:
-        """Check if the TensorDuplicator operation requires a linebuffer.
+        """Check if the StreamingTensorDuplicator operation requires a linebuffer.
         Returns:
             bool: True if a linebuffer is required, False otherwise.
         """
         return False
 
     def get_latency(self, model: ModelWrapper) -> int:
-        """Estimate the latency of the TensorDuplicator operation.
+        """Estimate the latency of the StreamingTensorDuplicator operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: The estimated latency in cycles.
         """ 
         
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
-        latency = np.prod(input_shape) // (self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll"))
+        input_shape = self.require_input_shape(model, 0)
+        latency = np.prod(input_shape) // (self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll"))
         return latency
     
     def get_brams(self, model: ModelWrapper) -> int:
-        """Estimate the BRAM usage of the TensorDuplicator operation.
+        """Estimate the BRAM usage of the StreamingTensorDuplicator operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: The estimated BRAM usage.
         """ 
-        return 0  # TensorDuplicator does not use BRAMs.
+        return 0  # StreamingTensorDuplicator does not use BRAMs.
     
     def get_dsps(self, model: ModelWrapper) -> int:
-        """Estimate the DSP usage of the TensorDuplicator operation.
+        """Estimate the DSP usage of the StreamingTensorDuplicator operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: The estimated DSP usage.
         """ 
-        return 0  # TensorDuplicator does not use DSPs.
+        return 0  # StreamingTensorDuplicator does not use DSPs.
     
     def can_inherit_interface(self):
         return True
@@ -272,5 +266,5 @@ class TensorDuplicator(NN2FPGAOp):
         self.set_nodeattr("in_word_array", upstream.out_word_array)
         self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("width_unroll", upstream.out_stream_array)
+        self.set_nodeattr("dim2_unroll", upstream.out_word_array)
+        self.set_nodeattr("dim1_unroll", upstream.out_stream_array)

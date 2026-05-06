@@ -122,9 +122,9 @@ class TestStreamingSoftmax(BaseHLSTest):
             int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ),
             dtype=np_in_type,
         )
@@ -132,12 +132,12 @@ class TestStreamingSoftmax(BaseHLSTest):
         X = helper.make_tensor_value_info(
             "X",
             onnx_in_type,
-            [1, config_dict["IN_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]],
+            [1, config_dict["DIM2"], config_dict["DIM0"], config_dict["DIM1"]],
         )
         Y = helper.make_tensor_value_info(
             "Y",
             onnx_out_type,
-            [1, config_dict["IN_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]],
+            [1, config_dict["DIM2"], config_dict["DIM0"], config_dict["DIM1"]],
         )
 
         X_scale = helper.make_tensor("X_scale", TensorProto.FLOAT, [], [float(config_dict["X_SCALE"])])
@@ -186,8 +186,8 @@ class TestStreamingSoftmax(BaseHLSTest):
             np.log2(float(config_dict["Y_SCALE"]) / 2 ** -(div_bits - exp_bits))
         )  # Output is in Q0.31 format for max precision
         acc_bits = (
-            int(np.floor(np.log2(config_dict["IN_CH"]) + 1)) + exp_bits
-        )  # Bits needed to accumulate IN_CH exponentials without overflow
+            int(np.floor(np.log2(config_dict["DIM2"]) + 1)) + exp_bits
+        )  # Bits needed to accumulate DIM2 exponentials without overflow
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -245,11 +245,11 @@ class TestStreamingSoftmax(BaseHLSTest):
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": True,
-            "IN_HEIGHT": 12,
-            "IN_WIDTH": 12,
-            "IN_CH": 20,
-            "CH_PAR": 1,
-            "W_PAR": 1,
+            "DIM0": 12,
+            "DIM1": 12,
+            "DIM2": 20,
+            "REDUCTION_UNROLL": 1,
+            "LANE_UNROLL": 1,
             "X_SCALE": 2**-3,
             "Y_SCALE": 2**-6,
             "X_ZP": 0,

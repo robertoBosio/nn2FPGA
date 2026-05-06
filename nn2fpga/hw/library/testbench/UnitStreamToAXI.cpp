@@ -1,4 +1,4 @@
-#include "StreamToNHWC.hpp"
+#include "StreamToAXI.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -9,37 +9,41 @@
 #include "utils/CSDFG_utils.hpp"
 #include "test_config.hpp"
 
-using TInputWord = std::array<test_config::TInput, test_config::IN_CH_PAR>;
+using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
 
-void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::IN_W_PAR],
+void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::DIM1_UNROLL],
               hls::stream<test_config::TOutputWord> &output_data_stream) {
 #pragma HLS INTERFACE axis port = output_data_stream
-  // Wrapper function to call the run() method of StreamToNHWC, for synthesis.
-  StreamToNHWC<TInputWord, test_config::TInput, test_config::TOutputWord,
-               test_config::TOutput, test_config::Quantizer, test_config::ITER,
-               test_config::DATA_PER_WORD, test_config::HEIGHT,
-               test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
-               test_config::IN_CH_PAR>
+  // Wrapper function to call the run() method of StreamToAXI, for synthesis.
+  StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
+              test_config::TOutput, test_config::Quantizer, test_config::ITER,
+              test_config::DATA_PER_WORD, test_config::DIM0,
+              test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+              test_config::DIM2_UNROLL>
       consumer;
   consumer.run<0>(input_data_stream, output_data_stream);
 }
 
 bool test_run() {
-  // This function tests the run() method of StreamToNHWC.
+  // This function tests the run() method of StreamToAXI.
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::IN_W_PAR];
+  hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
   hls::stream<test_config::TOutputWord> out_stream;
 
-  for (size_t i = 0; i < test_config::HEIGHT * test_config::WIDTH;
-       i += test_config::IN_W_PAR) {
-    for (size_t c = 0; c < test_config::CH; c += test_config::IN_CH_PAR) {
-      for (size_t w_par = 0; w_par < test_config::IN_W_PAR; w_par++) {
+  for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
+       i_dim01 += test_config::DIM1_UNROLL) {
+    for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+         i_dim2 += test_config::DIM2_UNROLL) {
+      for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+           i_dim1_par++) {
         TInputWord input_struct;
-        for (size_t c_par = 0; c_par < test_config::IN_CH_PAR; c_par++) {
-          input_struct[c_par] = (i + w_par) * test_config::CH + c + c_par;
+        for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+             i_dim2_par++) {
+          input_struct[i_dim2_par] =
+              (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par;
         }
-        in_stream[w_par].write(input_struct);
+        in_stream[i_dim1_par].write(input_struct);
       }
     }
   }
@@ -51,8 +55,9 @@ bool test_run() {
   bool flag = true;
   size_t data_in_word = 0;
   test_config::TOutputWord output_struct;
-  for (size_t i = 0; i < test_config::HEIGHT * test_config::WIDTH; i++) {
-    for (size_t c = 0; c < test_config::CH; c++) {
+  for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
+       i_dim01++) {
+    for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2; i_dim2++) {
       if (data_in_word == 0) {
         // Read the output structure from the stream
         output_struct = out_stream.read();
@@ -62,12 +67,12 @@ bool test_run() {
           test_config::TInput::width * (data_in_word + 1) - 1,
           test_config::TInput::width * data_in_word);
       ap_uint<test_config::TInput::width> expected_bits =
-          test_config::TInput(i * test_config::CH + c)
+          test_config::TInput(i_dim01 * test_config::DIM2 + i_dim2)
               .range(test_config::TInput::width - 1, 0);
       flag &= (bits_read == expected_bits);
 
       if (!flag) {
-        std::cout << "Mismatch at (i,c)=(" << i << "," << c << ")"
+        std::cout << "Mismatch at (i,c)=(" << i_dim01 << "," << i_dim2 << ")"
                   << " Expected: " << expected_bits << ", Got: " << bits_read
                   << std::endl;
       }
@@ -83,28 +88,28 @@ bool test_run() {
 }
 
 bool test_step() {
-  // This function tests the step() method of StreamToNHWC
+  // This function tests the step() method of StreamToAXI
 
-  size_t expectedII = test_config::HEIGHT * test_config::WIDTH *
-                      test_config::CH /
-                      (test_config::IN_CH_PAR * test_config::IN_W_PAR);
-  if ((test_config::HEIGHT * test_config::WIDTH * test_config::CH) %
+  size_t expectedII = test_config::DIM0 * test_config::DIM1 *
+                      test_config::DIM2 /
+                      (test_config::DIM2_UNROLL * test_config::DIM1_UNROLL);
+  if ((test_config::DIM0 * test_config::DIM1 * test_config::DIM2) %
           (test_config::DATA_PER_WORD) !=
       0) {
     expectedII += 1;
   }
 
   // Instantiate the operator
-  StreamToNHWC<TInputWord, test_config::TInput, test_config::TOutputWord,
-               test_config::TOutput, test_config::Quantizer, test_config::ITER,
-               test_config::DATA_PER_WORD, test_config::HEIGHT,
-               test_config::WIDTH, test_config::CH, test_config::IN_W_PAR,
-               test_config::IN_CH_PAR>
+  StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
+              test_config::TOutput, test_config::Quantizer, test_config::ITER,
+              test_config::DATA_PER_WORD, test_config::DIM0,
+              test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+              test_config::DIM2_UNROLL>
       consumer;
   consumer.step_init(test_config::PIPELINE_DEPTH);
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::IN_W_PAR];
+  hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
   hls::stream<test_config::TOutputWord> out_stream;
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
@@ -113,8 +118,8 @@ bool test_step() {
   size_t II = 0;
   while (true) {
     TInputWord input_data;
-    for (size_t i_w_par = 0; i_w_par < test_config::IN_W_PAR; i_w_par++) {
-      in_stream[i_w_par].write(input_data);
+    for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL; i_dim1_par++) {
+      in_stream[i_dim1_par].write(input_data);
     }
     ActorStatus actor_status = consumer.step(in_stream, out_stream);
     std::vector<ActorStatus> actor_statuses;

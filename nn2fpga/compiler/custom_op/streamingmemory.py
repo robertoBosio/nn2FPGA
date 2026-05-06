@@ -1,7 +1,7 @@
 import numpy as np
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
@@ -153,25 +153,11 @@ class StreamingMemory(NN2FPGAOp):
     def __get_object_declaration(self, model) -> cpp_object:
         """Generate the cpp_object for the StreamingMemory operation."""
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         # Retrieve tensor shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_shape = self.require_output_shape(model, 0)
 
         # Create the StreamingMemory object.
         StreamingMemory = cpp_object(
@@ -270,6 +256,14 @@ class StreamingMemory(NN2FPGAOp):
             packed.append(word)
 
         return np.array(packed, dtype=np.uint32)
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingMemory accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingMemory produces only NHWC layout. """
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -279,11 +273,7 @@ class StreamingMemory(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         if model.get_initializer(self.onnx_node.input[0]) is None:
             input_names = [f"{self.__get_stream_name(self.onnx_node.input[0])}_0_"]
@@ -309,7 +299,7 @@ class StreamingMemory(NN2FPGAOp):
             )
             tensors_fifo_metadata[output_names[-1]] = TensorFifo(
                 depth=2,
-                hls_type=f"{get_struct_type(get_custom_tensor_datatype(model, self.onnx_node.output[1]), 1)}",
+                hls_type=f"{get_struct_type(require_tensor_quant(model, self.onnx_node.output[1]), 1)}",
                 n_array=1,
             )
 
@@ -341,12 +331,7 @@ class StreamingMemory(NN2FPGAOp):
         """
 
         # Retrieve tensor shape (which is a memory).
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_shape = self.require_output_shape(model, 0)
 
         # Number of times the memory is streamed.
         times = self.get_nodeattr("times")
@@ -364,18 +349,9 @@ class StreamingMemory(NN2FPGAOp):
         Returns:
             int: Estimated BRAM usage.
         """
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_shape = self.require_output_shape(model, 0)
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         word_bits = output_quant.bitwidth
         n_words = np.prod(output_shape)

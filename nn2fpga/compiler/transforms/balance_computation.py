@@ -668,8 +668,8 @@ def update_model(model: ModelWrapper, parallel_op: dict) -> ModelWrapper:
 def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
     """Propagate the parallelism information through the model."""
     
-    # Retrieving the NHWCToStream nodes to propagate the parallelism.
-    queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
+    # Retrieving the AXIToStream nodes to propagate the parallelism.
+    queue = deque(model.get_nodes_by_op_type("AXIToStream"))
     mark_visited = {node.name for node in queue}
 
     while queue:

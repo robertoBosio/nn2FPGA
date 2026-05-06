@@ -1,10 +1,11 @@
 import numpy as np
 import onnxruntime as rt
+from typing import Optional
 from attr import dataclass
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -16,35 +17,111 @@ from nn2fpga.compiler.utils.codegen_utils import (
     get_struct_type,
     get_hls_quant_type,
 )
-from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
+from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
+from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 import logging
 
 logger = logging.getLogger(__name__)
 
 EXP_PRECISION = 12  # Number of bits for LUT output (Q0.12 format for max precision)
-DIV_PRECISION = 36 # Number of bits for division result (Q0.36 format for max precision)
+DIV_PRECISION = 32 # Number of bits for division result (Q0.36 format for max precision)
 
-class StreamingSoftmax(NN2FPGAOp, DSECapable):
+def _as_list(x):
+    if x is None:
+        return None
+    arr = np.asarray(x)
+    return [int(v) for v in arr.flatten().tolist()]
+
+def _get_const_i64_list(x) -> Optional[list[int]]:
+    t = ir_convenience.get_const_tensor(x)
+    if t is None:
+        return None
+    return _as_list(t)
+
+class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
 
     @staticmethod
-    def softmax_pattern(op, x, axis):
-        return op.Softmax(x, axis=axis)
+    def softmax_pattern(
+        op,
+        x,
+        shape_in,
+        rq_scale,
+        rq_zeropt,
+        rq_bitwidth,
+        rq_signed,
+        rq_narrow,
+        rq_rounding_mode,
+        tq_scale,
+        tq_zeropt,
+        tq_bitwidth,
+        tq_signed,
+        tq_narrow,
+        tq_rounding_mode,
+        axis,
+    ):
+        x_r = op.Reshape(x, shape_in)
+        x_rq = op.Quant(
+            x_r,
+            rq_scale,
+            rq_zeropt,
+            rq_bitwidth,
+            signed=rq_signed,
+            narrow=rq_narrow,
+            rounding_mode=rq_rounding_mode,
+            _allow_other_attributes=True,
+            _domain="qonnx.custom_op.general",
+        )
+        x_t = op.Transpose(x_rq, perm=[0, 2, 1, 3])
+        q_tq = op.Quant(
+            x_t,
+            tq_scale,
+            tq_zeropt,
+            tq_bitwidth,
+            signed=tq_signed,
+            narrow=tq_narrow,
+            rounding_mode=tq_rounding_mode,
+            _allow_other_attributes=True,
+            _domain="qonnx.custom_op.general",
+        )
+        return op.Softmax(q_tq, axis=axis)
 
     @staticmethod
-    def rewrite(op, x, axis):
-        return op.StreamingSoftmax(
+    def rewrite(
+        op,
+        x,
+        shape_in,
+        rq_scale,
+        rq_zeropt,
+        rq_bitwidth,
+        rq_signed,
+        rq_narrow,
+        rq_rounding_mode,
+        tq_scale,
+        tq_zeropt,
+        tq_bitwidth,
+        tq_signed,
+        tq_narrow,
+        tq_rounding_mode,
+        axis,
+        ):
+        return op.StreamingYoloHeadSoftmax(
             x,
             axis=axis,
+            shape_in=_get_const_i64_list(shape_in),
             _domain="nn2fpga.compiler.custom_op",
         )
 
     @register_rules
     def register_rules():
         return [
-            pattern.RewriteRule(
-                StreamingSoftmax.softmax_pattern,
-                StreamingSoftmax.rewrite,
+            PRule(
+                pattern.RewriteRule(
+                    StreamingYoloHeadSoftmax.softmax_pattern,
+                    StreamingYoloHeadSoftmax.rewrite,
+                ),
+                priority=1,
             )
         ]
 
@@ -53,6 +130,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         lanes_unroll: int
         reduction_unroll: int
 
+        # optional helpers to interop with old code / ONNX storage
         def to_dict(self) -> dict:
             return {
                 "lanes_unroll": self.lanes_unroll,
@@ -60,8 +138,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             }
 
         @staticmethod
-        def from_dict(d: dict) -> "StreamingSoftmax.DSEPoint":
-            return StreamingSoftmax.DSEPoint(
+        def from_dict(d: dict) -> "StreamingYoloHeadSoftmax.DSEPoint":
+            return StreamingYoloHeadSoftmax.DSEPoint(
                 lanes_unroll=d["lanes_unroll"],
                 reduction_unroll=d["reduction_unroll"],
             )
@@ -69,6 +147,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     def get_nodeattr_types(self):
         return {
             "axis": ("i", False, -1),  # Axis for Softmax operation
+            "shape_in": ("ints", False, []),  # Shape for the initial Reshape
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -244,19 +323,22 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
-        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+
+        # We actually not consider the shape in input but the shape
+        # after the initial reshape and the transpose in the pattern, which is stored
+        # in the node attribute.
+        input_shape = self.get_nodeattr("shape_in")
+        input_shape = [1] * (4 - len(input_shape)) + input_shape
+        input_shape = np.array(input_shape)[[0, 2, 1, 3]]
+        input_shape = input_shape.tolist()
         axis = self.get_nodeattr("axis")
-
-        # In the case of -1, we need to convert it to the actual axis index
-        # based on the actual tensor input shape, not the expanded one. 
         if axis < 0:
-            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
-        axis_permuted = input_layout.perm.index(axis)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+            axis += len(input_shape)
+        dim_reduction = input_shape[axis]
 
-        dim_reduction = input_shape_permuted[axis_permuted]
-        dim_lanes = np.prod(input_shape_permuted) // dim_reduction
+        # The input shape is in NCHW format, but we need the NHWC.
+
+        dim_lanes = np.prod(input_shape) // dim_reduction
 
         lut_size = 1 << input_quant.bitwidth
         StreamingSoftmax = cpp_object(
@@ -351,20 +433,19 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}_lut",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
 
     def accepted_input_layout(self) -> tuple | None:
-        """ StreamingSoftmax is layout-agnostic, so it accepts any input layout. """
-        return None
+        """ StreamingYoloHeadSoftmax only accepts NHWC layout. """
+        return (0, 2, 3, 1)  # NHWC
 
-    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
-        """ StreamingSoftmax is layout-agnostic, so it produces the same layout as input. """
-        return input_layout
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple:
+        """ StreamingYoloHeadSoftmax produces only NWHC layout. """
+        return (0, 3, 2, 1)  # NWHC
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -410,10 +491,12 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        if input_shape is None:
+            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
         unroll_factor = self.get_nodeattr("lanes_unroll") * self.get_nodeattr("reduction_unroll")
-        return np.prod(input_shape) * 2 // unroll_factor
+        return np.prod(input_shape) * 3 // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingSoftmax operation.
@@ -441,15 +524,15 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         """
         return False
 
-    def __current_dse_point(self) -> "StreamingSoftmax.DSEPoint":
+    def __current_dse_point(self) -> "StreamingYoloHeadSoftmax.DSEPoint":
         """ Returns the current DSE point of the StreamingSoftmax operation. """
-        return StreamingSoftmax.DSEPoint(
+        return StreamingYoloHeadSoftmax.DSEPoint(
             lanes_unroll=self.get_nodeattr("lanes_unroll"),
             reduction_unroll=self.get_nodeattr("reduction_unroll"),
         )
 
-    def get_dse_points(self, model: ModelWrapper) -> list["StreamingSoftmax.DSEPoint"]:
-        """Generate the list of valid DSE points for the StreamingSoftmax operation."""
+    def get_dse_points(self, model: ModelWrapper) -> list["StreamingYoloHeadSoftmax.DSEPoint"]:
+        """Generate the list of valid DSE points for the StreamingYoloHeadSoftmax operation."""
 
         def divisors(n: list[int], clip: int) -> list[int]:
             return [
@@ -464,16 +547,16 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = self.require_input_shape(model, 0)
-        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.get_nodeattr("shape_in")
+        input_shape = [1] * (4 - len(input_shape)) + input_shape
+        input_shape = np.array(input_shape)[[0, 2, 1, 3]]
+        input_shape = input_shape.tolist()
         axis = self.get_nodeattr("axis")
         if axis < 0:
-            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
-        axis_permuted = input_layout.perm.index(axis)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+            axis += len(input_shape)
+        dim_reduction = input_shape[axis]
 
-        dim_reduction = input_shape_permuted[axis_permuted]
-        dim_lanes = np.prod(input_shape_permuted) // dim_reduction
+        dim_lanes = np.prod(input_shape) // dim_reduction
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
@@ -493,12 +576,13 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
                     )
                 )
 
+        DSE_points = [self.DSEPoint(lanes_unroll=1, reduction_unroll=1)]
         return DSE_points
 
-    def apply_point(self, model: ModelWrapper, point: "StreamingSoftmax.DSEPoint"):
-        """ Set the parallelization attributes for the StreamingSoftmax operation.
+    def apply_point(self, model: ModelWrapper, point: "StreamingYoloHeadSoftmax.DSEPoint"):
+        """ Set the parallelization attributes for the StreamingYoloHeadSoftmax operation.
         Args:
-            point (StreamingSoftmax.DSEPoint): The DSE point containing the unrolling parameters.
+            point (StreamingYoloHeadSoftmax.DSEPoint): The DSE point containing the unrolling parameters.
         """
         self.set_nodeattr("lanes_unroll", point.lanes_unroll)
         self.set_nodeattr("reduction_unroll", point.reduction_unroll)

@@ -213,9 +213,9 @@ class AddStreamingParams(Transformation):
         )
         set_custom_tensor_datatype(model, param_stream_input.name, params_quant)
 
-        # Create the NHWCToStream node
+        # Create the AXIToStream node
         produce_node = helper.make_node(
-            op_type="NHWCToStream",
+            op_type="AXIToStream",
             domain="nn2fpga.compiler.custom_op",
             inputs=[param_stream_input.name],
             outputs=input_stream,
@@ -227,7 +227,7 @@ class AddStreamingParams(Transformation):
             in_word_array=1,
             out_word_array=1,
             axi_bitwidth=board_res["axi_bitwidth"],
-            name=f"NHWCToStream_const_param_stream",
+            name=f"AXIToStream_const_param_stream",
         )
 
         model.graph.node.append(produce_node)

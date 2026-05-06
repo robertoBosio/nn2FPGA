@@ -4,7 +4,8 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
@@ -16,8 +17,9 @@ from nn2fpga.compiler.utils.codegen_utils import (
     get_hls_quant_type,
 )
 
+
 class StreamingReLU(NN2FPGAOp):
-    """ Node implementing the ReLU operation. """
+    """Node implementing the ReLU operation."""
 
     @staticmethod
     def pattern(op, x):
@@ -32,11 +34,7 @@ class StreamingReLU(NN2FPGAOp):
 
     @register_rules
     def register_rules():
-        return [
-            pattern.RewriteRule(
-                StreamingReLU.pattern, StreamingReLU.rewrite
-            )
-        ]
+        return [pattern.RewriteRule(StreamingReLU.pattern, StreamingReLU.rewrite)]
 
     def get_nodeattr_types(self):
         return {
@@ -44,9 +42,8 @@ class StreamingReLU(NN2FPGAOp):
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
-
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -113,45 +110,40 @@ class StreamingReLU(NN2FPGAOp):
         return f"{name}_stream"
 
     def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingReLU node.
+        """Get the internal cpp variables of the StreamingReLU node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             str: A string representing the declaration of internal variables.
         """
         return ""
-    
-    def __get_quantizer(self, input_quant, output_quant) -> str:
-        """ Returns the quantizer type for the ReLU operation. """
 
-        if (
-            self.__is_power_of_two(input_quant.scale)
-            and self.__is_power_of_two(output_quant.scale)
+    def __get_quantizer(self, input_quant, output_quant) -> str:
+        """Returns the quantizer type for the ReLU operation."""
+
+        if self.__is_power_of_two(input_quant.scale) and self.__is_power_of_two(
+            output_quant.scale
         ):
             shift = -1 * int(np.log2(output_quant.scale) - np.log2(input_quant.scale))
-            if shift == 0 and input_quant.bitwidth == output_quant.bitwidth and input_quant.signed == output_quant.signed:
+            if (
+                shift == 0
+                and input_quant.bitwidth == output_quant.bitwidth
+                and input_quant.signed == output_quant.signed
+            ):
                 return f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>"
             return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingReLU."
             )
-    
+
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quant is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
-
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
 
         StreamingReLU = cpp_object(
             "StreamingReLU",
@@ -177,12 +169,12 @@ class StreamingReLU(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
-            ]
+                (f"{input_shape_permuted[1]}", "DIM0"),
+                (f"{input_shape_permuted[2]}", "DIM1"),
+                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
+            ],
         )
 
         return StreamingReLU.generate_declaration()
@@ -195,13 +187,13 @@ class StreamingReLU(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>", 
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>", 
+                    f"hls::stream<TOutputWord>",
                 ),
-            )
+            ),
         )
 
         return run.generate_call(
@@ -209,7 +201,7 @@ class StreamingReLU(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.input[0]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
+
     def __get_step_call(self) -> str:
 
         step = cpp_function(
@@ -218,13 +210,13 @@ class StreamingReLU(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>", 
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>", 
+                    f"hls::stream<TOutputWord>",
                 ),
-            )
+            ),
         )
 
         return step.generate_call(
@@ -233,15 +225,18 @@ class StreamingReLU(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
     
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingReLU is layout-agnostic, any layout is accepted. """
+        return None
+    
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingReLU is layout-agnostic, output layout matches input layout. """
+        return input_layout
+
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
             for i in range(self.get_nodeattr("in_stream_array"))
@@ -278,21 +273,21 @@ class StreamingReLU(NN2FPGAOp):
         return [hls_kernel], [], tensors_fifo_metadata, hls_tag
 
     def get_latency(self, model: ModelWrapper) -> int:
-        """ Estimate the latency of the StreamingReLU operation.
+        """Estimate the latency of the StreamingReLU operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        input_shape = self.require_input_shape(model, 0)
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
+            "dim1_unroll"
+        )
         return np.prod(input_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
-        """ Estimate the BRAM usage of the StreamingReLU operation.
+        """Estimate the BRAM usage of the StreamingReLU operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -301,30 +296,30 @@ class StreamingReLU(NN2FPGAOp):
         return 0
 
     def get_dsps(self, model: ModelWrapper) -> int:
-        """ Estimate the DSP usage of the StreamingReLU operation.
+        """Estimate the DSP usage of the StreamingReLU operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             int: Estimated DSP usage.
         """
         return 0
-    
+
     def has_linebuffer(self) -> bool:
-        """ Check if the StreamingReLU operation requires a line buffer.
+        """Check if the StreamingReLU operation requires a line buffer.
         Returns:
             bool: True if Line Buffering is required, False otherwise.
         """
         return False
-    
+
     def can_inherit_interface(self):
         return True
-    
+
     def inherit_interface(self, model: ModelWrapper, upstream: NodeInterface) -> None:
-        """ Inherit the interface from the upstream node."""
+        """Inherit the interface from the upstream node."""
         self.set_nodeattr("in_stream_array", upstream.out_stream_array)
         self.set_nodeattr("out_stream_array", upstream.out_stream_array)
         self.set_nodeattr("in_word_array", upstream.out_word_array)
         self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("width_unroll", upstream.out_stream_array)
+        self.set_nodeattr("dim2_unroll", upstream.out_word_array)
+        self.set_nodeattr("dim1_unroll", upstream.out_stream_array)

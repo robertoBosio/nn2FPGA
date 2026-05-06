@@ -4,7 +4,8 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
@@ -57,9 +58,9 @@ class StreamingUpsample(NN2FPGAOp):
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
 
-            "channel_unroll": ("i", False, 1),
-            "in_width_unroll": ("i", False, 1),
-            "out_width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "in_dim1_unroll": ("i", False, 1),
+            "out_dim1_unroll": ("i", False, 1),
 
             "mode": ("s", False, "nearest"),
             "scale_factor": ("i", False, None),
@@ -170,22 +171,13 @@ class StreamingUpsample(NN2FPGAOp):
     
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quant is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
-
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_shape = self.require_input_shape(model, 0)
+        output_shape = self.require_output_shape(model, 0)
 
         StreamingUpsample = cpp_object(
-            "StreamingUpsample",
+            "StreamingUpsampleDim01",
             f"{self.onnx_node.name}",
             template_args=[
                 (
@@ -200,15 +192,15 @@ class StreamingUpsample(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CH"),
-                (f"{output_shape[2]}", "OUT_HEIGHT"),
-                (f"{output_shape[3]}", "OUT_WIDTH"),
+                (f"{input_shape[2]}", "IN_DIM0"),
+                (f"{input_shape[3]}", "IN_DIM1"),
+                (f"{input_shape[1]}", "IN_DIM2"),
+                (f"{output_shape[2]}", "OUT_DIM0"),
+                (f"{output_shape[3]}", "OUT_DIM1"),
                 (f"{self.get_nodeattr('scale_factor')}", "SCALE_FACTOR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
-                (f"{self.get_nodeattr('in_width_unroll')}", "IN_W_PAR"),
-                (f"{self.get_nodeattr('out_width_unroll')}", "OUT_W_PAR"),
+                (f"{self.get_nodeattr('in_dim1_unroll')}", "IN_DIM1_UNROLL"),
+                (f"{self.get_nodeattr('out_dim1_unroll')}", "OUT_DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -260,14 +252,18 @@ class StreamingUpsample(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
     
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingUpsample accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingUpsample produces only NHWC layout. """
+        return (0, 2, 3, 1)
+    
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -311,11 +307,9 @@ class StreamingUpsample(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = self.require_output_shape(model, 0)
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("out_width_unroll")
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("out_dim1_unroll")
         return np.prod(output_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -353,6 +347,6 @@ class StreamingUpsample(NN2FPGAOp):
         self.set_nodeattr("in_word_array", upstream.out_word_array)
         self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("in_width_unroll", upstream.out_stream_array)
-        self.set_nodeattr("out_width_unroll", upstream.out_stream_array * self.get_nodeattr("scale_factor"))
+        self.set_nodeattr("dim2_unroll", upstream.out_word_array)
+        self.set_nodeattr("in_dim1_unroll", upstream.out_stream_array)
+        self.set_nodeattr("out_dim1_unroll", upstream.out_stream_array * self.get_nodeattr("scale_factor"))

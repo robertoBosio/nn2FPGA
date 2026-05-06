@@ -4,10 +4,11 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface, DSECapable
+from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
@@ -16,7 +17,6 @@ from nn2fpga.compiler.utils.codegen_utils import (
     get_hls_quant_type,
 )
 from dataclasses import dataclass
-from onnxscript import ir
 from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 from nn2fpga.compiler.utils.board_util import packing_feature
@@ -26,21 +26,21 @@ class StreamingMul(NN2FPGAOp, DSECapable):
 
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
 
         # optional helpers to interop with old code / ONNX storage
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
             }
 
         @staticmethod
         def from_dict(d: dict) -> "StreamingMul.DSEPoint":
             return StreamingMul.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
             )
 
     @staticmethod
@@ -67,8 +67,8 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def get_nodeattr_types(self):
         return {
             # Custom attributes for unroll factors
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             # Custom attributes for input/output streams
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -203,22 +203,20 @@ class StreamingMul(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quantA is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        input_quantB = get_custom_tensor_datatype(model, self.onnx_node.input[1])
-        if (input_quantB is None):
-            raise ValueError(f"Input {self.onnx_node.input[1]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
+        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_shapeA = self.require_input_shape(model, 0)
+        input_shapeB = self.require_input_shape(model, 1)
 
-        input_shapeA = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shapeA is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
+        input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
+        if input_layoutA != input_layoutB:
+            raise ValueError(
+                f"Input layouts for '{self.onnx_node.input[0]}' and '{self.onnx_node.input[1]}' must be the same."
+            )
+
+        input_shape_permuted = [input_shapeA[i] for i in input_layoutA.perm]
 
         StreamingMul = cpp_object(
             "StreamingMul",
@@ -257,11 +255,11 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                     f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shapeA[2]}", "IN_HEIGHT"),
-                (f"{input_shapeA[3]}", "IN_WIDTH"),
-                (f"{input_shapeA[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
+                (f"{input_shape_permuted[1]}", "DIM0"),
+                (f"{input_shape_permuted[2]}", "DIM1"),
+                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -326,18 +324,22 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def __current_dse_point(self) -> "StreamingMul.DSEPoint":
         """ Returns the current DSE point of the StreamingMul operation. """
         return StreamingMul.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+            dim2_unroll=self.get_nodeattr("dim2_unroll"),
+            dim1_unroll=self.get_nodeattr("dim1_unroll"),
         )
+
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingMul accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingMul produces the same layout as the input. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -391,7 +393,7 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         if input_shape is None:
             raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll")
         return np.prod(input_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -412,26 +414,18 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         """
         silvia_packing = model.get_metadata_prop("silvia_packing") == "true"
 
-        inpA_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if inpA_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        inpB_quant = get_custom_tensor_datatype(model, self.onnx_node.input[1])
-        if inpB_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[1]}' not found in model."
-            )
+        inpA_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        inpB_quant = require_tensor_quant(model, self.onnx_node.input[1])
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
         mac_per_dsp, _ = packing_feature(
             (inpA_quant.bitwidth, inpB_quant.bitwidth),
-            [point.width_unroll, point.channel_unroll],
+            [point.dim1_unroll, point.dim2_unroll],
             silvia_packing,
         )
-        MACs = point.channel_unroll * point.width_unroll
+        MACs = point.dim2_unroll * point.dim1_unroll
 
         return MACs // mac_per_dsp
 
@@ -448,57 +442,36 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         def divisors(n, clip):
             return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
 
-        inputA_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if inputA_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        inputA_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        inputB_quant = require_tensor_quant(model, self.onnx_node.input[1])
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        inputB_quant = get_custom_tensor_datatype(model, self.onnx_node.input[1])
-        if inputB_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[1]}' not found in model."
-            )
+        inputA_shape = self.require_input_shape(model, 0)
+        output_shape = self.require_output_shape(model, 0)
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-
-        inputA_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if inputA_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        inputA_shape = inputA_shape + [1] * (4 - len(inputA_shape))  # Ensure 4D shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape_permuted = [inputA_shape[i] for i in input_layoutA.perm]
+        output_shape_permuted = [output_shape[i] for i in output_layout.perm]
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors(inputA_shape[1], inputA_shape[1]):
-            for width_unroll in divisors(output_shape[3], output_shape[3]):
+        for dim2_unroll in divisors(input_shape_permuted[3], input_shape_permuted[3]):
+            for dim1_unroll in divisors(
+                output_shape_permuted[2], output_shape_permuted[2]
+            ):
                 # Check dimension of input streams
-                if (inputA_quant.bitwidth * channel_unroll) > 4096:
+                if (inputA_quant.bitwidth * dim2_unroll) > 4096:
                     continue
 
-                if (inputB_quant.bitwidth * channel_unroll) > 4096:
+                if (inputB_quant.bitwidth * dim2_unroll) > 4096:
                     continue
 
                 # Check dimension of output streams
-                if (output_quant.bitwidth * channel_unroll) > 4096:
+                if (output_quant.bitwidth * dim2_unroll) > 4096:
                     continue
 
-                # Heuristic to spread unrolling across dimensions
-                # if (width_unroll > 4 or channel_unroll > 5):
-                #     continue
-
-                DSE_points.append(self.DSEPoint(channel_unroll, width_unroll))
+                DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))
 
         return DSE_points
 
@@ -507,10 +480,10 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingMul.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

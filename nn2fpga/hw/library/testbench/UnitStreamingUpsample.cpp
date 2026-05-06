@@ -9,19 +9,21 @@
 #include <iostream>
 #include <unordered_map>
 
-using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
-using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
-static constexpr size_t OUT_HEIGHT = test_config::IN_HEIGHT * test_config::SCALE_FACTOR;
-static constexpr size_t OUT_WIDTH = test_config::IN_WIDTH * test_config::SCALE_FACTOR;
+using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
+using TOutputWord = std::array<test_config::TOutput, test_config::DIM2_UNROLL>;
+static constexpr size_t OUT_DIM0 =
+    test_config::IN_DIM0 * test_config::SCALE_FACTOR;
+static constexpr size_t OUT_DIM1 =
+    test_config::IN_DIM1 * test_config::SCALE_FACTOR;
 
-void wrap_run(hls::stream<TInputWord> i_data[test_config::IN_W_PAR],
-              hls::stream<TOutputWord> o_data[test_config::OUT_W_PAR]) {
+void wrap_run(hls::stream<TInputWord> i_data[test_config::IN_DIM1_UNROLL],
+              hls::stream<TOutputWord> o_data[test_config::OUT_DIM1_UNROLL]) {
   // Wrapper for synthesis.
-  StreamingUpsample<
-      TInputWord, TOutputWord, test_config::Quantizer, test_config::IN_HEIGHT,
-      test_config::IN_WIDTH, test_config::IN_CH, OUT_HEIGHT, OUT_WIDTH,
-      test_config::SCALE_FACTOR, test_config::CH_PAR, test_config::IN_W_PAR,
-      test_config::OUT_W_PAR>
+  StreamingUpsampleDim01<TInputWord, TOutputWord, test_config::Quantizer,
+                    test_config::IN_DIM0, test_config::IN_DIM1,
+                    test_config::IN_DIM2, OUT_DIM0, OUT_DIM1,
+                    test_config::SCALE_FACTOR, test_config::IN_DIM1_UNROLL,
+                    test_config::OUT_DIM1_UNROLL, test_config::DIM2_UNROLL>
       upsample;
   upsample.run<0>(i_data, o_data);
 }
@@ -29,22 +31,25 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::IN_W_PAR],
 bool test_run() {
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::IN_W_PAR];
-  hls::stream<TOutputWord> out_stream[test_config::OUT_W_PAR];
+  hls::stream<TInputWord> in_stream[test_config::IN_DIM1_UNROLL];
+  hls::stream<TOutputWord> out_stream[test_config::OUT_DIM1_UNROLL];
 
   // Fill input streams with test data
-  for (size_t h = 0; h < test_config::IN_HEIGHT; h++) {
-    for (size_t w = 0; w < test_config::IN_WIDTH; w += test_config::IN_W_PAR) {
-      for (size_t i_ich = 0; i_ich < test_config::IN_CH;
-           i_ich += test_config::CH_PAR) {
-        for (size_t i_w_par = 0; i_w_par < test_config::IN_W_PAR; i_w_par++) {
+  for (size_t i_dim0 = 0; i_dim0 < test_config::IN_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < test_config::IN_DIM1;
+         i_dim1 += test_config::IN_DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::IN_DIM2;
+           i_dim2 += test_config::DIM2_UNROLL) {
+        for (size_t i_dim1_par = 0; i_dim1_par < test_config::IN_DIM1_UNROLL;
+             i_dim1_par++) {
           TInputWord input_data;
-          for (size_t i_ch_par = 0; i_ch_par < test_config::CH_PAR;
-               i_ch_par++) {
-            input_data[i_ch_par] =
-                test_config::input_tensor[0][i_ich + i_ch_par][h][w + i_w_par];
+          for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+               i_dim2_par++) {
+            input_data[i_dim2_par] =
+                test_config::input_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                         [i_dim1 + i_dim1_par];
           }
-          in_stream[i_w_par].write(input_data);
+          in_stream[i_dim1_par].write(input_data);
         }
       }
     }
@@ -55,25 +60,28 @@ bool test_run() {
 
   // Read and check output
   bool flag = true;
-  for (size_t h = 0; h < OUT_HEIGHT; h++) {
-    for (size_t w = 0; w < OUT_WIDTH; w += test_config::OUT_W_PAR) {
-      for (size_t i_och = 0; i_och < test_config::OUT_CH;
-           i_och += test_config::CH_PAR) {
-        for (size_t i_w_par = 0; i_w_par < test_config::OUT_W_PAR; i_w_par++) {
-          TOutputWord output_data = out_stream[i_w_par].read();
-          for (size_t i_och_par = 0; i_och_par < test_config::CH_PAR;
-               i_och_par++) {
+  for (size_t i_dim0 = 0; i_dim0 < OUT_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < OUT_DIM1;
+         i_dim1 += test_config::OUT_DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::OUT_DIM2;
+           i_dim2 += test_config::DIM2_UNROLL) {
+        for (size_t i_dim1_par = 0; i_dim1_par < test_config::OUT_DIM1_UNROLL;
+             i_dim1_par++) {
+          TOutputWord output_data = out_stream[i_dim1_par].read();
+          for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+               i_dim2_par++) {
 
             // Check if the output data matches the expected result
-            if (output_data[i_och_par] !=
-                test_config::output_tensor[0][i_och + i_och_par][h][w + i_w_par]
-                                          ) {
-              std::cerr << "Output mismatch at (" << h << ", " << w + i_w_par
-                        << ", " << i_och + i_och_par
-                        << "): " << output_data[i_och_par] << " != "
-                        << test_config::output_tensor[0][i_och + i_och_par][h]
-                                                     [w + i_w_par]
-                        << std::endl;
+            if (output_data[i_dim2_par] !=
+                test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                          [i_dim1 + i_dim1_par]) {
+              std::cerr
+                  << "Output mismatch at (" << i_dim0 << ", "
+                  << i_dim1 + i_dim1_par << ", " << i_dim2 + i_dim2_par
+                  << "): " << output_data[i_dim2_par] << " != "
+                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                               [i_dim1 + i_dim1_par]
+                  << std::endl;
               return false;
             }
           }
@@ -83,14 +91,14 @@ bool test_run() {
   }
 
   // Ensure all streams are empty
-  for (size_t i = 0; i < test_config::IN_W_PAR; i++) {
+  for (size_t i = 0; i < test_config::IN_DIM1_UNROLL; i++) {
     if (!in_stream[i].empty()) {
       std::cout << "Input stream not empty after run." << std::endl;
       flag = false;
     }
   }
 
-  for (size_t i = 0; i < test_config::OUT_W_PAR; i++) {
+  for (size_t i = 0; i < test_config::OUT_DIM1_UNROLL; i++) {
     if (!out_stream[i].empty()) {
       std::cout << "Output stream not empty after run." << std::endl;
       flag = false;
@@ -104,19 +112,20 @@ bool test_run() {
 bool test_step() {
 
   static constexpr size_t expectedII =
-      OUT_HEIGHT * OUT_WIDTH * test_config::OUT_CH /
-      (test_config::CH_PAR * test_config::OUT_W_PAR);
+      OUT_DIM0 * OUT_DIM1 * test_config::OUT_DIM2 /
+      (test_config::DIM2_UNROLL * test_config::OUT_DIM1_UNROLL);
 
   // Create input and output streams
-  hls::stream<TInputWord> i_data[test_config::IN_W_PAR];
-  hls::stream<TOutputWord> o_data[test_config::OUT_W_PAR];
+  hls::stream<TInputWord> i_data[test_config::IN_DIM1_UNROLL];
+  hls::stream<TOutputWord> o_data[test_config::OUT_DIM1_UNROLL];
 
   // Create StreamingUpsample instance and initialize step state
-  StreamingUpsample<
-      TInputWord, TOutputWord, test_config::Quantizer, test_config::IN_HEIGHT,
-      test_config::IN_WIDTH, test_config::IN_CH, OUT_HEIGHT, OUT_WIDTH,
-      test_config::SCALE_FACTOR, test_config::CH_PAR, test_config::IN_W_PAR,
-      test_config::OUT_W_PAR> upsample;
+  StreamingUpsampleDim01<TInputWord, TOutputWord, test_config::Quantizer,
+                    test_config::IN_DIM0, test_config::IN_DIM1,
+                    test_config::IN_DIM2, OUT_DIM0, OUT_DIM1,
+                    test_config::SCALE_FACTOR, test_config::IN_DIM1_UNROLL,
+                    test_config::OUT_DIM1_UNROLL, test_config::DIM2_UNROLL>
+      upsample;
   upsample.step_init(expectedII);
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
@@ -126,7 +135,7 @@ bool test_step() {
   while (true) {
 
     // Provide dummy input data to keep the pipeline busy
-    for (size_t i = 0; i < test_config::IN_W_PAR; i++) {
+    for (size_t i = 0; i < test_config::IN_DIM1_UNROLL; i++) {
       i_data[i].write(TInputWord());
     }
 
@@ -148,7 +157,7 @@ bool test_step() {
   }
 
   // Flush the output stream.
-  for (size_t i = 0; i < test_config::OUT_W_PAR; i++) {
+  for (size_t i = 0; i < test_config::OUT_DIM1_UNROLL; i++) {
     while (!o_data[i].empty()) {
       o_data[i].read();
     }

@@ -36,7 +36,9 @@ class DDRstream {
                     hls::stream<bool> &start_stream) {
 
     for (size_t i = 0; i < DIM / BURST_SIZE; ++i) {
+    WRITE_TO_DDR_LOOP:
       for (size_t j = 0; j < BURST_SIZE; ++j) {
+#pragma HLS pipeline II = 1
         TData input_data = input_stream.read();
         ddr_buffer[i * BURST_SIZE + j] = input_data;
       }
@@ -54,10 +56,13 @@ class DDRstream {
     TData output_data;
     start_stream.read(); // Wait for the signal to start reading
     for (size_t i = 0; i < DIM / BURST_SIZE; ++i) {
+      #pragma HLS loop_flatten off
       bool valid = valid_stream.read();
       hls::fence(valid_stream, ddr_buffer);
-      (void)valid; 
+      (void)valid;
+    READ_FROM_DDR_LOOP:
       for (size_t j = 0; j < BURST_SIZE; ++j) {
+#pragma HLS pipeline II = 1
         output_data = ddr_buffer[i * BURST_SIZE + j];
         output_stream.write(output_data);
       }

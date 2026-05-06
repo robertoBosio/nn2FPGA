@@ -28,10 +28,10 @@ def insert_comm_node(
         outputs=[output_name],
         name=name,
         domain="nn2fpga.compiler.custom_op",
-        in_channel_unroll=ch_par_in,
-        out_channel_unroll=ch_par_out,
-        in_width_unroll=w_par_in,
-        out_width_unroll=w_par_out,
+        in_dim2_unroll=ch_par_in,
+        out_dim2_unroll=ch_par_out,
+        in_dim1_unroll=w_par_in,
+        out_dim1_unroll=w_par_out,
         in_stream_array=w_par_in,
         out_stream_array=w_par_out,
         in_word_array=ch_par_in,
@@ -130,8 +130,8 @@ def adjust_bandwidth(
             last_ch_par,
             target_ch_par,
             "ch",
-            "BandwidthAdjustDecreaseChannels",
-            "BandwidthAdjustIncreaseChannels",
+            "BandwidthAdjustDecreaseWord",
+            "BandwidthAdjustIncreaseWord",
             "bwch",
         )
 
@@ -161,8 +161,8 @@ def adjust_bandwidth(
             last_ch_par,
             target_ch_par,
             "ch",
-            "BandwidthAdjustDecreaseChannels",
-            "BandwidthAdjustIncreaseChannels",
+            "BandwidthAdjustDecreaseWord",
+            "BandwidthAdjustIncreaseWord",
             "bwch",
         )
 
@@ -186,10 +186,10 @@ class AdjustStreamingCommunication(Transformation):
         # Traversing the graph to find nodes that require adjustment
         communication_nodes = []
         mark_visited = set()
-        queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
+        queue = deque(model.get_nodes_by_op_type("AXIToStream"))
         mark_visited.update(node.name for node in queue)
         if not queue:
-            raise ValueError("No NHWCToStream node found in the model. This means the model has not a entry point for streaming.")
+            raise ValueError("No AXIToStream node found in the model. This means the model has not a entry point for streaming.")
 
         while queue:
             node = queue.popleft()

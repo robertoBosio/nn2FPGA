@@ -15,49 +15,58 @@ class TestStreamingUpsample(BaseHLSTest):
         return "StreamingUpsample"
 
     def generate_config_file(self, config_dict):
+        in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
+        out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
+        in_bits = int(config_dict["INPUT_DATAWIDTH"])
+        out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
+        onnx_in_type = self.get_tensorproto_dtype(in_bits, in_unsigned)
+        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
+        np_in_type = self.get_numpy_dtype(in_bits, in_unsigned)
+        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
 
-        # random tensors
+        # Random input tensor in correct integer domain/range
+        in_info = np.iinfo(np_in_type)
         input_tensor = np.random.randint(
-            -128,
-            127,
+            int(in_info.min),
+            int(in_info.max) + 1,
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["IN_DIM2"],
+                config_dict["IN_DIM0"],
+                config_dict["IN_DIM1"],
             ),
-            dtype=np.int8,
+            dtype=np_in_type,
         )
 
         X = helper.make_tensor_value_info(
             "X",
-            TensorProto.INT8,
+            onnx_in_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["IN_DIM2"],
+                config_dict["IN_DIM0"],
+                config_dict["IN_DIM1"],
             ],
         )
         Y = helper.make_tensor_value_info(
             "Y",
-            TensorProto.INT8,
+            onnx_out_type,
             [
                 1,
-                config_dict["OUT_CH"],
-                config_dict["OUT_HEIGHT"],
-                config_dict["OUT_WIDTH"],
+                config_dict["OUT_DIM2"],
+                config_dict["OUT_DIM0"],
+                config_dict["OUT_DIM1"],
             ],
         )
 
         X_scale = helper.make_tensor(
             "X_scale", TensorProto.FLOAT, [], [config_dict["X_SCALE"]]
         )
-        X_zp = helper.make_tensor("X_zp", TensorProto.INT8, [], [config_dict["X_ZP"]])
+        X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [config_dict["X_ZP"]])
         Y_scale = helper.make_tensor(
             "Y_scale", TensorProto.FLOAT, [], [config_dict["Y_SCALE"]]
         )
-        Y_zp = helper.make_tensor("Y_zp", TensorProto.INT8, [], [config_dict["Y_ZP"]])
+        Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [config_dict["Y_ZP"]])
 
         dqlinear = helper.make_node(
             "DequantizeLinear",
@@ -113,23 +122,30 @@ class TestStreamingUpsample(BaseHLSTest):
         cwr.indent()
         for key, value in config_dict.items():
             if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
-                cwr.add_line(f"const float {key} = {value}f;")
+                cwr.add_line(f"const float {key} = {float(value)}f;")
             else:
-                cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
-        cwr.add_line(f"typedef ap_int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+                if isinstance(value, bool):
+                    value_str = "true" if value else "false"
+                    cwr.add_line(f"const bool {key} = {value_str};")
+                else:
+                    cwr.add_line(f"const int {key} = {int(value)};")
+        typedef_suffix = "u" if in_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
+
+        typedef_suffix = "u" if out_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
         cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
-                primitive=f"ap_int<{config_dict['INPUT_DATAWIDTH']}>",
+                primitive=f"TInput",
                 value=input_tensor,
             ).generate_initialization()
         )
         cwr.add_lines(
             csnake.Variable(
                 "output_tensor",
-                primitive=f"ap_int<{config_dict['OUTPUT_DATAWIDTH']}>",
+                primitive=f"TOutput",
                 value=y,
             ).generate_initialization()
         )
@@ -141,16 +157,18 @@ class TestStreamingUpsample(BaseHLSTest):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": False,
             "OUTPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 20,
-            "IN_WIDTH": 20,
-            "IN_CH": 20,
-            "OUT_HEIGHT": 40,
-            "OUT_WIDTH": 40,
-            "OUT_CH": 20,
-            "CH_PAR": 5,
-            "IN_W_PAR": 5,
-            "OUT_W_PAR": 10,
+            "OUTPUT_IS_UNSIGNED": False,
+            "IN_DIM0": 20,
+            "IN_DIM1": 20,
+            "IN_DIM2": 20,
+            "OUT_DIM0": 40,
+            "OUT_DIM1": 40,
+            "OUT_DIM2": 20,
+            "DIM2_UNROLL": 5,
+            "IN_DIM1_UNROLL": 5,
+            "OUT_DIM1_UNROLL": 10,
             "X_SCALE": 2**-5,
             "X_ZP": 0,
             "Y_SCALE": 2**-5,

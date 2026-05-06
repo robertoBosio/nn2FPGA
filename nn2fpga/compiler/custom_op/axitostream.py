@@ -191,7 +191,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
     
-    def accepted_input_layouts(self) -> tuple | None:
+    def accepted_input_layout(self) -> tuple | None:
         """ AXIToStream is layout agnostic, since it just reads the input tensor as a stream of data. """
         return None
     
@@ -250,7 +250,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         )
 
     def get_latency(self, model: ModelWrapper) -> int:
-        """ Estimate the latency of the NHWCtoStream operation.
+        """ Estimate the latency of the AXIToStream operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -266,7 +266,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         return latency
 
     def get_brams(self, model: ModelWrapper) -> int:
-        """ Estimate the BRAM usage of the NHWCtoStream operation.
+        """ Estimate the BRAM usage of the AXIToStream operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -275,7 +275,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         return 0
 
     def get_dsps(self, model: ModelWrapper) -> int:
-        """ Estimate the DSP usage of the NHWCtoStream operation.
+        """ Estimate the DSP usage of the AXIToStream operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -284,7 +284,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         return 0
 
     def get_dse_points(self, model: ModelWrapper) -> list["AXIToStream.DSEPoint"]:
-        """Generate all feasible DSE points for the NHWCtoStream operation.
+        """Generate all feasible DSE points for the AXIToStream operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
@@ -324,7 +324,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         return DSE_points
 
     def has_linebuffer(self, par: list = None) -> bool:
-        """ Check if the NHWCtoStream operation requires Line Buffering.
+        """ Check if the AXIToStream operation requires Line Buffering.
         Returns:
             bool: True if a line buffer is required, False otherwise.
         """

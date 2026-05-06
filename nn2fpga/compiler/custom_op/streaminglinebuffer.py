@@ -1,7 +1,7 @@
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
@@ -93,6 +93,14 @@ class StreamingLineBuffer(NN2FPGAOp):
                 return str(int(pad_value))
         else:
             return str(int(pad_value) if pad_value >= 0 else int(0))
+    
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingLineBuffer only supports NHWC layout. """
+        return (0, 2, 3, 1)
+    
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingLineBuffer only supports NHWC layout."""
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -108,21 +116,12 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         hls_kernels = []
         fifos = {}
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
-
-        # Retrieve tensor shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_shape = self.require_output_shape(model, 0)
 
         FH = self.get_nodeattr("kernel_shape")[0]
         FW = self.get_nodeattr("kernel_shape")[1]
-        PAD_T = self.get_nodeattr("pads")[0]
         PAD_L = self.get_nodeattr("pads")[1]
-        STRIDE_H = self.get_nodeattr("strides")[0]
         STRIDE_W = self.get_nodeattr("strides")[1]
         FW_EXTENDED = FW + (self.get_nodeattr("width_unroll") - 1) * STRIDE_W
 
@@ -140,19 +139,10 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
-                depth=0,  # Given the design of the LineBuffer, we already know we need a depth of 2 here.
+                depth=0,
                 hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=FH * FW_EXTENDED,
             )
-
-        # Create the PixelWindowSelector internal streams.
-        # The last W_PAR nodes does not streams out anything.
-        # for i in range(FH * FW_EXTENDED - self.get_nodeattr("width_unroll")):
-        #     fifos[f"{self.onnx_node.name}_buffer_stream_{i}_"] = TensorFifo(
-        #         depth=0,
-        #         hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
-        #         n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
-        #     )
 
         windows_dict = list(range(FH * FW_EXTENDED))
         for i_fh in range(FH):
@@ -397,9 +387,7 @@ class StreamingLineBuffer(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
+        output_shape = self.require_output_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         unroll_factor = np.prod([
