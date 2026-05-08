@@ -396,8 +396,7 @@ class ConvertToQCDQ(Transformation):
                 input_layout = TensorLayout.from_canonical_name(
                     ap.input_map[inp].get("layout")
                 )
-                inp_perm       = [dim for dim in input_layout.perm if dim < len(inp_shape)]
-                inp_shape_perm = [inp_shape[dim] for dim in inp_perm]
+                inp_shape_perm = [inp_shape[dim] for dim in input_layout.perm]
 
                 input_tensor_quant = TensorQuant.from_canonical_name(
                     ap.input_map[inp]["quant"]
@@ -430,7 +429,7 @@ class ConvertToQCDQ(Transformation):
                     analyze_transpose_split(
                         tensor_name=inp,
                         shape=inp_shape,
-                        perm=inp_perm,
+                        perm=input_layout.perm,
                         tensor_type=input_tensor_quant.get_tensorproto_dtype(),
                     )
                     transpose_node = helper.make_node(
@@ -438,7 +437,7 @@ class ConvertToQCDQ(Transformation):
                         name=f"{inp}_transpose",
                         inputs=[f"{inp}_quantized_pretranspose"],
                         outputs=[f"{inp}_quantized"],
-                        perm=inp_perm,
+                        perm=input_layout.perm,
                     )
                     model.set_tensor_shape(
                         f"{inp}_quantized",
@@ -485,7 +484,7 @@ class ConvertToQCDQ(Transformation):
             for i, out in enumerate(partition_node.output):
                 consumers = model.find_consumers(out)
 
-                if consumers is not None and all(
+                if len(consumers) > 0 and all(
                     consumer.op_type == "DequantizeLinear" for consumer in consumers
                 ):
                     continue
@@ -494,11 +493,13 @@ class ConvertToQCDQ(Transformation):
                 if out_shape is None:
                     continue
 
+                logger.info(f"Processing partition output '{out}' with shape {out_shape}")
+
                 output_layout = TensorLayout.from_canonical_name(
                     ap.output_map[out].get("layout")
                 )
-                out_perm       = [dim for dim in output_layout.perm if dim < len(out_shape)]
-                out_shape_perm = [out_shape[dim] for dim in out_perm]
+                out_shape_perm = [out_shape[dim] for dim in output_layout.perm]
+                logger.info(f"Output layout perm: {output_layout.perm}, permuted shape: {out_shape_perm}")
 
                 output_tensor_quant = TensorQuant.from_canonical_name(
                     ap.output_map[out]["quant"]
@@ -514,7 +515,7 @@ class ConvertToQCDQ(Transformation):
                 # Partition output tensor name carries the int8 data
                 model.set_tensor_shape(
                     f"{out}_quantized",
-                    out_shape,
+                    out_shape_perm,
                     dtype=output_tensor_quant.get_tensorproto_dtype(),
                 )
 
@@ -522,8 +523,8 @@ class ConvertToQCDQ(Transformation):
                     # 1. Transpose the int8 partition output into the expected layout
                     analyze_transpose_split(
                         tensor_name=out,
-                        shape=out_shape,
-                        perm=out_perm,
+                        shape=out_shape_perm,
+                        perm=output_layout.perm,
                         tensor_type=output_tensor_quant.get_tensorproto_dtype(),
                     )
                     transpose_node = helper.make_node(
@@ -531,11 +532,11 @@ class ConvertToQCDQ(Transformation):
                         name=f"{out}_transpose",
                         inputs=[f"{out}_quantized"],
                         outputs=[f"{out}_transposed_quantized"],
-                        perm=out_perm,
+                        perm=output_layout.inverse().perm,  # Inverse perm to get back to original layout
                     )
                     model.set_tensor_shape(
                         f"{out}_transposed_quantized",
-                        out_shape_perm,
+                        out_shape,
                         dtype=output_tensor_quant.get_tensorproto_dtype(),
                     )
                     model.graph.node.append(transpose_node)
@@ -552,6 +553,7 @@ class ConvertToQCDQ(Transformation):
                     model.graph.node.append(dequantize_node)
 
                 else:
+                    logger.info(f"Skipping output transpose for {out} since it has identity layout")
                     # Identity layout: dequantize directly, no transpose needed
                     dequantize_node = helper.make_node(
                         "DequantizeLinear",

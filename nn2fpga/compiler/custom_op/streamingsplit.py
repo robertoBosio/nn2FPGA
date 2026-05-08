@@ -4,7 +4,7 @@ from onnx import helper
 from onnxscript.rewriter import pattern
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
-from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
+from nn2fpga.compiler.core.tensor_layout import TensorLayout, require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -161,14 +161,14 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         split_point = self.get_nodeattr("split")[0]
         axis = self.get_nodeattr("axis")
         if axis < 0:
             axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
-        axis_permuted = input_layout.perm.index(axis)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        padded_input_layout = TensorLayout(input_layout.perm, 4)
+        axis_permuted = padded_input_layout.perm.index(axis)
         axis_strings = {1: "Dim0", 2: "Dim1", 3: "Dim2"}
         if axis_permuted not in axis_strings:
             raise ValueError(f"Unsupported split axis after permutation: {axis_permuted}. Only splitting along dimensions 1, 2, or 3 is supported.")
@@ -192,9 +192,9 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (f"{self.__get_quantizer(input_quant, output_quant)}", "Quantizer"),
                 (split_point, "SPLIT"),
-                (input_shape_permuted[1], "DIM0"),
-                (input_shape_permuted[2], "DIM1"),
-                (input_shape_permuted[3], "DIM2"),
+                (input_shape[-3], "DIM0"),
+                (input_shape[-2], "DIM1"),
+                (input_shape[-1], "DIM2"),
                 (point.dim1_unroll, "DIM1_UNROLL"),
                 (point.dim2_unroll, "DIM2_UNROLL"),
             ],
@@ -269,7 +269,7 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
             dim2_unroll=self.get_nodeattr("dim2_unroll"),
             dim1_unroll=self.get_nodeattr("dim1_unroll"),
         )
-    
+
     def accepted_input_layout(self) -> tuple | None:
         """ StreamingSplit is layout-agnostic, so it accepts any input layout. """
         return None
@@ -336,7 +336,7 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -362,19 +362,12 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
         return 0
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingSplit.DSEPoint"]:
-        """ Generate the DSE points for the StreamingSplit operation.
+        """Generate the DSE points for the StreamingSplit operation.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             list[StreamingSplit.DSEPoint]: List of DSE points.
         """
-
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
@@ -384,19 +377,17 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
 
         output_layout0 = require_tensor_layout(model, self.onnx_node.output[0])
         output_layout1 = require_tensor_layout(model, self.onnx_node.output[1])
-        output_shape0 = self.require_output_shape(model, 0)
-        output_shape1 = self.require_output_shape(model, 1)
-        output_shape0_permuted = [output_shape0[i] for i in output_layout0.perm]
-        output_shape1_permuted = [output_shape1[i] for i in output_layout1.perm]
+        output_shape0 = self.require_4d_output_shape(model, 0, output_layout0)
+        output_shape1 = self.require_4d_output_shape(model, 1, output_layout1)
 
         DSE_points = []
-        for dim2_unroll in divisors(
-            [output_shape0_permuted[3], output_shape1_permuted[3]],
-            min(output_shape0_permuted[3], output_shape1_permuted[3]),
+        for dim2_unroll in self.divisors(
+            [output_shape0[-1], output_shape1[-1]],
+            min(output_shape0[-1], output_shape1[-1]),
         ):
-            for dim1_unroll in divisors(
-                [output_shape0_permuted[2], output_shape1_permuted[2]],
-                min(output_shape0_permuted[2], output_shape1_permuted[2]),
+            for dim1_unroll in self.divisors(
+                [output_shape0[-2], output_shape1[-2]],
+                min(output_shape0[-2], output_shape1[-2]),
             ):
                 # Check dimension of input streams
                 if (input_bits * dim2_unroll) > 4096:
@@ -404,12 +395,11 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
                 # Check dimension of output streams
                 if (output_bits * dim2_unroll) > 4096:
                     continue
+            
+                if dim1_unroll > 4:
+                    continue
 
-                DSE_points.append(
-                    self.DSEPoint(
-                        dim2_unroll, dim1_unroll
-                    )
-                )
+                DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))
 
         return DSE_points
 

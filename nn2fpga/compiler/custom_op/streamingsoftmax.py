@@ -244,8 +244,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         axis = self.get_nodeattr("axis")
 
         # In the case of -1, we need to convert it to the actual axis index
@@ -253,10 +253,9 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         if axis < 0:
             axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
         axis_permuted = input_layout.perm.index(axis)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
 
-        dim_reduction = input_shape_permuted[axis_permuted]
-        dim_lanes = np.prod(input_shape_permuted) // dim_reduction
+        dim_reduction = input_shape[axis_permuted]
+        dim_lanes = np.prod(input_shape) // dim_reduction
 
         lut_size = 1 << input_quant.bitwidth
         StreamingSoftmax = cpp_object(
@@ -410,10 +409,10 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("lanes_unroll") * self.get_nodeattr("reduction_unroll")
-        return np.prod(input_shape) * 2 // unroll_factor
+        return np.prod(input_shape) * 3 // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingSoftmax operation.
@@ -451,34 +450,26 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingSoftmax.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingSoftmax operation."""
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         axis = self.get_nodeattr("axis")
         if axis < 0:
             axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
         axis_permuted = input_layout.perm.index(axis)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
 
-        dim_reduction = input_shape_permuted[axis_permuted]
-        dim_lanes = np.prod(input_shape_permuted) // dim_reduction
+        dim_reduction = input_shape[axis_permuted]
+        dim_lanes = np.prod(input_shape) // dim_reduction
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for lanes_unroll in divisors([dim_lanes], dim_lanes):
-            for reduction_unroll in divisors([dim_reduction], dim_reduction):
+        for lanes_unroll in self.divisors([dim_lanes], dim_lanes):
+            for reduction_unroll in self.divisors([dim_reduction], dim_reduction):
                 # Check dimension of input streams
                 if (input_bits * reduction_unroll) > 4096:
                     continue

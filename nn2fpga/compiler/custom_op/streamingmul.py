@@ -206,8 +206,6 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
         input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shapeA = self.require_input_shape(model, 0)
-        input_shapeB = self.require_input_shape(model, 1)
 
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
@@ -215,8 +213,8 @@ class StreamingMul(NN2FPGAOp, DSECapable):
             raise ValueError(
                 f"Input layouts for '{self.onnx_node.input[0]}' and '{self.onnx_node.input[1]}' must be the same."
             )
-
-        input_shape_permuted = [input_shapeA[i] for i in input_layoutA.perm]
+        input_shapeA = self.require_4d_input_shape(model, 0, input_layoutA)
+        input_shapeB = self.require_4d_input_shape(model, 1, input_layoutB)
 
         StreamingMul = cpp_object(
             "StreamingMul",
@@ -255,9 +253,9 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                     f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape_permuted[1]}", "DIM0"),
-                (f"{input_shape_permuted[2]}", "DIM1"),
-                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{input_shapeA[-3]}", "DIM0"),
+                (f"{input_shapeA[-2]}", "DIM1"),
+                (f"{input_shapeA[-1]}", "DIM2"),
                 (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
                 (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
@@ -389,7 +387,8 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         if input_shape is None:
             raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
@@ -439,26 +438,20 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingMul.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingMul operation."""
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         inputA_quant = require_tensor_quant(model, self.onnx_node.input[0])
         inputB_quant = require_tensor_quant(model, self.onnx_node.input[1])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        inputA_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
-
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
-        input_shape_permuted = [inputA_shape[i] for i in input_layoutA.perm]
-        output_shape_permuted = [output_shape[i] for i in output_layout.perm]
+        inputA_shape = self.require_4d_input_shape(model, 0, input_layoutA)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for dim2_unroll in divisors(input_shape_permuted[3], input_shape_permuted[3]):
-            for dim1_unroll in divisors(
-                output_shape_permuted[2], output_shape_permuted[2]
+        for dim2_unroll in self.divisors([inputA_shape[-1]], inputA_shape[-1]):
+            for dim1_unroll in self.divisors(
+                [output_shape[-2]], output_shape[-2]
             ):
                 # Check dimension of input streams
                 if (inputA_quant.bitwidth * dim2_unroll) > 4096:

@@ -650,7 +650,8 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
         ####### SplitReshapeQKV ########
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         (rq_scale, rq_zeropt, rq_bitwidth) = (1,2,3)
         SplitReshapeQKV_output_quant = TensorQuant(
@@ -701,9 +702,9 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 (f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
                 (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TSplit"),
                 (f"{self.__get_shift_quantizer(input_quant, SplitReshapeQKV_output_quant)}", "SplitQuantizer"),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CHANNELS"),
+                (f"{input_shape[-3]}", "IN_HEIGHT"),
+                (f"{input_shape[-2]}", "IN_WIDTH"),
+                (f"{input_shape[-1]}", "IN_CHANNELS"),
                 "1"
             ],
         )

@@ -314,7 +314,7 @@ class StreamingAveragePool(NN2FPGAOp, DSECapable):
             filter_height_unroll=self.get_nodeattr("filter_height_unroll"),
             filter_width_unroll=self.get_nodeattr("filter_width_unroll"),
         )
-    
+
     def accepted_input_layout(self) -> tuple | None:
         """ StreamingAveragePool accepts only NHWC layout. """
         return (0, 2, 3, 1)
@@ -418,9 +418,6 @@ class StreamingAveragePool(NN2FPGAOp, DSECapable):
             list[StreamingAveragePool.DSEPoint]: List of DSE points.
         """
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
@@ -429,17 +426,13 @@ class StreamingAveragePool(NN2FPGAOp, DSECapable):
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
-        output_shape_permuted = [output_shape[dim] for dim in output_layout.perm]
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for dim2_unroll in divisors(output_shape_permuted[3], output_shape_permuted[3]):
-            for dim1_unroll in divisors(
-                output_shape_permuted[2], output_shape_permuted[2]
-            ):
+        for dim2_unroll in self.divisors([output_shape[-1]], output_shape[-1]):
+            for dim1_unroll in self.divisors([output_shape[-2]], output_shape[-2]):
                 # Check dimension of input streams
                 if (input_bits * dim2_unroll) > 4096:
                     continue

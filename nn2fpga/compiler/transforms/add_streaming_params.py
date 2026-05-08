@@ -1,4 +1,5 @@
 import base64
+from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph, GiveUniqueNodeNames, GiveReadableTensorNames
 from qonnx.core.modelwrapper import ModelWrapper
@@ -201,6 +202,7 @@ class AddStreamingParams(Transformation):
             "index": index,
             "shape": grouped_initializer.shape,
             "quant": params_quant.get_canonical_name(),
+            "layout": TensorLayout.identity(len(grouped_initializer.shape)).get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
         }
         param_stream_input = helper.make_tensor_value_info(
@@ -239,7 +241,6 @@ class AddStreamingParams(Transformation):
             node.output.extend([f"{node.name}_shift_out"])
 
             params_to_shift -= params_size
-            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
             custom_op.set_nodeattr("data_to_shift", params_to_shift)
             model.del_initializer(node.input[0])
             node.input[0] = input_stream[0]
@@ -248,6 +249,7 @@ class AddStreamingParams(Transformation):
                 node.input[0],
                 params_quant
             )
+            model.set_tensor_shape(f"{node.name}_shift_out", [1, params_to_shift])
 
             # The next input is the first output of the current ParamStream node
             input_stream = [f"{node.name}_shift_out"]
@@ -263,7 +265,6 @@ class AddStreamingParams(Transformation):
             )
 
             params_to_shift -= params_size
-            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
             custom_op.set_nodeattr("data_to_shift", params_to_shift)
             model.del_initializer(node.input[0])
             node.input[0] = input_stream[0]

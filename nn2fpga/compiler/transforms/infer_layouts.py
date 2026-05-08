@@ -56,20 +56,30 @@ class InferLayouts(Transformation):
     def _propagate_backward(self, model, tensor_name, layout):
         """Walk backward through transparent nodes setting the layout."""
         producer = model.find_producer(tensor_name)
+        tensor_shape = model.get_tensor_shape(tensor_name)
+        if tensor_shape is None or len(tensor_shape) == 0:
+            # Scalar or unknown shape, skip layout annotation
+            return
+        prop_layout = TensorLayout(layout.perm, rank=len(tensor_shape))
+        logger.info(f"Propagating layout backward: {tensor_name} with shape {tensor_shape} gets perm {prop_layout.perm}")
+
         if producer is None:
             # Reached a graph input
-            set_custom_tensor_layout(model, tensor_name, layout)
-            logger.info(f"Reached graph input '{tensor_name}', assigning layout {layout}")
+            set_custom_tensor_layout(model, tensor_name, prop_layout)
+            logger.info(f"Reached graph input '{tensor_name}', assigning layout {prop_layout}")
             return
+        
         # Stop at reshape boundaries or already-annotated edges
         if get_custom_tensor_layout(model, tensor_name) is not None:
             return
+        
         op = getCustomOp(producer)
         if isinstance(op, NN2FPGAOp) and op.accepted_input_layout() is not None:
             # Hit another pinned node — stop, don't overwrite its contract
             return
-        set_custom_tensor_layout(model, tensor_name, layout)
-        logger.info(f"Propagating layout {layout} backward from '{tensor_name}'")
+        
+        set_custom_tensor_layout(model, tensor_name, prop_layout)
+        logger.info(f"Propagating layout {prop_layout} backward from '{tensor_name}'")
         for inp in producer.input:
             self._propagate_backward(model, inp, layout)
 
@@ -77,8 +87,14 @@ class InferLayouts(Transformation):
         """Walk forward through transparent nodes setting the layout."""
         if get_custom_tensor_layout(model, tensor_name) is not None:
             return
-        set_custom_tensor_layout(model, tensor_name, layout)
-        logger.info(f"Propagating layout {layout} forward from '{tensor_name}'")
+        tensor_shape = model.get_tensor_shape(tensor_name)
+        if tensor_shape is None or len(tensor_shape) == 0:
+            # Scalar or unknown shape, skip layout annotation
+            return
+        prop_layout = TensorLayout(layout.perm, rank=len(tensor_shape))
+        logger.debug(f"Propagating layout forward: {tensor_name} with shape {tensor_shape} gets perm {prop_layout.perm}")
+        set_custom_tensor_layout(model, tensor_name, prop_layout)
+        logger.info(f"Propagating layout {prop_layout} forward from '{tensor_name}'")
         consumers = model.find_consumers(tensor_name)
         for consumer in consumers:
             op = getCustomOp(consumer)
@@ -104,6 +120,10 @@ class InferLayouts(Transformation):
                     tgt_layout = TensorLayout(required)
                 else:
                     continue
+                if len(src_layout.perm) > len(tgt_layout.perm):
+                    src_layout = TensorLayout(tgt_layout.perm, rank=len(tgt_layout.perm))
+                elif len(src_layout.perm) < len(tgt_layout.perm):
+                    tgt_layout = TensorLayout(src_layout.perm, rank=len(src_layout.perm))
                 if src_layout != tgt_layout:
                     raise NotImplementedError(
                         f"Layout mismatch at '{node.name}' input '{inp}': "

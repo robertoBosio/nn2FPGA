@@ -491,10 +491,8 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
+        input_shape = self.get_nodeattr("shape_in")
         unroll_factor = self.get_nodeattr("lanes_unroll") * self.get_nodeattr("reduction_unroll")
         return np.prod(input_shape) * 3 // unroll_factor
 
@@ -534,13 +532,6 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingYoloHeadSoftmax.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingYoloHeadSoftmax operation."""
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
@@ -560,8 +551,8 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for lanes_unroll in divisors([dim_lanes], dim_lanes):
-            for reduction_unroll in divisors([dim_reduction], dim_reduction):
+        for lanes_unroll in self.divisors([dim_lanes], dim_lanes):
+            for reduction_unroll in self.divisors([dim_reduction], dim_reduction):
                 # Check dimension of input streams
                 if (input_bits * reduction_unroll) > 4096:
                     continue

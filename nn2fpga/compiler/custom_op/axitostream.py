@@ -117,9 +117,8 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         AXIToStream = cpp_object(
             "AXIToStream",
@@ -137,9 +136,9 @@ class AXIToStream(DSECapable, NN2FPGAOp):
                     "Quantizer",
                 ),
                 (self.__get_data_per_word(model), "DATA_PER_WORD"),
-                (input_shape_permuted[1], "DIM0"),
-                (input_shape_permuted[2], "DIM1"),
-                (input_shape_permuted[3], "DIM2"),
+                (input_shape[1], "DIM0"),
+                (input_shape[2], "DIM1"),
+                (input_shape[3], "DIM2"),
                 (point.dim1_unroll, "DIM1_UNROLL"),
                 (point.dim2_unroll, "DIM2_UNROLL"),
             ]
@@ -190,11 +189,11 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             self.onnx_node.input[0],
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
+
     def accepted_input_layout(self) -> tuple | None:
         """ AXIToStream is layout agnostic, since it just reads the input tensor as a stream of data. """
         return None
-    
+
     def produced_output_layout(self, input_layout: tuple | None) -> tuple:
         """ The output layout of AXIToStream is the same as the input layout. """
         return input_layout
@@ -256,7 +255,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -291,28 +290,22 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             list[AXIToStream.DSEPoint]: A list of feasible DSE points.
         """
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         act_bits = output_quant.bitwidth
 
         DSE_points = []
-        for dim2_unroll in divisors(input_shape_permuted[3], input_shape_permuted[3]):
-            for dim1_unroll in divisors(
-                input_shape_permuted[2], input_shape_permuted[2]
-            ):
+        for dim2_unroll in self.divisors([input_shape[-1]], input_shape[-1]):
+            for dim1_unroll in self.divisors([input_shape[-2]], input_shape[-2]):
 
                 # Check if the data fits in the AXI bitwidth.
                 if (np.prod([dim2_unroll, dim1_unroll]) * act_bits) > axi_bitwidth:
                     continue
 
                 # DIM1 parallelization can only be applied if the full DIM2 fits in the AXI word.
-                if dim1_unroll > 1 and dim2_unroll != input_shape_permuted[3]:
+                if dim1_unroll > 1 and dim2_unroll != input_shape[-1]:
                     continue
 
                 DSE_points.append(

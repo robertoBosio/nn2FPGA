@@ -173,8 +173,10 @@ class StreamingUpsample(NN2FPGAOp):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         StreamingUpsample = cpp_object(
             "StreamingUpsampleDim01",
@@ -192,11 +194,11 @@ class StreamingUpsample(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape[2]}", "IN_DIM0"),
-                (f"{input_shape[3]}", "IN_DIM1"),
-                (f"{input_shape[1]}", "IN_DIM2"),
-                (f"{output_shape[2]}", "OUT_DIM0"),
-                (f"{output_shape[3]}", "OUT_DIM1"),
+                (f"{input_shape[-3]}", "IN_DIM0"),
+                (f"{input_shape[-2]}", "IN_DIM1"),
+                (f"{input_shape[-1]}", "IN_DIM2"),
+                (f"{output_shape[-3]}", "OUT_DIM0"),
+                (f"{output_shape[-2]}", "OUT_DIM1"),
                 (f"{self.get_nodeattr('scale_factor')}", "SCALE_FACTOR"),
                 (f"{self.get_nodeattr('in_dim1_unroll')}", "IN_DIM1_UNROLL"),
                 (f"{self.get_nodeattr('out_dim1_unroll')}", "OUT_DIM1_UNROLL"),
@@ -307,7 +309,7 @@ class StreamingUpsample(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("out_dim1_unroll")
         return np.prod(output_shape) // unroll_factor

@@ -79,8 +79,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
     def __get_object_declaration(self, model) -> str:
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape = self.require_input_shape(model, 0)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         # Create the StreamingTensorDuplicator object.
         StreamingTensorDuplicator = cpp_object(
@@ -91,9 +90,9 @@ class StreamingTensorDuplicator(NN2FPGAOp):
                     f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     "TWord",
                 ),
-                (input_shape_permuted[1], "DIM0"),
-                (input_shape_permuted[2], "DIM1"),
-                (input_shape_permuted[3], "DIM2"),
+                (input_shape[-3], "DIM0"),
+                (input_shape[-2], "DIM1"),
+                (input_shape[-1], "DIM2"),
                 (self.get_nodeattr("dim1_unroll"), "DIM1_UNROLL"),
                 (self.get_nodeattr("dim2_unroll"), "DIM2_UNROLL"),
             ],
@@ -234,7 +233,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             int: The estimated latency in cycles.
         """ 
         
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
         latency = np.prod(input_shape) // (self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll"))
         return latency
     

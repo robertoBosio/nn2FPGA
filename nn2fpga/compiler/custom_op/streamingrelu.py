@@ -141,9 +141,8 @@ class StreamingReLU(NN2FPGAOp):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         StreamingReLU = cpp_object(
             "StreamingReLU",
@@ -169,9 +168,9 @@ class StreamingReLU(NN2FPGAOp):
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape_permuted[1]}", "DIM0"),
-                (f"{input_shape_permuted[2]}", "DIM1"),
-                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{input_shape[-3]}", "DIM0"),
+                (f"{input_shape[-2]}", "DIM1"),
+                (f"{input_shape[-1]}", "DIM2"),
                 (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
                 (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ],
@@ -279,7 +278,7 @@ class StreamingReLU(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
             "dim1_unroll"

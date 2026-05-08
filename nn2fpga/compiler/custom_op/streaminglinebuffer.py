@@ -2,6 +2,7 @@ from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
 from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
@@ -117,7 +118,8 @@ class StreamingLineBuffer(NN2FPGAOp):
         hls_kernels = []
         fifos = {}
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        output_shape = self.require_output_shape(model, 0)
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         FH = self.get_nodeattr("kernel_shape")[0]
         FW = self.get_nodeattr("kernel_shape")[1]
@@ -207,9 +209,9 @@ class StreamingLineBuffer(NN2FPGAOp):
                     next_pixel_index_w = windows_dict[next_pixel_index]["w"]
 
                     distance = (
-                        (pixel_h - next_pixel_index_h) * output_shape[3]
+                        (pixel_h - next_pixel_index_h) * output_shape[-2]
                         + (pixel_w - next_pixel_index_w)
-                    ) * output_shape[1]
+                    ) * output_shape[-1]
                     # logger.info(f"Raw Pixel {pixel_index} ({pixel_h},{pixel_w}) shift distance to pixel {next_pixel_index} ({next_pixel_index_h},{next_pixel_index_w}): {distance}")
                     distance //= self.get_nodeattr("width_unroll") * self.get_nodeattr(
                         "channel_unroll"
@@ -252,9 +254,9 @@ class StreamingLineBuffer(NN2FPGAOp):
                     f"{self.onnx_node.name}_pixel_{pixel_index}",
                     template_args=[
                         (f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}", "TWord"),
-                        (output_shape[2], "IN_HEIGHT"),
-                        (output_shape[3], "IN_WIDTH"),
-                        (output_shape[1], "IN_CH"),
+                        (output_shape[-3], "IN_HEIGHT"),
+                        (output_shape[-2], "IN_WIDTH"),
+                        (output_shape[-1], "IN_CH"),
                         (self.get_nodeattr("kernel_shape")[0], "FH"),
                         (self.get_nodeattr("kernel_shape")[1], "FW"),
                         (self.get_nodeattr("strides")[0], "STRIDE_H"),
@@ -337,9 +339,9 @@ class StreamingLineBuffer(NN2FPGAOp):
                         "TWord",
                     ),
                     (f"{get_hls_quant_type(output_quant)}", "TData"),
-                    (output_shape[2], "IN_HEIGHT"),
-                    (output_shape[3], "IN_WIDTH"),
-                    (output_shape[1], "IN_CH"),
+                    (output_shape[-3], "IN_HEIGHT"),
+                    (output_shape[-2], "IN_WIDTH"),
+                    (output_shape[-1], "IN_CH"),
                     (self.get_nodeattr("kernel_shape")[0], "FH"),
                     (self.get_nodeattr("kernel_shape")[1], "FW"),
                     (self.get_nodeattr("strides")[0], "STRIDE_H"),
@@ -387,7 +389,7 @@ class StreamingLineBuffer(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         unroll_factor = np.prod([

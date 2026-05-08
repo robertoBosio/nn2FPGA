@@ -1786,8 +1786,6 @@ class SupportedPartition(Transformation):
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
         
-        fpga_nodes = self.__repair_convexity_remove_reentries(model, fpga_nodes)
-
         # Build adjacency list between FPGA nodes
         adj = defaultdict(list)
         for node in graph.node:
@@ -1823,7 +1821,11 @@ class SupportedPartition(Transformation):
         largest_component = max(components, key=len, default=set())
         logger.info(f"Found {len(components)} connected components among FPGA-supported nodes.")
         logger.info(f"Largest component has {len(largest_component)} nodes.")
-        return largest_component
+        
+        # Solve convexity violations by removing re-entry destination nodes until no violations remain
+        subgraph = self.__repair_convexity_remove_reentries(model, largest_component)
+
+        return subgraph
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         logger.info("Partitioning model into FPGA and CPU partitions.")

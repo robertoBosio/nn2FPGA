@@ -2,6 +2,7 @@ import numpy as np
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
@@ -157,7 +158,8 @@ class StreamingMemory(NN2FPGAOp):
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         # Retrieve tensor shape.
-        output_shape = self.require_output_shape(model, 0)
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # Create the StreamingMemory object.
         StreamingMemory = cpp_object(
@@ -331,7 +333,7 @@ class StreamingMemory(NN2FPGAOp):
         """
 
         # Retrieve tensor shape (which is a memory).
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         # Number of times the memory is streamed.
         times = self.get_nodeattr("times")
@@ -350,7 +352,7 @@ class StreamingMemory(NN2FPGAOp):
             int: Estimated BRAM usage.
         """
 
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
         word_bits = output_quant.bitwidth

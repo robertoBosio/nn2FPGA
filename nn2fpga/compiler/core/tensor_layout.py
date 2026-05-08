@@ -36,12 +36,49 @@ class TensorLayout:
             Returns a string representation of the TensorLayout instance.
     """
 
-    def __init__(self, perm: tuple):
-        if not perm:
+    def __init__(self, perm: tuple[int, ...] | list[int], rank: int | None = None):
+        if perm is None:
+            raise ValueError("Permutation cannot be None.")
+
+        perm = tuple(int(x) for x in perm)
+
+        if len(perm) == 0:
             raise ValueError("Permutation cannot be empty.")
-        if sorted(perm) != list(range(len(perm))):
-            raise ValueError(f"Invalid permutation: {perm}. Must be a permutation of 0..N-1.")
-        self.perm = tuple(perm)
+
+        if rank is None:
+            rank = len(perm)
+
+        if rank < 1:
+            raise ValueError("Rank must be at least 1.")
+
+        if len(perm) > rank:
+            # Drop axes outside the logical rank.
+            # Useful when reusing a 4D annotation for a lower-rank tensor.
+            perm = tuple(p for p in perm if p < rank)
+
+        elif len(perm) < rank:
+            # Extend while preserving the originally last axis as fastest-changing.
+            #
+            # Example:
+            #   perm = (0, 1), rank = 4
+            #   result = (0, 2, 3, 1)
+            #
+            # This means: keep axis 0 first, insert missing axes, keep original
+            # last axis last.
+            missing = [i for i in range(rank) if i not in perm]
+            perm = tuple([perm[0], *missing, *perm[1:]])
+
+        if len(perm) != rank:
+            raise ValueError(
+                f"Invalid adapted permutation {perm}: length {len(perm)} != rank {rank}."
+            )
+
+        if sorted(perm) != list(range(rank)):
+            raise ValueError(
+                f"Invalid permutation: {perm}. Must be a permutation of 0..{rank - 1}."
+            )
+
+        self.perm = perm
 
     @classmethod
     def identity(cls, rank: int) -> "TensorLayout":

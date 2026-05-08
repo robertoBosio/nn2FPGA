@@ -73,8 +73,7 @@ class BandwidthAdjust(NN2FPGAOp):
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape = self.require_input_shape(model, 0)
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         # Create the BandwidthAdjust object.
         BandwidthAdjust = cpp_object(
@@ -89,9 +88,9 @@ class BandwidthAdjust(NN2FPGAOp):
                     f"DequantQuantEqual<{get_hls_quant_type(output_quant)}>",
                     "Quantizer",
                 ),
-                (input_shape_permuted[1], "IN_DIM0"),
-                (input_shape_permuted[2], "IN_DIM1"),
-                (input_shape_permuted[3], "IN_DIM2"),
+                (input_shape[1], "IN_DIM0"),
+                (input_shape[2], "IN_DIM1"),
+                (input_shape[3], "IN_DIM2"),
                 (self.get_nodeattr("in_dim1_unroll"), "IN_DIM1_UNROLL"),
                 (self.get_nodeattr("out_dim1_unroll"), "OUT_DIM1_UNROLL"),
                 (self.get_nodeattr("in_dim2_unroll"), "IN_DIM2_UNROLL"),
@@ -215,7 +214,7 @@ class BandwidthAdjust(NN2FPGAOp):
             int: Estimated latency in clock cycles.
         """
 
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = np.prod(
             [

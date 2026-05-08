@@ -30,6 +30,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     model_II = int(model.get_metadata_prop("model_II"))
     ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
     constant_inputs = [value['new_name'] for value in ap.input_map.values() if value['value'] is not None]
+    num_objects = 0
 
     cwr = NewCodeWriter()
     cwr.add_autogen_comment()
@@ -103,6 +104,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
         else:
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
+        num_objects += 1
 
     # Declare the output streams.
     consumers_step_calls = []
@@ -167,7 +169,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     # Allocating correct size for the actor statuses.
     num_consumers = len(consumers_step_calls)
     num_producers = len(producers_step_calls)
-    num_actors = num_consumers + num_producers
+    num_actors = num_consumers + num_producers + num_objects
     function.add_code("std::vector<ActorStatus> actor_statuses;")
     function.add_code(f"actor_statuses.reserve({num_actors});")
 

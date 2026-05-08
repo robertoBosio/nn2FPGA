@@ -6,7 +6,7 @@ from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
-from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
+from nn2fpga.compiler.core.tensor_layout import TensorLayout, require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -17,6 +17,9 @@ from nn2fpga.compiler.utils.codegen_utils import (
     get_struct_type,
     get_hls_quant_type,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 class StreamingConcat(NN2FPGAOp, DSECapable):
     """Node implementing the Concat operation."""
@@ -168,14 +171,14 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        input_shapeA = self.require_input_shape(model, 0)
-        input_shapeB = self.require_input_shape(model, 1)
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
         if input_layoutA != input_layoutB:
             raise ValueError(
                 f"Input layouts for StreamingConcat must be the same. Got {input_layoutA} and {input_layoutB}."
             )
+        input_shapeA = self.require_4d_input_shape(model, 0, input_layoutA)
+        input_shapeB = self.require_4d_input_shape(model, 1, input_layoutB)
 
         # Axis is referred to the standard ONNX layout (NCHW).
         # We need to map it to the layout in input to the StreamingConcat object.
@@ -185,9 +188,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         axis = self.get_nodeattr("axis")
         if axis < 0:
             axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
-        axis_permuted = input_layoutA.perm.index(axis)
-        input_shapeA_permuted = [input_shapeA[i] for i in input_layoutA.perm]
-        input_shapeB_permuted = [input_shapeB[i] for i in input_layoutB.perm]
+        padded_input_layoutA = TensorLayout(input_layoutA.perm, 4)
+        axis_permuted = padded_input_layoutA.perm.index(axis)
         axis_strings = {1: "Dim0", 2: "Dim1", 3: "Dim2"}
         if axis_permuted not in axis_strings:
             raise ValueError(f"Unsupported concat axis after permutation: {axis_permuted}")
@@ -195,24 +197,24 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
 
         if axis_permuted == 3:
             template_args = [
-                (f"{input_shapeA_permuted[1]}", "IN_DIM0"),
-                (f"{input_shapeA_permuted[2]}", "IN_DIM1"),
-                (f"{input_shapeA_permuted[3]}", "IN_DIM2_A"),
-                (f"{input_shapeB_permuted[3]}", "IN_DIM2_B"),
+                (f"{input_shapeA[-3]}", "IN_DIM0"),
+                (f"{input_shapeA[-2]}", "IN_DIM1"),
+                (f"{input_shapeA[-1]}", "IN_DIM2_A"),
+                (f"{input_shapeB[-1]}", "IN_DIM2_B"),
             ]
         elif axis_permuted == 1:
             template_args = [
-                (f"{input_shapeA_permuted[1]}", "IN_DIM0_A"),
-                (f"{input_shapeB_permuted[1]}", "IN_DIM0_B"),
-                (f"{input_shapeA_permuted[2]}", "IN_DIM1"),
-                (f"{input_shapeA_permuted[3]}", "IN_DIM2"),
+                (f"{input_shapeA[-3]}", "IN_DIM0_A"),
+                (f"{input_shapeB[-3]}", "IN_DIM0_B"),
+                (f"{input_shapeA[-2]}", "IN_DIM1"),
+                (f"{input_shapeA[-1]}", "IN_DIM2"),
             ]
         elif axis_permuted == 2:
             template_args = [
-                (f"{input_shapeA_permuted[1]}", "IN_DIM0"),
-                (f"{input_shapeA_permuted[2]}", "IN_DIM1_A"),
-                (f"{input_shapeB_permuted[2]}", "IN_DIM1_B"),
-                (f"{input_shapeA_permuted[3]}", "IN_DIM2"),
+                (f"{input_shapeA[-3]}", "IN_DIM0"),
+                (f"{input_shapeA[-2]}", "IN_DIM1_A"),
+                (f"{input_shapeB[-2]}", "IN_DIM1_B"),
+                (f"{input_shapeA[-1]}", "IN_DIM2"),
             ]
         else:
             raise ValueError(f"Unsupported concat axis: {axis}")
@@ -370,58 +372,48 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             list[StreamingConcat.DSEPoint]: List of DSE points.
         """
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shapeA = self.require_input_shape(model, 0)
-        input_shapeB = self.require_input_shape(model, 1)
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
         if input_layoutA != input_layoutB:
             raise ValueError(
                 f"Input layouts for StreamingConcat must be the same. Got {input_layoutA} and {input_layoutB}."
             )
-        input_shapeA_permuted = [input_shapeA[i] for i in input_layoutA.perm]
-        input_shapeB_permuted = [input_shapeB[i] for i in input_layoutB.perm]
+        input_shapeA = self.require_4d_input_shape(model, 0, input_layoutA)
+        input_shapeB = self.require_4d_input_shape(model, 1, input_layoutB)
 
-        output_shape = self.require_output_shape(model, 0)
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
-        output_shape_permuted = [output_shape[i] for i in output_layout.perm]
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # The unrolling factor must divide the dimensions of the input and output tensors along the concatenation axis.
         DSE_points = []
-        for dim2_unroll in divisors(
+        for dim2_unroll in self.divisors(
             [
-                input_shapeA_permuted[3],
-                input_shapeB_permuted[3],
-                output_shape_permuted[3],
+                input_shapeA[-1],
+                input_shapeB[-1],
+                output_shape[-1],
             ],
             min(
-                input_shapeA_permuted[3],
-                input_shapeB_permuted[3],
-                output_shape_permuted[3],
+                input_shapeA[-1],
+                input_shapeB[-1],
+                output_shape[-1],
             ),
         ):
-            for dim1_unroll in divisors(
+            for dim1_unroll in self.divisors(
                 [
-                    input_shapeA_permuted[2],
-                    input_shapeB_permuted[2],
-                    output_shape_permuted[2],
+                    input_shapeA[-2],
+                    input_shapeB[-2],
+                    output_shape[-2],
                 ],
                 min(
-                    input_shapeA_permuted[2],
-                    input_shapeB_permuted[2],
-                    output_shape_permuted[2],
+                    input_shapeA[-2],
+                    input_shapeB[-2],
+                    output_shape[-2],
                 ),
             ):
                 # Check dimension of input streams
@@ -431,6 +423,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                 if (output_bits * dim2_unroll) > 4096:
                     continue
 
+                if dim1_unroll > 4:
+                    continue
                 DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))
 
         return DSE_points
@@ -442,7 +436,7 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
             "dim1_unroll"

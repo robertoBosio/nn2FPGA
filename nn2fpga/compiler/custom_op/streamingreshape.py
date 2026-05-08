@@ -196,7 +196,8 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         StreamingReshape = cpp_object(
             "StreamingReshape",
@@ -222,9 +223,9 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape[2]}", "DIM0"),
-                (f"{input_shape[3]}", "DIM1"),
-                (f"{input_shape[1]}", "DIM2"),
+                (f"{input_shape[-3]}", "DIM0"),
+                (f"{input_shape[-2]}", "DIM1"),
+                (f"{input_shape[-1]}", "DIM2"),
                 (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
                 (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
@@ -339,7 +340,7 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
         point = self.__current_dse_point()
 
         return np.prod(input_shape) // (point.dim2_unroll * point.dim1_unroll)
@@ -370,34 +371,32 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
             list[StreamingReshape.DSEPoint]: List of DSE points.
         """
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
-        input_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
         output_bits = output_quant.bitwidth
 
         DSE_points = []
-        for dim2_unroll in divisors(
-            [input_shape[1], output_shape[1]],
-            min(input_shape[1], output_shape[1]),
+        for dim2_unroll in self.divisors(
+            [input_shape[-1], output_shape[-1]],
+            min(input_shape[-1], output_shape[-1]),
         ):
-            for dim1_unroll in divisors(
-                [input_shape[3], output_shape[3]],
-                min(input_shape[3], output_shape[3]),
+            for dim1_unroll in self.divisors(
+                [input_shape[-2], output_shape[-2]],
+                min(input_shape[-2], output_shape[-2]),
             ):
                 # Check dimension of input streams
                 if (input_bits * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
                 if (output_bits * dim2_unroll) > 4096:
+                    continue
+            
+                if dim1_unroll > 4:
                     continue
 
                 DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))

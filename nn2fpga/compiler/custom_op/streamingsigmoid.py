@@ -261,9 +261,8 @@ class StreamingSigmoid(NN2FPGAOp):
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_shape = self.require_input_shape(model, 0)
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
-        input_shape_permuted = [input_shape[i] for i in input_layout.perm]
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         lut_size = 1 << input_quant.bitwidth
         StreamingSigmoid = cpp_object(
@@ -287,9 +286,9 @@ class StreamingSigmoid(NN2FPGAOp):
                     f"TOutput",
                 ),
                 (f"{lut_size}", "LUT_SIZE"),
-                (f"{input_shape_permuted[1]}", "DIM0"),
-                (f"{input_shape_permuted[2]}", "DIM1"),
-                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{input_shape[-3]}", "DIM0"),
+                (f"{input_shape[-2]}", "DIM1"),
+                (f"{input_shape[-1]}", "DIM2"),
                 (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
                 (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
@@ -410,7 +409,7 @@ class StreamingSigmoid(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll")
         return np.prod(input_shape) // unroll_factor

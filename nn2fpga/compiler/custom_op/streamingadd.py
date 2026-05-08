@@ -201,16 +201,13 @@ class StreamingAdd(NN2FPGAOp):
         input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
 
-        input_shapeA = self.require_input_shape(model, 0)
-
         input_shapeA_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shapeB_layout = require_tensor_layout(model, self.onnx_node.input[1])
         if input_shapeA_layout != input_shapeB_layout:
             raise ValueError(
                 f"Input layouts for StreamingAdd must be the same. Got {input_shapeA_layout} and {input_shapeB_layout}."
             )
-
-        input_shape_permuted = [input_shapeA[i] for i in input_shapeA_layout.perm]
+        input_shapeA = self.require_4d_input_shape(model, 0, input_layout=input_shapeA_layout)
 
         StreamingAdd = cpp_object(
             "StreamingAdd",
@@ -251,9 +248,9 @@ class StreamingAdd(NN2FPGAOp):
                 ),
                 (f"{self.__get_align_shift(input_quantA, input_quantB)[0]}", "AlignA"),
                 (f"{self.__get_align_shift(input_quantA, input_quantB)[1]}", "AlignB"),
-                (f"{input_shape_permuted[1]}", "DIM0"),
-                (f"{input_shape_permuted[2]}", "DIM1"),
-                (f"{input_shape_permuted[3]}", "DIM2"),
+                (f"{input_shapeA[1]}", "DIM0"),
+                (f"{input_shapeA[2]}", "DIM1"),
+                (f"{input_shapeA[3]}", "DIM2"),
                 (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
                 (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
@@ -378,7 +375,7 @@ class StreamingAdd(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr(
             "dim1_unroll"

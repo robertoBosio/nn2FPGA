@@ -4,6 +4,7 @@ from onnx import helper
 from onnxscript.rewriter import pattern
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -161,7 +162,8 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        output_shape = self.require_output_shape(model, 0)
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # Create the StreamingMaxPool object.
         StreamingMaxPool = cpp_object(
@@ -179,9 +181,9 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
                 ),
                 (f"{get_hls_quant_type(output_quant)}", "TOutput"),
                 (f"{self.__get_quantizer(input_quant, output_quant)}", "Quantizer"),
-                (output_shape[1], "OUT_CH"),
-                (output_shape[2], "IN_HEIGHT"),
-                (output_shape[3], "IN_WIDTH"),
+                (output_shape[-1], "OUT_CH"),
+                (output_shape[-3], "IN_HEIGHT"),
+                (output_shape[-2], "IN_WIDTH"),
                 (self.get_nodeattr("kernel_shape")[0], "FH"),
                 (self.get_nodeattr("kernel_shape")[1], "FW"),
                 (self.get_nodeattr("strides")[0], "STRIDE_H"),
@@ -326,8 +328,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -363,10 +364,6 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         Returns:
             list[StreamingMaxPool.DSEPoint]: List of DSE points.
         """
-        
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
 
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
@@ -374,12 +371,13 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         input_bits = input_quant.bitwidth
         output_bits = output_quant.bitwidth
 
-        output_shape = self.require_output_shape(model, 0)
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for dim2_unroll in divisors(output_shape[1], output_shape[1]):
-            for dim1_unroll in divisors(output_shape[3], output_shape[3]):
+        for dim2_unroll in self.divisors([output_shape[-1]], output_shape[-1]):
+            for dim1_unroll in self.divisors([output_shape[-2]], output_shape[-2]):
                 # Check dimension of input streams
                 if (input_bits * dim2_unroll) > 4096:
                     continue

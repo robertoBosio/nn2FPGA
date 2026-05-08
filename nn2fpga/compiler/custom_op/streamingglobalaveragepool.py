@@ -7,6 +7,7 @@ from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
@@ -183,8 +184,10 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = self.require_input_shape(model, 0)
-        output_shape = self.require_output_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # Create the StreamingGlobalAveragePool object.
         StreamingGlobalAveragePool = cpp_object(
@@ -198,9 +201,9 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
                 (self.__get_accumulator(input_quant, input_shape), "TAcc"),
                 (self.__get_divisor(input_shape), "TDiv"),
                 (self.__get_quantizer(input_quant, output_quant, input_shape), "Quantizer"),
-                (input_shape[2], "IN_HEIGHT"),
-                (input_shape[3], "IN_WIDTH"),
-                (output_shape[1], "OUT_CH"),
+                (input_shape[-3], "IN_HEIGHT"),
+                (input_shape[-2], "IN_WIDTH"),
+                (output_shape[-1], "OUT_CH"),
                 (point.channel_unroll, "OUT_CH_PAR"),
             ])
 
@@ -328,7 +331,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_shape = self.require_4d_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -358,18 +361,16 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingGlobalAveragePool.DSEPoint"]:
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         input_quant = require_tensor_quant(model, self.onnx_node.input[0])
         output_quant = require_tensor_quant(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
         output_bits = output_quant.bitwidth
 
-        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         DSE_points = []
-        for channel_unroll in divisors(input_shape[1], input_shape[1]):
+        for channel_unroll in self.divisors([input_shape[-1]], input_shape[-1]):
             # Check dimension of input streams
             if (input_bits * channel_unroll) > 4096:
                 continue

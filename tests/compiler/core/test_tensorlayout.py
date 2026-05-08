@@ -71,6 +71,11 @@ def test_3d_layout():
     assert layout.get_canonical_name() == "L[0,2,1]"
     assert layout.inverse() == layout  # self-inverse for this perm
 
+def test_adapted_permutation():
+    # Test that adapted permutation correctly inserts missing axes.
+    layout = TensorLayout((0, 1), rank=4)
+    assert layout.perm == (0, 2, 3, 1)  # Missing axes 2 and 3 inserted in order
+
 
 # ── Annotation tests ───────────────────────────────────────────────────────────
 
