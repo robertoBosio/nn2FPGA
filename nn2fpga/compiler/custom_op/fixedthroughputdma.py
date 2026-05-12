@@ -136,13 +136,12 @@ class FixedThroughputDMA(NN2FPGAOp):
             domain="nn2fpga.compiler.custom_op",
             original_op_type="FixedThroughputDMA",
             hls_object_name=self.onnx_node.name,
-            hls_tag=hls_tag,
+            hls_tag="", # No tag needed for a node which only has a step function and no run function.
             hls_variable_declarations="",
             hls_run_call=self.__generate_run_call(hls_tag),
             hls_step_call=self.__generate_step_call(),
             hls_object_declaration=self.__get_object_declaration(),
         )
-        hls_tag += 1
 
         return [hls_kernel], [], fifos, hls_tag
 

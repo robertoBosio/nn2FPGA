@@ -226,12 +226,15 @@ def _annotate_pipeline_depths(hls_model: ModelWrapper, ste_model: ModelWrapper, 
     for node in ste_model.graph.node:
         custom_op = getCustomOp(node)
         hls_tag = custom_op.get_nodeattr("hls_tag")
-        if float(ste_model.get_metadata_prop("hls_version")) > 2025:
-            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/hls/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
-        else:
-            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
-        if not os.path.exists(scheduling_report_file):
-            logger.warning(f"Scheduling report file not found for node {node.name}. Skipping depth adjustment.")
+        scheduling_report_file = None
+        if hls_tag != "":
+            if float(ste_model.get_metadata_prop("hls_version")) > 2025:
+                scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/hls/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
+            else:
+                scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
+        if scheduling_report_file is None or not os.path.exists(scheduling_report_file):
+            if hls_tag != "":
+                raise ValueError(f"Scheduling report file not found for node {node.name}.")
             read_skew = 0
             write_skew = 0
             pipeline_stages = 1
@@ -427,6 +430,7 @@ class LowerToHLS(Transformation):
             prj_root:              Path to the project root directory.
         """
         self.infer_fifo_depth = infer_fifo_depth
+        self.ste_already_done = ste_already_done
         self.optimize_fifo_storage = optimize_fifo_storage
         self.report_file = os.path.join(prj_root, "hls_report.txt")
         self.prj_root = prj_root
