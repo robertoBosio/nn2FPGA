@@ -4,6 +4,8 @@ from nn2fpga.compiler.custom_op.bandwidthadjust import (
 )
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.axitostream import AXIToStream
+from nn2fpga.compiler.custom_op.fixedthroughputdma import FixedThroughputDMA
+from nn2fpga.compiler.custom_op.infinitethroughputdma import InfiniteThroughputDMA
 from nn2fpga.compiler.custom_op.nn2fpgapartition import nn2fpgaPartition
 from nn2fpga.compiler.custom_op.streamingadd import StreamingAdd
 from nn2fpga.compiler.custom_op.streamingaveragepool import StreamingAveragePool
@@ -35,6 +37,8 @@ custom_op = {
     "BandwidthAdjustIncreaseStreams": BandwidthAdjustIncreaseStreams,
     "HLSKernel": HLSKernel,
     "AXIToStream": AXIToStream,
+    "FixedThroughputDMA": FixedThroughputDMA,
+    "InfiniteThroughputDMA": InfiniteThroughputDMA,
     "nn2fpgaPartition": nn2fpgaPartition,
     "StreamingAdd": StreamingAdd,
     "StreamingAveragePool": StreamingAveragePool,

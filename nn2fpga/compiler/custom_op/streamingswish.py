@@ -3,7 +3,7 @@ import onnxruntime as rt
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -12,8 +12,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
 from onnxscript import ir
@@ -195,7 +194,7 @@ class StreamingSwish(NN2FPGAOp):
         """
 
         nbits = input_quant.bitwidth
-        sigmoid_quant = TensorQuant(
+        sigmoid_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[1]),
             zeropt=model.get_initializer(self.onnx_node.input[2]),
             bitwidth=model.get_initializer(self.onnx_node.input[3]),
@@ -355,7 +354,7 @@ class StreamingSwish(NN2FPGAOp):
 
         lut_variable = cpp_variable(
             name=f"{self.onnx_node.name}_lut",
-            primitive=f"{get_hls_quant_type(output_quant)}",
+            primitive=f"{output_quant.get_hls_data_type()}",
             value=lut_values,
         )
 
@@ -363,8 +362,8 @@ class StreamingSwish(NN2FPGAOp):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
@@ -374,19 +373,19 @@ class StreamingSwish(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quant)}",
+                    f"{input_quant.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (f"{lut_size}", "LUT_SIZE"),
@@ -468,8 +467,8 @@ class StreamingSwish(NN2FPGAOp):
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -485,7 +484,7 @@ class StreamingSwish(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 

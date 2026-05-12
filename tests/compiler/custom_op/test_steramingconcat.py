@@ -4,7 +4,7 @@ from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from onnx import TensorProto, helper
 from nn2fpga.compiler.custom_op.streamingconcat import StreamingConcat
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, set_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, set_custom_tensor_datatype
 from nn2fpga.compiler.core.tensor_layout import TensorLayout, set_custom_tensor_layout
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ def _make_concat_model(
     model = ModelWrapper(qonnx_make_model(graph, producer_name="test"))
 
     # Default quant: 8-bit signed
-    default_quant = TensorQuant(bitwidth=8, signed=1, scale=0.5, zeropt=0)
+    default_quant = QuantizedTensorType(bitwidth=8, signed=1, scale=0.5, zeropt=0)
     set_custom_tensor_datatype(model, "inputA", quantA or default_quant)
     set_custom_tensor_datatype(model, "inputB", quantB or default_quant)
     set_custom_tensor_datatype(model, "output", quant_out or default_quant)

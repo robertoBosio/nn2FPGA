@@ -15,7 +15,7 @@ void wrap_run(hls::stream<test_config::TInputWord> &in_stream,
               hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL]) {
 #pragma HLS INTERFACE axis port = in_stream
 
-  AXIToStream<test_config::TInputWord, test_config::TInput, TOutputWord,
+  AXIToStream<test_config::TInputWord, TOutputWord,
               test_config::TOutput, test_config::Quantizer,
               test_config::DATA_PER_WORD, test_config::DIM0, test_config::DIM1,
               test_config::DIM2, test_config::DIM1_UNROLL,
@@ -91,7 +91,7 @@ bool test_run() {
         (test_config::DIM2_UNROLL * test_config::DIM1_UNROLL);
 
     // Instantiate the operator
-    AXIToStream<test_config::TInputWord, test_config::TInput, TOutputWord,
+    AXIToStream<test_config::TInputWord, TOutputWord,
                 test_config::TOutput, test_config::Quantizer,
                 test_config::DATA_PER_WORD, test_config::DIM0,
                 test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,

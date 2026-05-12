@@ -1,6 +1,6 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, is_constant_input_node
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, is_constant_input_node
 from nn2fpga.compiler.transforms.add_streaming_params import quant_array
 import numpy as np
 import logging
@@ -55,7 +55,7 @@ class OptimizeBitwidth(Transformation):
                 )
 
             # Quantize tensor values according to the quantization parameters
-            tq = TensorQuant.from_quant_node(quant, model)
+            tq = QuantizedTensorType.from_quant_node(quant, model)
             q_arr = quant_array(
                 tensor_value,
                 scale=tq.scale,

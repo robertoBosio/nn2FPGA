@@ -1,7 +1,7 @@
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -9,8 +9,7 @@ from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_hls_quant_type,
-    get_struct_type,
+    get_word_type,
 )
 import logging
 logger = logging.getLogger(__name__)
@@ -117,7 +116,7 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         hls_kernels = []
         fifos = {}
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
         output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
@@ -134,7 +133,7 @@ class StreamingLineBuffer(NN2FPGAOp):
             for i in range(FH * FW_EXTENDED):
                 fifos[f"{output_name}_{i}_"] = TensorFifo(
                     depth=0,
-                    hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     n_array=FH * FW_EXTENDED,
                 )
             output_name = f"{output_name}_prepad"
@@ -142,7 +141,7 @@ class StreamingLineBuffer(NN2FPGAOp):
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                 n_array=FH * FW_EXTENDED,
             )
 
@@ -219,7 +218,7 @@ class StreamingLineBuffer(NN2FPGAOp):
                     # logger.info(f"Pixel {pixel_index} ({pixel_h},{pixel_w}) shift distance to pixel {next_pixel_index} ({next_pixel_index_h},{next_pixel_index_w}): {distance}")
                     fifos[f"{self.onnx_node.name}_buffer_stream_{pixel_index}_"] = TensorFifo(
                         depth=distance + 1,
-                        hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+                        hls_type=f"{get_word_type(output_type, self.get_nodeattr('in_word_array'))}",
                         n_array=FH * FW_EXTENDED - self.get_nodeattr("width_unroll"),
                     )
 
@@ -253,7 +252,7 @@ class StreamingLineBuffer(NN2FPGAOp):
                     f"StreamingWindowSelector",
                     f"{self.onnx_node.name}_pixel_{pixel_index}",
                     template_args=[
-                        (f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}", "TWord"),
+                        (f"{get_word_type(output_type, self.get_nodeattr('in_word_array'))}", "TWord"),
                         (output_shape[-3], "IN_HEIGHT"),
                         (output_shape[-2], "IN_WIDTH"),
                         (output_shape[-1], "IN_CH"),
@@ -335,10 +334,10 @@ class StreamingLineBuffer(NN2FPGAOp):
                 f"{self.onnx_node.name}_pad",
                 template_args=[
                     (
-                        f"{get_struct_type(output_quant, self.get_nodeattr('in_word_array'))}",
+                        f"{get_word_type(output_type, self.get_nodeattr('in_word_array'))}",
                         "TWord",
                     ),
-                    (f"{get_hls_quant_type(output_quant)}", "TData"),
+                    (f"{output_type.get_hls_data_type()}", "TData"),
                     (output_shape[-3], "IN_HEIGHT"),
                     (output_shape[-2], "IN_WIDTH"),
                     (output_shape[-1], "IN_CH"),
@@ -356,7 +355,7 @@ class StreamingLineBuffer(NN2FPGAOp):
                     (self.get_nodeattr("channel_unroll"), "CH_PAR"),
                     (
                         self.__get_pad_value(
-                            self.get_nodeattr("pad_value"), output_quant
+                            self.get_nodeattr("pad_value"), output_type
                         ),
                         "PAD_VALUE",
                     ),

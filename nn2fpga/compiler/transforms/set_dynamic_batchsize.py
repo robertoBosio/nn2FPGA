@@ -1,7 +1,7 @@
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 from qonnx.core.modelwrapper import ModelWrapper
 import numpy as np
 from onnx import helper, OperatorSetIdProto
@@ -9,11 +9,14 @@ import onnx.shape_inference as si
 
 class SetDynamicBatchSize(Transformation):
 
+    def __init__(self, batch_size=None):
+        self.batch_size = batch_size
+
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the transformation to set dynamic batch size."""
         for input_tensor in model.graph.input:
             old_shape = model.get_tensor_shape(input_tensor.name)
-            new_shape = [None] + list(old_shape[1:])
+            new_shape = [self.batch_size] + list(old_shape[1:])
             model.set_tensor_shape(input_tensor.name, new_shape)
 
         while len(model.graph.value_info) > 0:
@@ -59,12 +62,12 @@ class SetDynamicBatchSize(Transformation):
             )
             for output in partition_node.output:
                 output_tensor_shape = ap.output_map[output]["shape"]
-                dynamic_output_shape = [None] + output_tensor_shape[1:]
-                output_quant = TensorQuant.from_canonical_name(
+                dynamic_output_shape = [self.batch_size] + output_tensor_shape[1:]
+                output_type = TensorType.from_canonical_name(
                     ap.output_map[output]["quant"]
                 )
                 model.set_tensor_shape(
-                    output, dynamic_output_shape, dtype=output_quant.get_tensorproto_dtype()
+                    output, dynamic_output_shape, dtype=output_type.get_tensorproto_dtype()
                 )
 
         # Change the domain of nn2fpgaPartition nodes to support ONNX inference.

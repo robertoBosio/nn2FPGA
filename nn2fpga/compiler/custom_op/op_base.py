@@ -3,7 +3,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Protocol, List, Dict, Any, Iterable, Tuple
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from qonnx.custom_op.base import CustomOp
 from qonnx.core.modelwrapper import ModelWrapper
@@ -154,7 +154,7 @@ class ParamDesc:
     input_index: int
     name: str
     shape: Tuple[int, ...]
-    tensor_quant: TensorQuant
+    tensor_quant: QuantizedTensorType
     in_channel_unroll: int
     out_channel_unroll: int
     width_unroll: int

@@ -10,7 +10,9 @@ from nn2fpga.compiler.core.tensor_fifo import (
     set_custom_tensor_fifo_metadata,
 )
 from nn2fpga.compiler.core.hls_schedule_parser import VitisHlsReportParser
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, set_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import TensorType, get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_fifo import get_custom_tensor_fifo_metadata
+from nn2fpga.compiler.core.tensor_layout import get_custom_tensor_layout
 from qonnx.util.basic import qonnx_make_model
 from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_object, cpp_variable, NewCodeWriter
 from nn2fpga.compiler.utils.board_util import read_board_info
@@ -68,10 +70,11 @@ def analyze_memory_occupation(model: ModelWrapper) -> list[str]:
         if tensor_fifo is not None:
             stream_occupations[fifo.name] = tensor_fifo.depth * (from_hls_type_to_dtype_size(tensor_fifo.hls_type))
             tot_bits += stream_occupations[fifo.name]
-    
+
     stream_occupations = dict(sorted(stream_occupations.items(), key=lambda item: item[1], reverse=True))
     logger.info(f"Total memory occupation: {tot_bits} bits, {tot_bits / (1024 * 1024 * 8):.2f} MBs")
     logger.info("Memory occupation of the 10 largest streams:")
+    model_II = int(model.get_metadata_prop("model_II"))
     streams_to_optimize = []
     for stream_name, occupation in list(stream_occupations.items())[:10]:
         logger.info(f"{stream_name}: {occupation} bits, {occupation * 100 / tot_bits:.2f}% of total")
@@ -105,6 +108,16 @@ class OptimizeFifo(Transformation):
         streams_to_optimize = analyze_memory_occupation(model)
         for fifo_name in streams_to_optimize:
             tensor_name = from_fifo_to_tensor_name(fifo_name)
-            print(f"Optimizing stream {fifo_name} (tensor {tensor_name}) by moving it to DDR.")
-        self.nn2fpga_model.save("model_before_optimize_fifo.onnx")
+            producer = self.nn2fpga_model.find_producer(tensor_name)
+            if producer is None:
+                logger.warning(f"Could not find producer for tensor {tensor_name}, skipping optimization for fifo {fifo_name}.")
+                continue
+            shape = self.nn2fpga_model.get_tensor_shape(tensor_name)
+            if shape is None:
+                logger.warning(f"Could not infer shape for tensor {tensor_name}, skipping optimization for fifo {fifo_name}.")
+                continue
+            depth = get_custom_tensor_fifo_metadata(model, fifo_name).depth
+            node = getCustomOp(producer)
+
+            logger.info(f"Optimizing stream {fifo_name} (tensor {tensor_name}) produced by node {producer.name}. The stream has depth {depth} and tensor shape {shape}. The interface of the producer node is {node.get_port_interface()}.")
         return model, False

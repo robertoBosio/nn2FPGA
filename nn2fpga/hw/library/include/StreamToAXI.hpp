@@ -19,7 +19,6 @@
  * @tparam TInputWord     The type of the input data stream.
  * @tparam TInput         The data type of the input elements.
  * @tparam TOutputWord    The type of the output data stream.
- * @tparam TOutput        The data type of the output elements.
  * @tparam Quantizer      The quantizer functor/class used to quantize input
  * data.
  * @tparam ITER           Number of input data elements to process, rounded up
@@ -55,8 +54,8 @@
  * before writing to the output stream.
  */
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t ITER,
+template <typename TInputWord, typename TInput,
+          typename TOutputWord, typename Quantizer, size_t ITER,
           size_t DATA_PER_WORD, size_t DIM0, size_t DIM1, size_t DIM2,
           size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamToAXI {

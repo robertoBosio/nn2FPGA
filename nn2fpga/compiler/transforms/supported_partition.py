@@ -8,7 +8,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.create_generic_partitions import PartitionFromDict
 from qonnx.transformation.general import SortGraph
-from nn2fpga.compiler.core.tensor_quant import is_constant_input_node
+from nn2fpga.compiler.core.tensor_type import is_constant_input_node
 from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Optional

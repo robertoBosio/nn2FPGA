@@ -1,7 +1,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.transforms.propagate_quant import QUANT_INVARIANT_NODES
-from nn2fpga.compiler.core.tensor_quant import (
+from nn2fpga.compiler.core.tensor_type import (
     get_custom_tensor_datatype,
     set_custom_tensor_datatype,
 )

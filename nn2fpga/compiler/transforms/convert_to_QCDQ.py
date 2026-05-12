@@ -4,7 +4,7 @@ from qonnx.transformation.qonnx_to_qcdq import QuantToQCDQ
 from qonnx.custom_op.registry import getCustomOp
 from nn2fpga.compiler.transforms.add_streaming_params import quant_array
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType, QuantizedTensorType
 from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from onnx import TensorProto, helper, numpy_helper
 import onnx.shape_inference as si
@@ -141,7 +141,10 @@ def get_tensorproto_dtype(bitwidth, signed):
     bitwidth = int(bitwidth)
     signed   = bool(signed)
     if bitwidth <= 8:
-        return TensorProto.INT8 if signed else TensorProto.UINT8
+        return TensorProto.INT8  if signed else TensorProto.UINT8
+    elif bitwidth <= 16:
+        # INT16/UINT16 not supported by Q/DQ before opset 21 — promote to 32-bit
+        return TensorProto.INT32 if signed else TensorProto.UINT32
     elif bitwidth <= 32:
         return TensorProto.INT32 if signed else TensorProto.UINT32
     else:
@@ -152,7 +155,9 @@ def get_numpy_dtype(bitwidth, signed):
     bitwidth = int(bitwidth)
     signed   = bool(signed)
     if bitwidth <= 8:
-        return np.int8 if signed else np.uint8
+        return np.int8  if signed else np.uint8
+    elif bitwidth <= 16:
+        return np.int32 if signed else np.uint32
     elif bitwidth <= 32:
         return np.int32 if signed else np.uint32
     else:
@@ -201,7 +206,7 @@ def _is_supported_quant_config(bitwidth, signed, narrow, rounding_mode):
         return False
     bitwidth = int(bitwidth)
     narrow   = bool(narrow)
-    if bitwidth not in (8, 32):
+    if bitwidth not in (8, 16, 32):
         logger.warning("Skipping Quant lowering: unsupported bitwidth=%s", bitwidth)
         return False
     if narrow:
@@ -361,15 +366,16 @@ class ConvertToQCDQ(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
-        model = model.transform(QuantToQCDQ())
+        if model.get_nodes_by_op_type("Quant") != []:
+            model = model.transform(QuantToQCDQ())
 
-        ir_model    = ir.from_proto(model.model)
-        ir_model    = rewrite(ir_model, pattern_rewrite_rules=self._rewrite_rule_set)
-        model_proto = ir.to_proto(ir_model)
+            ir_model    = ir.from_proto(model.model)
+            ir_model    = rewrite(ir_model, pattern_rewrite_rules=self._rewrite_rule_set)
+            model_proto = ir.to_proto(ir_model)
 
-        model = ModelWrapper(model_proto)
-        assert model.get_nodes_by_op_type("Quant") == [], \
-            "Not all Quant nodes were rewritten to QCDQ pattern"
+            model = ModelWrapper(model_proto)
+            assert model.get_nodes_by_op_type("Quant") == [], \
+                "Not all Quant nodes were rewritten to QCDQ pattern"
 
         partition_nodes = model.get_nodes_by_op_type("nn2fpgaPartition")
         partition_node  = partition_nodes[0] if partition_nodes else None
@@ -396,73 +402,68 @@ class ConvertToQCDQ(Transformation):
                 input_layout = TensorLayout.from_canonical_name(
                     ap.input_map[inp].get("layout")
                 )
+                assert len(input_layout.perm) == len(
+                    inp_shape
+                ), f"Input layout perm length {len(input_layout.perm)} does not match input shape length {len(inp_shape)} for input '{inp}'"
                 inp_shape_perm = [inp_shape[dim] for dim in input_layout.perm]
 
-                input_tensor_quant = TensorQuant.from_canonical_name(
+                input_tensor_type = TensorType.from_canonical_name(
                     ap.input_map[inp]["quant"]
                 )
-                scale_init_name  = create_const_initializer(
-                    model, input_tensor_quant.scale, np.float32
-                )
-                zeropt_init_name = create_const_initializer(
-                    model, input_tensor_quant.zeropt,
-                    input_tensor_quant.get_numpy_dtype()
-                )
-
-                if not input_layout.is_identity():
+                
+                tensor_name = inp
+                if isinstance(input_tensor_type, QuantizedTensorType):
+                    # The expected input tensor is quantized, thus we need 
+                    # to insert QuantizeLinear before the partition input.
+                    scale_init_name  = create_const_initializer(
+                        model, input_tensor_type.scale, np.float32
+                    )
+                    zeropt_init_name = create_const_initializer(
+                        model, input_tensor_type.zeropt,
+                        input_tensor_type.get_numpy_dtype()
+                    )
                     # 1. Quantize the original float tensor (shape unchanged)
                     quantize_node = helper.make_node(
                         "QuantizeLinear",
                         inputs=[inp, scale_init_name, zeropt_init_name],
-                        outputs=[f"{inp}_quantized_pretranspose"],
+                        outputs=[f"{inp}_quantized"],
                         name=f"{inp}_quantize",
                         axis=len(inp_shape) - 1,
                     )
                     model.set_tensor_shape(
-                        f"{inp}_quantized_pretranspose",
+                        f"{inp}_quantized",
                         inp_shape,
-                        dtype=input_tensor_quant.get_tensorproto_dtype(),
+                        dtype=input_tensor_type.get_tensorproto_dtype(),
                     )
                     model.graph.node.append(quantize_node)
+                    tensor_name = f"{inp}_quantized"
 
-                    # 2. Transpose the int8 tensor into the layout the partition expects
+                if not input_layout.is_identity():
+                    # The expected input layout is not the onnx layout, 
+                    # thus we need to insert a Transpose.
+
                     analyze_transpose_split(
                         tensor_name=inp,
                         shape=inp_shape,
                         perm=input_layout.perm,
-                        tensor_type=input_tensor_quant.get_tensorproto_dtype(),
+                        tensor_type=input_tensor_type.get_tensorproto_dtype(),
                     )
                     transpose_node = helper.make_node(
                         "Transpose",
                         name=f"{inp}_transpose",
-                        inputs=[f"{inp}_quantized_pretranspose"],
-                        outputs=[f"{inp}_quantized"],
+                        inputs=[f"{tensor_name}"],
+                        outputs=[f"{tensor_name}_transposed"],
                         perm=input_layout.perm,
                     )
                     model.set_tensor_shape(
-                        f"{inp}_quantized",
+                        f"{tensor_name}_transposed",
                         inp_shape_perm,
-                        dtype=input_tensor_quant.get_tensorproto_dtype(),
+                        dtype=input_tensor_type.get_tensorproto_dtype(),
                     )
                     model.graph.node.append(transpose_node)
+                    tensor_name = f"{tensor_name}_transposed"
 
-                else:
-                    # Identity layout: quantize directly, no transpose needed
-                    quantize_node = helper.make_node(
-                        "QuantizeLinear",
-                        inputs=[inp, scale_init_name, zeropt_init_name],
-                        outputs=[f"{inp}_quantized"],
-                        name=f"{inp}_quantize",
-                        axis=len(inp_shape) - 1,
-                    )
-                    model.set_tensor_shape(
-                        f"{inp}_quantized",
-                        inp_shape,
-                        dtype=input_tensor_quant.get_tensorproto_dtype(),
-                    )
-                    model.graph.node.append(quantize_node)
-
-                new_inputs_map[inp] = (i, f"{inp}_quantized")
+                new_inputs_map[inp] = (i, f"{tensor_name}")
 
             if new_inputs_map:
                 for old_name, (index, new_name) in new_inputs_map.items():
@@ -498,73 +499,66 @@ class ConvertToQCDQ(Transformation):
                 output_layout = TensorLayout.from_canonical_name(
                     ap.output_map[out].get("layout")
                 )
+                assert len(output_layout.perm) == len(
+                    out_shape
+                ), f"Output layout perm length {len(output_layout.perm)} does not match output shape length {len(out_shape)} for output '{out}'"
                 out_shape_perm = [out_shape[dim] for dim in output_layout.perm]
-                logger.info(f"Output layout perm: {output_layout.perm}, permuted shape: {out_shape_perm}")
 
-                output_tensor_quant = TensorQuant.from_canonical_name(
+                output_tensor_type = TensorType.from_canonical_name(
                     ap.output_map[out]["quant"]
                 )
-                scale_init_name  = create_const_initializer(
-                    model, output_tensor_quant.scale, np.float32
-                )
-                zeropt_init_name = create_const_initializer(
-                    model, output_tensor_quant.zeropt,
-                    output_tensor_quant.get_numpy_dtype()
-                )
 
-                # Partition output tensor name carries the int8 data
-                model.set_tensor_shape(
-                    f"{out}_quantized",
-                    out_shape_perm,
-                    dtype=output_tensor_quant.get_tensorproto_dtype(),
-                )
+                tensor_name = out
+                if isinstance(output_tensor_type, QuantizedTensorType):
+                    scale_init_name  = create_const_initializer(
+                        model, output_tensor_type.scale, np.float32
+                    )
+                    zeropt_init_name = create_const_initializer(
+                        model, output_tensor_type.zeropt,
+                        output_tensor_type.get_numpy_dtype()
+                    )
 
-                if not output_layout.is_identity():
-                    # 1. Transpose the int8 partition output into the expected layout
-                    analyze_transpose_split(
-                        tensor_name=out,
-                        shape=out_shape_perm,
-                        perm=output_layout.perm,
-                        tensor_type=output_tensor_quant.get_tensorproto_dtype(),
-                    )
-                    transpose_node = helper.make_node(
-                        "Transpose",
-                        name=f"{out}_transpose",
-                        inputs=[f"{out}_quantized"],
-                        outputs=[f"{out}_transposed_quantized"],
-                        perm=output_layout.inverse().perm,  # Inverse perm to get back to original layout
-                    )
+                    # Partition output tensor name carries the int8 data
                     model.set_tensor_shape(
-                        f"{out}_transposed_quantized",
+                        f"{tensor_name}_quantized",
                         out_shape,
-                        dtype=output_tensor_quant.get_tensorproto_dtype(),
+                        dtype=output_tensor_type.get_tensorproto_dtype(),
                     )
-                    model.graph.node.append(transpose_node)
-
                     # 2. Dequantize the transposed int8 tensor back to float
                     dequantize_node = helper.make_node(
                         "DequantizeLinear",
-                        inputs=[f"{out}_transposed_quantized",
+                        inputs=[f"{tensor_name}_quantized",
                                 scale_init_name, zeropt_init_name],
-                        outputs=[out],
-                        name=f"{out}_dequantize",
-                        axis=len(out_shape_perm) - 1,
-                    )
-                    model.graph.node.append(dequantize_node)
-
-                else:
-                    logger.info(f"Skipping output transpose for {out} since it has identity layout")
-                    # Identity layout: dequantize directly, no transpose needed
-                    dequantize_node = helper.make_node(
-                        "DequantizeLinear",
-                        inputs=[f"{out}_quantized", scale_init_name, zeropt_init_name],
                         outputs=[out],
                         name=f"{out}_dequantize",
                         axis=len(out_shape) - 1,
                     )
                     model.graph.node.append(dequantize_node)
+                    tensor_name = f"{tensor_name}_quantized"
 
-                new_outputs_map[out] = (i, f"{out}_quantized")
+                if not output_layout.is_identity():
+                    analyze_transpose_split(
+                        tensor_name=out,
+                        shape=out_shape_perm,
+                        perm=output_layout.perm,
+                        tensor_type=output_tensor_type.get_tensorproto_dtype(),
+                    )
+                    transpose_node = helper.make_node(
+                        "Transpose",
+                        name=f"{out}_transpose",
+                        inputs=[f"{tensor_name}_pre_transpose"],
+                        outputs=[f"{tensor_name}"],
+                        perm=output_layout.inverse().perm,  # Inverse perm to get back to original layout
+                    )
+                    model.set_tensor_shape(
+                        f"{tensor_name}_pre_transpose",
+                        out_shape_perm,
+                        dtype=output_tensor_type.get_tensorproto_dtype(),
+                    )
+                    model.graph.node.append(transpose_node)
+                    tensor_name = f"{tensor_name}_pre_transpose"
+
+                new_outputs_map[out] = (i, f"{tensor_name}")
 
             if new_outputs_map:
                 for old_name, (index, new_name) in new_outputs_map.items():
@@ -584,5 +578,5 @@ class ConvertToQCDQ(Transformation):
             getCustomOp(partition_node).set_nodeattr(
                 "accelerator_package", ap.to_json()
             )
-
+        
         return model, False

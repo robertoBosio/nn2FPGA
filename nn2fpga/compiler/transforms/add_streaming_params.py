@@ -5,8 +5,8 @@ from qonnx.transformation.general import SortGraph, GiveUniqueNodeNames, GiveRea
 from qonnx.core.modelwrapper import ModelWrapper
 import qonnx.custom_op.general.quant as qonnx_quant
 from onnx import NodeProto, TensorProto, helper
-from nn2fpga.compiler.core.tensor_quant import (
-    TensorQuant,
+from nn2fpga.compiler.core.tensor_type import (
+    QuantizedTensorType,
     set_custom_tensor_datatype,
     get_custom_tensor_datatype,
 )
@@ -152,7 +152,7 @@ class AddStreamingParams(Transformation):
         )
         sequential_streaming = list()
         grouped_initializer = np.array([], dtype=np.uint32)
-        params_quant = TensorQuant(
+        params_quant = QuantizedTensorType(
             scale=1.0,
             zeropt=0,
             bitwidth=32,

@@ -16,7 +16,7 @@ void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::DIM1_UNROLL
 #pragma HLS INTERFACE axis port = output_data_stream
   // Wrapper function to call the run() method of StreamToAXI, for synthesis.
   StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
-              test_config::TOutput, test_config::Quantizer, test_config::ITER,
+              test_config::Quantizer, test_config::ITER,
               test_config::DATA_PER_WORD, test_config::DIM0,
               test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
               test_config::DIM2_UNROLL>
@@ -101,9 +101,9 @@ bool test_step() {
 
   // Instantiate the operator
   StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
-              test_config::TOutput, test_config::Quantizer, test_config::ITER,
-              test_config::DATA_PER_WORD, test_config::DIM0,
-              test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+              test_config::Quantizer, test_config::ITER,
+              test_config::DATA_PER_WORD, test_config::DIM0, test_config::DIM1,
+              test_config::DIM2, test_config::DIM1_UNROLL,
               test_config::DIM2_UNROLL>
       consumer;
   consumer.step_init(test_config::PIPELINE_DEPTH);

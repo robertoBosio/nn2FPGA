@@ -1,7 +1,7 @@
 import numpy as np
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -10,8 +10,7 @@ from nn2fpga.compiler.utils.board_util import bram_usage_evaluator
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 
 
@@ -154,8 +153,8 @@ class StreamingMemory(NN2FPGAOp):
     def __get_object_declaration(self, model) -> cpp_object:
         """Generate the cpp_object for the StreamingMemory operation."""
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         # Retrieve tensor shape.
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
@@ -166,10 +165,10 @@ class StreamingMemory(NN2FPGAOp):
             "StreamingMemory",
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_struct_type(input_quant, 1)}", "TInput"),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
+                (f"{get_word_type(input_type, 1)}", "TInput"),
+                (f"{output_type.get_hls_data_type()}", "TOutput"),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     "TOutputStruct",
                 ),
                 (f"{self.get_nodeattr('data_per_word')}", "DATA_PER_WORD"),
@@ -275,7 +274,7 @@ class StreamingMemory(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         if model.get_initializer(self.onnx_node.input[0]) is None:
             input_names = [f"{self.__get_stream_name(self.onnx_node.input[0])}_0_"]
@@ -291,7 +290,7 @@ class StreamingMemory(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=2,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -301,7 +300,7 @@ class StreamingMemory(NN2FPGAOp):
             )
             tensors_fifo_metadata[output_names[-1]] = TensorFifo(
                 depth=2,
-                hls_type=f"{get_struct_type(require_tensor_quant(model, self.onnx_node.output[1]), 1)}",
+                hls_type=f"{get_word_type(require_tensor_type(model, self.onnx_node.output[1]), 1)}",
                 n_array=1,
             )
 
@@ -353,7 +352,7 @@ class StreamingMemory(NN2FPGAOp):
         """
 
         output_shape = self.require_4d_output_shape(model, 0)
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         word_bits = output_quant.bitwidth
         n_words = np.prod(output_shape)

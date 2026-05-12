@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -11,8 +11,7 @@ from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 
 class AXIToStream(DSECapable, NN2FPGAOp):
@@ -87,7 +86,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         as long as all the channels of it are fitting in the AXI word.
         """
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         return int(math.floor(axi_bitwidth / output_quant.bitwidth))
 
     def __get_variable_cpp(self, model) -> str:
@@ -111,7 +110,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
 
         # Input and output quantization are the same, since the AXIToStream node
         # does not change the data type of the input tensor.
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
@@ -125,14 +124,13 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             f"{self.onnx_node.name}",
             [
                 (f"ap_axiu<{input_bitwidth}, 0, 0, 0>", "TInputWord"),
-                (f"ap_uint<{input_bitwidth}>", "TInput"),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     "TOutputWord",
                 ),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
+                (f"{output_type.get_hls_data_type()}", "TOutput"),
                 (
-                    f"DequantQuantEqual<{get_hls_quant_type(output_quant)}>",
+                    f"DequantQuantEqual<{output_type.get_hls_data_type()}>",
                     "Quantizer",
                 ),
                 (self.__get_data_per_word(model), "DATA_PER_WORD"),
@@ -206,7 +204,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         output_names = [
             f"{self.__get_stream_name(self.onnx_node.output[0])}_{i}_"
@@ -217,7 +215,7 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -291,10 +289,10 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         """
 
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
-        act_bits = output_quant.bitwidth
+        act_bits = output_type.bitwidth
 
         DSE_points = []
         for dim2_unroll in self.divisors([input_shape[-1]], input_shape[-1]):

@@ -5,7 +5,7 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import TensorLayout, require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -14,8 +14,7 @@ from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 import logging
 
@@ -159,7 +158,7 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                 int(np.log2(input_quantA.scale))
                 - int(np.log2(output_quant.scale))
             )
-            return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quantA)}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {input_quantA.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingConcat."
@@ -167,9 +166,9 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
-        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_typeA = require_tensor_type(model, self.onnx_node.input[0])
+        input_typeB = require_tensor_type(model, self.onnx_node.input[1])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
@@ -224,23 +223,23 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quantA, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_typeA, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quantA)}",
+                    f"{input_typeA.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_type.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
-                    f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
+                    f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
                     f"Quantizer",
                 ),
                 template_args[0],
@@ -321,7 +320,7 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -343,7 +342,7 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -372,11 +371,11 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             list[StreamingConcat.DSEPoint]: List of DSE points.
         """
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        input_bits = input_quant.bitwidth
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        input_bits = input_type.bitwidth
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        output_bits = output_quant.bitwidth
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
+        output_bits = output_type.bitwidth
 
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])

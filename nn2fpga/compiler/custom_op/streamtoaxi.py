@@ -2,13 +2,12 @@ from onnx import helper
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 import math
 import numpy as np
@@ -88,7 +87,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         as long as all the channels of it are fitting in the AXI word.
         """
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         return int(math.floor(axi_bitwidth / output_quant.bitwidth))
 
@@ -113,7 +112,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
 
         # The output quant is the same as the input quant, since the StreamToAXI node
         # does not change the data type of the input tensor.
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
@@ -134,14 +133,13 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             [
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     "TInputWord",
                 ),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
+                (f"{input_quant.get_hls_data_type()}", "TInput"),
                 (f"ap_axiu<{output_bitwidth}, 0, 0, 0>", "TOutputWord"),
-                (f"ap_uint<{output_bitwidth}>", "TOutput"),
                 (
-                    f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>",
+                    f"DequantQuantEqual<{input_quant.get_hls_data_type()}>",
                     "Quantizer",
                 ),
                 (int(iter), "ITER"),
@@ -296,7 +294,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         """
 
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
         act_bits = output_quant.bitwidth

@@ -113,7 +113,7 @@ def test_clear_layout():
 def test_layout_and_quant_coexist():
     # Verify that setting a layout annotation does not disturb an existing
     # quant annotation on the same tensor and vice versa.
-    from nn2fpga.compiler.core.tensor_quant import (
+    from nn2fpga.compiler.core.tensor_type import (
         TensorQuant,
         set_custom_tensor_datatype,
         get_custom_tensor_datatype,

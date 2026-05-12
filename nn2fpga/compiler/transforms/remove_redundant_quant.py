@@ -6,7 +6,7 @@ from copy import deepcopy
 
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +130,8 @@ class RemoveRedundantQuant(Transformation):
             if len(prev_node.output) == 0 or not prev_node.output[0]:
                 continue
 
-            q1 = TensorQuant.from_quant_node(prev_node, model)
-            q2 = TensorQuant.from_quant_node(node, model)
+            q1 = QuantizedTensorType.from_quant_node(prev_node, model)
+            q2 = QuantizedTensorType.from_quant_node(node, model)
 
             if q1 != q2:
                 logger.info(

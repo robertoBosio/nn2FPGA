@@ -6,7 +6,7 @@ from onnxscript.rewriter import pattern
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
@@ -14,8 +14,7 @@ from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 
 class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
@@ -129,26 +128,26 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
 
         add_ops = input_shape[2] * input_shape[3] # H * W
         acc_bitwidth = input_quant.bitwidth + int(np.ceil(np.log2(add_ops)))
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=acc_bitwidth,
             signed=input_quant.signed,
             scale=input_quant.scale,
             zeropt=input_quant.zeropt,
         )
 
-        return f"{get_hls_quant_type(acc_quant)}"
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __get_divisor(self, input_shape) -> str:
         """ Returns the divisor type for the StreamingGlobalAveragePool operation. """
 
         divisor = input_shape[2] * input_shape[3]
-        divisor_quant = TensorQuant(
+        divisor_quant = QuantizedTensorType(
             bitwidth=int(np.ceil(np.log2(divisor + 1))),
             signed=False,
             scale=1.0,
             zeropt=0,
         )
-        return f"{get_hls_quant_type(divisor_quant)}"
+        return f"{divisor_quant.get_hls_data_type()}"
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
@@ -162,7 +161,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             output_quant.scale
         ):
             shift = int(np.log2(input_quant.scale)) - int(np.log2(output_quant.scale))
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
@@ -177,8 +176,8 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingGlobalAveragePool operation. """
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
@@ -194,13 +193,13 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             "StreamingGlobalAveragePool",
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputStruct"),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}", "TOutputStruct"),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (self.__get_accumulator(input_quant, input_shape), "TAcc"),
+                (f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}", "TInputStruct"),
+                (f"{input_type.get_hls_data_type()}", "TInput"),
+                (f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}", "TOutputStruct"),
+                (f"{output_type.get_hls_data_type()}", "TOutput"),
+                (self.__get_accumulator(input_type, input_shape), "TAcc"),
                 (self.__get_divisor(input_shape), "TDiv"),
-                (self.__get_quantizer(input_quant, output_quant, input_shape), "Quantizer"),
+                (self.__get_quantizer(input_type, output_type, input_shape), "Quantizer"),
                 (input_shape[-3], "IN_HEIGHT"),
                 (input_shape[-2], "IN_WIDTH"),
                 (output_shape[-1], "OUT_CH"),
@@ -287,7 +286,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
           initializers: List[onnx.TensorProto]
           fifo: Dict[str, TensorFifo]
         """
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -303,7 +302,7 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -361,8 +360,8 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingGlobalAveragePool.DSEPoint"]:
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
         output_bits = output_quant.bitwidth
 

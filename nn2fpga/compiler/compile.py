@@ -100,6 +100,7 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.FuseElementwiseOps())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldAsymmetricActQuant())
+    nn2fpga_model = nn2fpga_model.transform(transformation.InferLayouts())
     nn2fpga_model = nn2fpga_model.transform(
         transformation.BalanceComputation(nn2fpga_root=config_dict["prj_root"])
     )
@@ -117,26 +118,32 @@ def nn2fpga_compile(config_dict: dict):
         )
     nn2fpga_model = nn2fpga_model.transform(GiveUniqueNodeNames())
     nn2fpga_model = nn2fpga_model.transform(GiveReadableTensorNames())
-    nn2fpga_model = nn2fpga_model.transform(transformation.LowerToHLS())
-
-    if config_dict["steps"].get("ComputeFifoDepth", True):
-        nn2fpga_model = nn2fpga_model.transform(
-            transformation.ComputeFifoDepth(
-                work_root=config_dict["prj_root"], erase=True, ste_already_done=False
-            )
+    nn2fpga_model = nn2fpga_model.transform(transformation.InferLayouts())
+    nn2fpga_model.save("nn2fpga_model.onnx")
+    hls_model = nn2fpga_model.transform(
+        transformation.LowerToHLS(
+            infer_fifo_depth=config_dict["steps"].get("ComputeFifoDepth", True),
+            optimize_fifo_storage=False,
+            prj_root=config_dict["prj_root"]
         )
+    )
+    hls_model.save("hls_model.onnx")
+
+    hls_model = ModelWrapper("hls_model.onnx")
+    nn2fpga_model = ModelWrapper("nn2fpga_model.onnx")
 
     # Check file existence before embedding HLS code.
     wrapper_model_dir = os.path.join(config_dict["prj_root"], "wrapper_model.onnx")
     if not os.path.exists(wrapper_model_dir):
         logging.error(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
         raise FileNotFoundError(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
+    hls_model.save("hls_model.onnx")
     model = ModelWrapper("wrapper_model.onnx")
 
     # Embed HLS code into the model.
     model = model.transform(
         transformation.EmbedHLSCode(
-            nn2fpga_model=nn2fpga_model, work_root=config_dict["prj_root"], erase=False
+            hls_model=hls_model, work_root=config_dict["prj_root"], erase=False
         )
     )
 
@@ -144,6 +151,8 @@ def nn2fpga_compile(config_dict: dict):
     if config_dict["steps"].get("Simulate", True):
         model.save("final_model_before_sim.onnx")
         original_model.save("original_model_for_sim.onnx")
+        original_model = original_model.transform(transformation.ConvertToQCDQ())
+        original_model.save("original_model_qcdq_for_sim.onnx")
         test_transformation_equivalence(original_model, model)
 
     # Generate the bitstream.

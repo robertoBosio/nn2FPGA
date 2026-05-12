@@ -2,7 +2,7 @@ from attr import dataclass
 import numpy as np
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -10,8 +10,7 @@ from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
 from onnx_ir import convenience as ir_convenience
@@ -549,8 +548,8 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         ):
             shift = int(np.log2(output_quant.scale)) - int(np.log2(input_quant.scale))
             if shift == 0 and input_quant.bitwidth == output_quant.bitwidth and input_quant.signed == output_quant.signed:
-                return f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>"
-            return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
+                return f"DequantQuantEqual<{input_quant.get_hls_data_type()}>"
+            return f"DequantQuantPo2<{shift}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingSoftmax."
@@ -649,12 +648,12 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         v_shape = [1, 2, 64, 400]
 
         ####### SplitReshapeQKV ########
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         (rq_scale, rq_zeropt, rq_bitwidth) = (1,2,3)
-        SplitReshapeQKV_output_quant = TensorQuant(
+        SplitReshapeQKV_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[rq_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[rq_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[rq_bitwidth]),
@@ -686,7 +685,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in SplitReshapeQKV_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2,  # Split into 2 streams for Q, K, V each
             )
 
@@ -697,10 +696,10 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"SplitReshapeQKV",
             f"splitreshapeqkv",
             template_args=[
-                (f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputWord"),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TSplit"),
+                (f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputWord"),
+                (f"{input_quant.get_hls_data_type()}", "TInput"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TSplit"),
                 (f"{self.__get_shift_quantizer(input_quant, SplitReshapeQKV_output_quant)}", "SplitQuantizer"),
                 (f"{input_shape[-3]}", "IN_HEIGHT"),
                 (f"{input_shape[-2]}", "IN_WIDTH"),
@@ -731,7 +730,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in TensorDuplicator0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2,  # Duplicate into 2 streams
             )
         TensorDuplicator0_run_call = f"tensorduplicator_head0.run<{hls_tag}>(&stream_v[0], &stream_v_out[0], &stream_v_copy[0])"
@@ -741,7 +740,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"TensorDuplicator",
             f"tensorduplicator_head0",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
                 ("1", "DIM_HEADS"),
@@ -772,7 +771,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in TensorDuplicator1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}",
                 n_array=2,  # Duplicate into 2 streams
             )
         TensorDuplicator1_run_call = f"tensorduplicator_head1.run<{hls_tag}>(&stream_v[1], &stream_v_out[1], &stream_v_copy[1])"
@@ -782,7 +781,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"TensorDuplicator",
             f"tensorduplicator_head1",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
                 ("1", "DIM_HEADS"),
@@ -810,7 +809,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
         # QK matmul first head
         (qk_scale, qk_zeropt, qk_bitwidth) = (16, 17, 18)
-        QKMatMul_output_quant = TensorQuant(
+        QKMatMul_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[qk_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[qk_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[qk_bitwidth]),
@@ -818,7 +817,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             narrow=self.get_nodeattr("qk_narrow"),
             rounding_mode=self.get_nodeattr("qk_rounding_mode"),
         )
-        QKMatmul_acc_quant = TensorQuant(
+        QKMatmul_acc_quant = QuantizedTensorType(
             bitwidth=SplitReshapeQKV_output_quant.bitwidth * 2 + int(np.ceil(np.log2(q_shape[2]))),
             signed=SplitReshapeQKV_output_quant.signed,
             scale=SplitReshapeQKV_output_quant.scale * SplitReshapeQKV_output_quant.scale,
@@ -828,7 +827,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in QKMatMul0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(QKMatMul_output_quant, 1)}",
+                hls_type=f"{get_word_type(QKMatMul_output_quant, 1)}",
                 n_array=2, 
             )
         QKMatMul0_run_call = f"matmulqk_head0.run<{hls_tag}>(&stream_q[0], &stream_k[0], &stream_qk[0])"
@@ -838,13 +837,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"QKMatMul",
             f"matmulqk_head0",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TQInput"),
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TKInput"),
-                (f"{get_struct_type(QKMatMul_output_quant, 1)}", "TQKWord"),
-                (f"{get_hls_quant_type(QKMatMul_output_quant)}", "TQK"),
-                (f"{get_hls_quant_type(QKMatmul_acc_quant)}", "TAccQK"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TQInput"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TKInput"),
+                (f"{get_word_type(QKMatMul_output_quant, 1)}", "TQKWord"),
+                (f"{QKMatMul_output_quant.get_hls_data_type()}", "TQK"),
+                (f"{QKMatmul_acc_quant.get_hls_data_type()}", "TAccQK"),
                 (f"{self.__get_shift_quantizer(QKMatmul_acc_quant, QKMatMul_output_quant)}", "QKQuantizer"),
                 ("1", "DIM_HEADS"),
                 (f"{q_shape[3]}", "DIM_Q"),
@@ -876,7 +875,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in QKMatMul1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(QKMatMul_output_quant, 1)}",
+                hls_type=f"{get_word_type(QKMatMul_output_quant, 1)}",
                 n_array=2, 
             )
         QKMatMul1_run_call = f"matmulqk_head1.run<{hls_tag}>(&stream_q[1], &stream_k[1], &stream_qk[1])"
@@ -886,13 +885,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"QKMatMul",
             f"matmulqk_head1",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TQInput"),
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TKInput"),
-                (f"{get_struct_type(QKMatMul_output_quant, 1)}", "TQKWord"),
-                (f"{get_hls_quant_type(QKMatMul_output_quant)}", "TQK"),
-                (f"{get_hls_quant_type(QKMatmul_acc_quant)}", "TAccQK"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TQInput"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TKInput"),
+                (f"{get_word_type(QKMatMul_output_quant, 1)}", "TQKWord"),
+                (f"{QKMatMul_output_quant.get_hls_data_type()}", "TQK"),
+                (f"{QKMatmul_acc_quant.get_hls_data_type()}", "TAccQK"),
                 (f"{self.__get_shift_quantizer(QKMatmul_acc_quant, QKMatMul_output_quant)}", "QKQuantizer"),
                 ("1", "DIM_HEADS"),
                 (f"{q_shape[3]}", "DIM_Q"),
@@ -921,7 +920,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
         # Const scaling for first head
         (const_scale, const_zeropt, const_bitwidth) = (19, 20, 21)
-        ConstScale_output_quant = TensorQuant(
+        ConstScale_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[const_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[const_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[const_bitwidth]),
@@ -932,10 +931,10 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         ConstScale_value = (
             self.get_nodeattr("const_value") / ConstScale_output_quant.scale
         )
-        ConstScale_variable_declaration = f"const {get_hls_quant_type(ConstScale_output_quant)} CONST_SCALE = {int(ConstScale_value)};"
+        ConstScale_variable_declaration = f"const {ConstScale_output_quant.get_hls_data_type()} CONST_SCALE = {int(ConstScale_value)};"
 
         (qks_scale, qks_zeropt, qks_bitwidth) = (22, 23, 24)
-        QKS_output_quant = TensorQuant(
+        QKS_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[qks_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[qks_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[qks_bitwidth]),
@@ -944,7 +943,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             rounding_mode=self.get_nodeattr("qks_rounding_mode"),
         )
 
-        QKS_mul_quant = TensorQuant(
+        QKS_mul_quant = QuantizedTensorType(
             bitwidth=QKMatMul_output_quant.bitwidth + ConstScale_output_quant.bitwidth,
             signed=QKMatMul_output_quant.signed or ConstScale_output_quant.signed,
             scale=QKMatMul_output_quant.scale * ConstScale_output_quant.scale,
@@ -955,7 +954,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in ConstMul0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(QKS_output_quant, 1)}",
+                hls_type=f"{get_word_type(QKS_output_quant, 1)}",
                 n_array=2, 
             )
         ConstMul0_run_call = f"constmulqk_head0.run<{hls_tag}>(&stream_qk[0], CONST_SCALE, &stream_qkscaled[0])"
@@ -965,13 +964,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"StreamingConstMul",
             f"constmulqk_head0",
             template_args=[
-                (f"{get_struct_type(QKMatMul_output_quant, 1)}", "TInputWord"),
-                (f"{get_hls_quant_type(QKMatMul_output_quant)}", "TInput"),
-                (f"{get_hls_quant_type(ConstScale_output_quant)}", "TConst"),
-                (f"{get_struct_type(QKS_output_quant, 1)}", "TOutputWord"),
-                (f"{get_hls_quant_type(QKS_output_quant)}", "TOutput"),
-                (f"{get_hls_quant_type(QKS_mul_quant)}", "TMul"),
-                (f"DequantQuantEqual<{get_hls_quant_type(QKS_mul_quant)}>", "MulActivation"),
+                (f"{get_word_type(QKMatMul_output_quant, 1)}", "TInputWord"),
+                (f"{QKMatMul_output_quant.get_hls_data_type()}", "TInput"),
+                (f"{ConstScale_output_quant.get_hls_data_type()}", "TConst"),
+                (f"{get_word_type(QKS_output_quant, 1)}", "TOutputWord"),
+                (f"{QKS_output_quant.get_hls_data_type()}", "TOutput"),
+                (f"{QKS_mul_quant.get_hls_data_type()}", "TMul"),
+                (f"DequantQuantEqual<{QKS_mul_quant.get_hls_data_type()}>", "MulActivation"),
                 (f"{self.__get_shift_quantizer(QKS_mul_quant, QKS_output_quant)}", "MulQuantizer"),
                 (f"{q_shape[3]}", "MUL_HEIGHT"),
                 (f"{k_shape[3]}", "MUL_WIDTH"),
@@ -1003,7 +1002,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in ConstMul1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(QKS_output_quant, 1)}",
+                hls_type=f"{get_word_type(QKS_output_quant, 1)}",
                 n_array=2, 
             )
         ConstMul1_run_call = f"constmulqk_head1.run<{hls_tag}>(&stream_qk[1], CONST_SCALE, &stream_qkscaled[1])"
@@ -1012,13 +1011,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"StreamingConstMul",
             f"constmulqk_head1",
             template_args=[
-                (f"{get_struct_type(QKMatMul_output_quant, 1)}", "TInputWord"),
-                (f"{get_hls_quant_type(QKMatMul_output_quant)}", "TInput"),
-                (f"{get_hls_quant_type(ConstScale_output_quant)}", "TConst"),
-                (f"{get_struct_type(QKS_output_quant, 1)}", "TOutputWord"),
-                (f"{get_hls_quant_type(QKS_output_quant)}", "TOutput"),
-                (f"{get_hls_quant_type(QKS_mul_quant)}", "TMul"),
-                (f"DequantQuantEqual<{get_hls_quant_type(QKS_mul_quant)}>", "MulActivation"),
+                (f"{get_word_type(QKMatMul_output_quant, 1)}", "TInputWord"),
+                (f"{QKMatMul_output_quant.get_hls_data_type()}", "TInput"),
+                (f"{ConstScale_output_quant.get_hls_data_type()}", "TConst"),
+                (f"{get_word_type(QKS_output_quant, 1)}", "TOutputWord"),
+                (f"{QKS_output_quant.get_hls_data_type()}", "TOutput"),
+                (f"{QKS_mul_quant.get_hls_data_type()}", "TMul"),
+                (f"DequantQuantEqual<{QKS_mul_quant.get_hls_data_type()}>", "MulActivation"),
                 (f"{self.__get_shift_quantizer(QKS_mul_quant, QKS_output_quant)}", "MulQuantizer"),
                 (f"{q_shape[3]}", "MUL_HEIGHT"),
                 (f"{k_shape[3]}", "MUL_WIDTH"),
@@ -1047,7 +1046,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
         # Softmax for first head
         (p_scale, p_zeropt, p_bitwidth) = (25, 26, 27)
-        Softmax_output_quant = TensorQuant(
+        Softmax_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[p_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[p_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[p_bitwidth]),
@@ -1056,21 +1055,21 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             rounding_mode=self.get_nodeattr("p_rounding_mode"),
         )
 
-        Softmax_acc_quant = TensorQuant(
+        Softmax_acc_quant = QuantizedTensorType(
             bitwidth=EXP_PRECISION + int(np.ceil(np.log2(q_shape[3]))),
             signed=False,
             scale=2 ** (-EXP_PRECISION),
             zeropt=0,
         )
 
-        Softmax_div_quant = TensorQuant(
+        Softmax_div_quant = QuantizedTensorType(
             bitwidth=DIV_PRECISION,
             signed=False,
             scale=2 ** -(DIV_PRECISION - EXP_PRECISION),
             zeropt=0,
         )
 
-        Softmax_lut_quant = TensorQuant(
+        Softmax_lut_quant = QuantizedTensorType(
             bitwidth=EXP_PRECISION,
             signed=False,
             scale=2 ** (-EXP_PRECISION),
@@ -1088,7 +1087,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in Softmax0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(Softmax_output_quant, 1)}",
+                hls_type=f"{get_word_type(Softmax_output_quant, 1)}",
                 n_array=2, 
             )
         Softmax0_run_call = f"softmax_head0.run<{hls_tag}>(&stream_qkscaled[0], LUTmem, &stream_p[0])"
@@ -1098,13 +1097,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"StreamingSoftmax",
             f"softmax_head0",
             template_args=[
-                (f"{get_struct_type(QKS_output_quant, 1)}", "TInputWord"),
-                (f"{get_hls_quant_type(QKS_output_quant)}", "TInput"),
-                (f"{get_struct_type(Softmax_output_quant, 1)}", "TOutputWord"),
-                (f"{get_hls_quant_type(Softmax_output_quant)}", "TOutput"),
-                (f"{get_hls_quant_type(Softmax_lut_quant)}", "TLut"),
-                (f"{get_hls_quant_type(Softmax_acc_quant)}", "TAcc"),
-                (f"{get_hls_quant_type(Softmax_div_quant)}", "TDiv"),
+                (f"{get_word_type(QKS_output_quant, 1)}", "TInputWord"),
+                (f"{QKS_output_quant.get_hls_data_type()}", "TInput"),
+                (f"{get_word_type(Softmax_output_quant, 1)}", "TOutputWord"),
+                (f"{Softmax_output_quant.get_hls_data_type()}", "TOutput"),
+                (f"{Softmax_lut_quant.get_hls_data_type()}", "TLut"),
+                (f"{Softmax_acc_quant.get_hls_data_type()}", "TAcc"),
+                (f"{Softmax_div_quant.get_hls_data_type()}", "TDiv"),
                 (f"{self.__get_shift_quantizer(Softmax_div_quant, Softmax_output_quant)}", "Quantizer"),
                 (f"{2**QKS_output_quant.bitwidth}", "LUT_SIZE"),
                 (f"{q_shape[3]}", "HEIGHT"),
@@ -1135,7 +1134,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in Softmax1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(Softmax_output_quant, 1)}",
+                hls_type=f"{get_word_type(Softmax_output_quant, 1)}",
                 n_array=2, 
             )
         Softmax1_run_call = f"softmax_head1.run<{hls_tag}>(&stream_qkscaled[1], LUTmem, &stream_p[1])"
@@ -1145,13 +1144,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"StreamingSoftmax",
             f"softmax_head1",
             template_args=[
-                (f"{get_struct_type(QKS_output_quant, 1)}", "TInputWord"),
-                (f"{get_hls_quant_type(QKS_output_quant)}", "TInput"),
-                (f"{get_struct_type(Softmax_output_quant, 1)}", "TOutputWord"),
-                (f"{get_hls_quant_type(Softmax_output_quant)}", "TOutput"),
-                (f"{get_hls_quant_type(Softmax_lut_quant)}", "TLut"),
-                (f"{get_hls_quant_type(Softmax_acc_quant)}", "TAcc"),
-                (f"{get_hls_quant_type(Softmax_div_quant)}", "TDiv"),
+                (f"{get_word_type(QKS_output_quant, 1)}", "TInputWord"),
+                (f"{QKS_output_quant.get_hls_data_type()}", "TInput"),
+                (f"{get_word_type(Softmax_output_quant, 1)}", "TOutputWord"),
+                (f"{Softmax_output_quant.get_hls_data_type()}", "TOutput"),
+                (f"{Softmax_lut_quant.get_hls_data_type()}", "TLut"),
+                (f"{Softmax_acc_quant.get_hls_data_type()}", "TAcc"),
+                (f"{Softmax_div_quant.get_hls_data_type()}", "TDiv"),
                 (f"{self.__get_shift_quantizer(Softmax_div_quant, Softmax_output_quant)}", "Quantizer"),
                 (f"{2**QKS_output_quant.bitwidth}", "LUT_SIZE"),
                 (f"{q_shape[3]}", "HEIGHT"),
@@ -1183,7 +1182,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in TransposeV0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2, 
             )
 
@@ -1194,7 +1193,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"TransposeRowCol",
             f"transposev_head0",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
                 ("1", "DIM_HEADS"),
@@ -1223,7 +1222,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in TransposeV1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2, 
             )
 
@@ -1234,7 +1233,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"TransposeRowCol",
             f"transposev_head1",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
                 ("1", "DIM_HEADS"),
@@ -1260,7 +1259,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
 
         # VP matmul for first head
         (vp_scale, vp_zeropt, vp_bitwidth) = (31, 32, 33)
-        VPMatMul_output_quant = TensorQuant(
+        VPMatMul_output_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[vp_scale]),
             zeropt=model.get_initializer(self.onnx_node.input[vp_zeropt]),
             bitwidth=model.get_initializer(self.onnx_node.input[vp_bitwidth]),
@@ -1269,7 +1268,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             rounding_mode=self.get_nodeattr("vp_rounding_mode"),
         )
 
-        VPMatMul_acc_quant = TensorQuant(
+        VPMatMul_acc_quant = QuantizedTensorType(
             bitwidth=Softmax_output_quant.bitwidth + SplitReshapeQKV_output_quant.bitwidth + int(np.ceil(np.log2(k_shape[3]))),
             signed=Softmax_output_quant.signed or SplitReshapeQKV_output_quant.signed,
             scale=Softmax_output_quant.scale * SplitReshapeQKV_output_quant.scale,
@@ -1280,7 +1279,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in VPMatMul0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2, 
             )
         VPMatMul0_run_call = f"matmulvp_head0.run<{hls_tag}>(&stream_v_transposed[0], &stream_p[0], &stream_y[0])"
@@ -1290,13 +1289,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"VPMatMul",
             f"matmulvp_head0",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TVInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TVInput"),
-                (f"{get_struct_type(Softmax_output_quant, 1)}", "TPInputWord"),
-                (f"{get_hls_quant_type(Softmax_output_quant)}", "TPInput"),
-                (f"{get_struct_type(VPMatMul_output_quant, 1)}", "TVPOutputWord"),
-                (f"{get_hls_quant_type(VPMatMul_output_quant)}", "TVPOutput"),
-                (f"{get_hls_quant_type(VPMatMul_acc_quant)}", "TAccVP"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TVInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TVInput"),
+                (f"{get_word_type(Softmax_output_quant, 1)}", "TPInputWord"),
+                (f"{Softmax_output_quant.get_hls_data_type()}", "TPInput"),
+                (f"{get_word_type(VPMatMul_output_quant, 1)}", "TVPOutputWord"),
+                (f"{VPMatMul_output_quant.get_hls_data_type()}", "TVPOutput"),
+                (f"{VPMatMul_acc_quant.get_hls_data_type()}", "TAccVP"),
                 (f"{self.__get_shift_quantizer(VPMatMul_acc_quant, VPMatMul_output_quant)}", "VPQuantizer"),
                 ("1", "DIM_HEADS"),
                 (f"{v_shape[2]}", "DIM_V"),
@@ -1328,7 +1327,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in VPMatMul1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
                 n_array=2, 
             )
         VPMatMul1_run_call = f"matmulvp_head1.run<{hls_tag}>(&stream_v_transposed[1], &stream_p[1], &stream_y[1])"
@@ -1338,13 +1337,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"VPMatMul",
             f"matmulvp_head1",
             template_args=[
-                (f"{get_struct_type(SplitReshapeQKV_output_quant, 1)}", "TVInputWord"),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TVInput"),
-                (f"{get_struct_type(Softmax_output_quant, 1)}", "TPInputWord"),
-                (f"{get_hls_quant_type(Softmax_output_quant)}", "TPInput"),
-                (f"{get_struct_type(VPMatMul_output_quant, 1)}", "TVPOutputWord"),
-                (f"{get_hls_quant_type(VPMatMul_output_quant)}", "TVPOutput"),
-                (f"{get_hls_quant_type(VPMatMul_acc_quant)}", "TAccVP"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TVInputWord"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TVInput"),
+                (f"{get_word_type(Softmax_output_quant, 1)}", "TPInputWord"),
+                (f"{Softmax_output_quant.get_hls_data_type()}", "TPInput"),
+                (f"{get_word_type(VPMatMul_output_quant, 1)}", "TVPOutputWord"),
+                (f"{VPMatMul_output_quant.get_hls_data_type()}", "TVPOutput"),
+                (f"{VPMatMul_acc_quant.get_hls_data_type()}", "TAccVP"),
                 (f"{self.__get_shift_quantizer(VPMatMul_acc_quant, VPMatMul_output_quant)}", "VPQuantizer"),
                 ("1", "DIM_HEADS"),
                 (f"{v_shape[2]}", "DIM_V"),
@@ -1384,7 +1383,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in output_v_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_v_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_v_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
         ReshapeV_run_call = f"reshapev.run<{hls_tag}>(stream_v_out, {self.__get_stream_name(self.onnx_node.output[1])})"
@@ -1395,17 +1394,17 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"reshapev",
             template_args=[
                 (
-                    f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}",
                     "TSplitWord",
                 ),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TSplit"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TSplit"),
                 (
-                    f"{get_struct_type(SplitReshapeQKV_output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('out_word_array'))}",
                     "TReshapeWord",
                 ),
-                (f"{get_hls_quant_type(SplitReshapeQKV_output_quant)}", "TReshape"),
+                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TReshape"),
                 (
-                    f"DequantQuantEqual<{get_hls_quant_type(SplitReshapeQKV_output_quant)}>",
+                    f"DequantQuantEqual<{SplitReshapeQKV_output_quant.get_hls_data_type()}>",
                     "Quantizer",
                 ),
                 (f"2", "IN_HEADS"),
@@ -1448,7 +1447,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in output_y_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_y_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_y_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -1460,16 +1459,16 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             f"reshapey",
             template_args=[
                 (
-                    f"{get_struct_type(VPMatMul_output_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(VPMatMul_output_quant, self.get_nodeattr('in_word_array'))}",
                     "TVPOutputWord",
                 ),
-                (f"{get_hls_quant_type(VPMatMul_output_quant)}", "TVPOutput"),
+                (f"{VPMatMul_output_quant.get_hls_data_type()}", "TVPOutput"),
                 (
-                    f"{get_struct_type(output_y_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_y_quant, self.get_nodeattr('out_word_array'))}",
                     "TOutputWord",
                 ),
-                (f"{get_hls_quant_type(output_y_quant)}", "TOutput"),
-                (f"DequantQuantEqual<{get_hls_quant_type(output_y_quant)}>",
+                (f"{output_y_quant.get_hls_data_type()}", "TOutput"),
+                (f"DequantQuantEqual<{output_y_quant.get_hls_data_type()}>",
                     "Quantizer"),
                 (f"2", "IN_HEADS"),
                 (f"64", "IN_DIM"),

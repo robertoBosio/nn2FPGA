@@ -1,6 +1,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import SortGraph
 from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata
@@ -165,6 +166,7 @@ class EmbedHLSCode(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
+        model = model.transform(SortGraph())
         partition_nodes = model.get_nodes_by_op_type("nn2fpgaPartition")
         if not partition_nodes:
             raise ValueError(f"Partition nodes not found in model.")

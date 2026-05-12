@@ -4,7 +4,7 @@ from attr import dataclass
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -13,8 +13,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from onnxscript.rewriter import pattern
@@ -140,7 +139,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         """
         return f"{name}_stream"
 
-    def __get_accumulator(self, n_sums: int, input_quant: TensorQuant) -> str:
+    def __get_accumulator(self, n_sums: int, input_quant: QuantizedTensorType) -> str:
         """
         Get the accumulator type for the given input quantization.
         For softmax, we need to accumulate exponentials, so we need a wider type.
@@ -149,39 +148,39 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         accumulator_bitwidth = EXP_PRECISION + int(np.floor(np.log2(n_sums) + 1))
 
         signed = False
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=accumulator_bitwidth,
             signed=signed,
             scale=input_quant.scale,
             zeropt=input_quant.zeropt,
         )
-        return f"{get_hls_quant_type(acc_quant)}"
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __get_lut_type(self) -> str:
         """
         Get the type for the LUT entries in the softmax computation.
         The LUT stores quantized exponentials.
         """
-        lut_quant = TensorQuant(
+        lut_quant = QuantizedTensorType(
             bitwidth=EXP_PRECISION,  # Use the output bitwidth for max precision
             signed=False,
             scale=0.0, # Not the actual scale, but it is usless for type generation.
             zeropt=0,
         )
-        return f"{get_hls_quant_type(lut_quant)}"
+        return f"{lut_quant.get_hls_data_type()}"
 
     def __get_division_type(self) -> str:
         """
         Get the type for the division result in the softmax computation.
         """
 
-        div_quant = TensorQuant(
+        div_quant = QuantizedTensorType(
             bitwidth=DIV_PRECISION,
             signed=False,
             scale=0.0, # Not the actual scale, but it is usless for type generation.
             zeropt=0,
         )
-        return f"{get_hls_quant_type(div_quant)}"
+        return f"{div_quant.get_hls_data_type()}"
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
@@ -195,7 +194,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             self.__is_power_of_two(output_quant.scale)
         ):
             shift = ((DIV_PRECISION - EXP_PRECISION) + int(np.log2(output_quant.scale)))
-            return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingSoftmax."
@@ -242,8 +241,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
         axis = self.get_nodeattr("axis")
@@ -263,19 +262,19 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quant)}",
+                    f"{input_quant.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
@@ -362,8 +361,8 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -379,7 +378,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -450,10 +449,10 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingSoftmax.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingSoftmax operation."""
 
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])

@@ -8,45 +8,9 @@ from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from nn2fpga.compiler.transforms.set_dynamic_batchsize import SetDynamicBatchSize
 from nn2fpga.compiler.utils.codegen_utils import NewCodeWriter
 from nn2fpga.compiler.utils.board_util import read_board_info
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 from onnx import NodeProto
 import numpy as np
-
-def get_onnxruntime_dtype(tensor_quant: TensorQuant) -> str:
-    """ Get the ONNX Runtime data type for a given tensor quantization. """
-    if tensor_quant.signed:
-        if tensor_quant.bitwidth <= 8:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8"
-        elif tensor_quant.bitwidth <= 16:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16"
-        elif tensor_quant.bitwidth <= 32:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32"
-    else:
-        if tensor_quant.bitwidth <= 8:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
-        elif tensor_quant.bitwidth <= 16:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16"
-        elif tensor_quant.bitwidth <= 32:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32"
-    raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
-
-def get_spec_dtype(tensor_quant: TensorQuant) -> str:
-    """ Get the data type string for a given tensor quantization, suitable for the spec file. """
-    if tensor_quant.signed:
-        if tensor_quant.bitwidth <= 8:
-            return "i8"
-        elif tensor_quant.bitwidth <= 16:
-            return "i16"
-        elif tensor_quant.bitwidth <= 32:
-            return "i32"
-    else:
-        if tensor_quant.bitwidth <= 8:
-            return "u8"
-        elif tensor_quant.bitwidth <= 16:
-            return "u16"
-        elif tensor_quant.bitwidth <= 32:
-            return "u32"
-    raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
 
 def generate_spec(
     model: ModelWrapper,
@@ -91,13 +55,13 @@ def generate_spec(
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
+        tensor_type = TensorType.from_canonical_name(value["quant"])
         mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
-        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        buffer_size = np.dtype(tensor_type.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
             buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+            f"PortDesc{{DType::{tensor_type.get_spec_type()}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -108,13 +72,13 @@ def generate_spec(
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
+        tensor_type = TensorType.from_canonical_name(value["quant"])
         mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
-        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        buffer_size = np.dtype(tensor_type.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
             buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+            f"PortDesc{{DType::{tensor_type.get_spec_type()}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -123,8 +87,8 @@ def generate_spec(
                  f"{len(ap.input_map)}> OrtInputTypes{{{{")
     cwr.indent()
     for name in ap.input_map:
-        quant = TensorQuant.from_canonical_name(ap.input_map[name]["quant"])
-        cwr.add_line(f"{get_onnxruntime_dtype(quant)}, // {name}")
+        tensor_type = TensorType.from_canonical_name(ap.input_map[name]["quant"])
+        cwr.add_line(f"{tensor_type.get_onnxruntime_type()}, // {name}")
     cwr.dedent()
     cwr.add_line("}};")
 
@@ -132,8 +96,8 @@ def generate_spec(
                  f"{len(ap.output_map)}> OrtOutputTypes{{{{")
     cwr.indent()
     for name in ap.output_map:
-        quant = TensorQuant.from_canonical_name(ap.output_map[name]["quant"])
-        cwr.add_line(f"{get_onnxruntime_dtype(quant)}, // {name}")
+        tensor_type = TensorType.from_canonical_name(ap.output_map[name]["quant"])
+        cwr.add_line(f"{tensor_type.get_onnxruntime_type()}, // {name}")
     cwr.dedent()
     cwr.add_line("}};")
 
@@ -170,8 +134,8 @@ ol = Overlay("Overlay/design.bit")
             continue
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
         max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
 
@@ -180,8 +144,8 @@ ol = Overlay("Overlay/design.bit")
             continue
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
         max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
 
@@ -193,8 +157,8 @@ ol = Overlay("Overlay/design.bit")
         dma_name = value['new_name'] 
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         np_dtype_info = np.iinfo(np_dtype)
         buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
@@ -209,8 +173,8 @@ ol = Overlay("Overlay/design.bit")
         dma_name = value['new_name']
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
         str_tensor_shape = f"BATCH, {str_tensor_shape}"
         test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"

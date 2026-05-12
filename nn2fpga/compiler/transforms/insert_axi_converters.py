@@ -2,7 +2,7 @@ from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.utils.board_util import read_board_info
 from onnx import helper
-from nn2fpga.compiler.core.tensor_quant import (
+from nn2fpga.compiler.core.tensor_type import (
     get_custom_tensor_datatype,
     set_custom_tensor_datatype,
 )

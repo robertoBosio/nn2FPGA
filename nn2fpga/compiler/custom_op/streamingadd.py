@@ -4,7 +4,7 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -13,8 +13,7 @@ from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 
 class StreamingAdd(NN2FPGAOp):
@@ -136,13 +135,13 @@ class StreamingAdd(NN2FPGAOp):
         if (input_quantA.signed != input_quantB.signed):
             acc_bits += 1
 
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=acc_bits,
             signed=signed,
             scale=common_scale,
             zeropt=input_quantA.zeropt
         )
-        return f"{get_hls_quant_type(acc_quant)}"
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __get_align_shift(self, input_quantA, input_quantB) -> tuple[str, str]:
         """ Returns the align shifts for the Add operation. """
@@ -152,31 +151,31 @@ class StreamingAdd(NN2FPGAOp):
         align_b = int(np.log2(input_quantB.scale / common_scale))
 
         if align_a != 0:
-            alignA = f"DequantQuantPo2<{-align_a}, {get_hls_quant_type(input_quantA)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
+            alignA = f"DequantQuantPo2<{-align_a}, {input_quantA.get_hls_data_type()}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
-            alignA = f"DequantQuantEqual<{get_hls_quant_type(input_quantA)}>"
+            alignA = f"DequantQuantEqual<{input_quantA.get_hls_data_type()}>"
 
         if align_b != 0:
-            alignB = f"DequantQuantPo2<{-align_b}, {get_hls_quant_type(input_quantB)}, {self.__get_accumulator(input_quantA, input_quantB)}>"
+            alignB = f"DequantQuantPo2<{-align_b}, {input_quantB.get_hls_data_type()}, {self.__get_accumulator(input_quantA, input_quantB)}>"
         else:
-            alignB = f"DequantQuantEqual<{get_hls_quant_type(input_quantB)}>"
+            alignB = f"DequantQuantEqual<{input_quantB.get_hls_data_type()}>"
 
         return alignA, alignB
 
-    def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
+    def __get_quantizer(self, input_quantA, input_quantB, output_type) -> str:
         """ Returns the quantizer type for the Add operation. """
 
         if (
             self.__is_power_of_two(input_quantA.scale)
             and self.__is_power_of_two(input_quantB.scale)
-            and self.__is_power_of_two(output_quant.scale)
+            and self.__is_power_of_two(output_type.scale)
         ):
             common_scale = min(input_quantA.scale, input_quantB.scale)
             shift = -1 * (
                 int(np.log2(common_scale))
-                - int(np.log2(output_quant.scale))
+                - int(np.log2(output_type.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quantA, input_quantB)}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quantA, input_quantB)}, {output_type.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingAdd."
@@ -197,9 +196,9 @@ class StreamingAdd(NN2FPGAOp):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
-        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_typeA = require_tensor_type(model, self.onnx_node.input[0])
+        input_typeB = require_tensor_type(model, self.onnx_node.input[1])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_shapeA_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shapeB_layout = require_tensor_layout(model, self.onnx_node.input[1])
@@ -214,40 +213,40 @@ class StreamingAdd(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quantA, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_typeA, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordA",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quantA)}",
+                    f"{input_typeA.get_hls_data_type()}",
                     f"TInputA",
                 ),
                 (
-                    f"{get_struct_type(input_quantB, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_typeB, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordB",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quantB)}",
+                    f"{input_typeB.get_hls_data_type()}",
                     f"TInputB",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_type.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
-                    f"{self.__get_accumulator(input_quantA, input_quantB)}",
+                    f"{self.__get_accumulator(input_typeA, input_typeB)}",
                     f"TAcc",
                 ),
-                (self.__get_activation(input_quantA, input_quantB), "Activation"),
+                (self.__get_activation(input_typeA, input_typeB), "Activation"),
                 (
-                    f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
+                    f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
                     f"Quantizer",
                 ),
-                (f"{self.__get_align_shift(input_quantA, input_quantB)[0]}", "AlignA"),
-                (f"{self.__get_align_shift(input_quantA, input_quantB)[1]}", "AlignB"),
+                (f"{self.__get_align_shift(input_typeA, input_typeB)[0]}", "AlignA"),
+                (f"{self.__get_align_shift(input_typeA, input_typeB)[1]}", "AlignB"),
                 (f"{input_shapeA[1]}", "DIM0"),
                 (f"{input_shapeA[2]}", "DIM1"),
                 (f"{input_shapeA[3]}", "DIM2"),
@@ -313,7 +312,7 @@ class StreamingAdd(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.input[1]),
             self.__get_stream_name(self.onnx_node.output[0]),
         )
-    
+
     def accepted_input_layout(self) -> tuple | None:
         """ StreamingAdd is layout-agnostic, so it accepts any input layout. """
         return None
@@ -325,7 +324,7 @@ class StreamingAdd(NN2FPGAOp):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -347,7 +346,7 @@ class StreamingAdd(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 

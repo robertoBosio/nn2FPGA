@@ -1,7 +1,7 @@
 from onnx import helper
 import numpy as np
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -9,8 +9,7 @@ from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 
 class BandwidthAdjust(NN2FPGAOp):
@@ -70,8 +69,8 @@ class BandwidthAdjust(NN2FPGAOp):
         return ""
 
     def __get_object_declaration(self, model, name) -> str:
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
@@ -80,12 +79,12 @@ class BandwidthAdjust(NN2FPGAOp):
             name,
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}", "TInputWord"),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}", "TOutputWord"),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
+                (f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}", "TInputWord"),
+                (f"{input_type.get_hls_data_type()}", "TInput"),
+                (f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}", "TOutputWord"),
+                (f"{output_type.get_hls_data_type()}", "TOutput"),
                 (
-                    f"DequantQuantEqual<{get_hls_quant_type(output_quant)}>",
+                    f"DequantQuantEqual<{output_type.get_hls_data_type()}>",
                     "Quantizer",
                 ),
                 (input_shape[1], "IN_DIM0"),
@@ -169,7 +168,7 @@ class BandwidthAdjust(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -185,7 +184,7 @@ class BandwidthAdjust(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 

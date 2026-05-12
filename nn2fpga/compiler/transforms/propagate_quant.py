@@ -14,7 +14,7 @@ from qonnx.transformation.general import (
 )
 
 import nn2fpga.compiler.transforms as transformation
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 
 logger = logging.getLogger(__name__)
 
@@ -88,16 +88,16 @@ def get_non_constant_outputs(node: NodeProto, model: ModelWrapper) -> list[str]:
 
 def _all_nodes_have_same_quant(
     quant_nodes: list[NodeProto], model: ModelWrapper
-) -> TensorQuant | None:
-    """Return the shared TensorQuant if all nodes have identical quant params."""
+) -> QuantizedTensorType | None:
+    """Return the shared QuantizedTensorType if all nodes have identical quant params."""
     if not quant_nodes:
         return None
 
     if not all(node.op_type in QUANT_NODE_TYPES for node in quant_nodes):
         return None
 
-    reference_quant = TensorQuant.from_quant_node(quant_nodes[0], model)
-    if all(TensorQuant.from_quant_node(node, model) == reference_quant for node in quant_nodes):
+    reference_quant = QuantizedTensorType.from_quant_node(quant_nodes[0], model)
+    if all(QuantizedTensorType.from_quant_node(node, model) == reference_quant for node in quant_nodes):
         return reference_quant
 
     return None
@@ -105,7 +105,7 @@ def _all_nodes_have_same_quant(
 
 def _record_quant_proposal(
     tensor_name: str,
-    reference_quant: TensorQuant,
+    reference_quant: QuantizedTensorType,
     proposed_quant_nodes: dict[str, str],
     conflicted_tensors: set[str],
 ) -> None:
@@ -229,7 +229,7 @@ def _unique_consumers_for_outputs(
 def _materialize_quant_node_for_tensor(
     model: ModelWrapper,
     tensor_name: str,
-    tensor_quant: TensorQuant,
+    tensor_quant: QuantizedTensorType,
 ) -> NodeProto:
     """Insert a Quant node for tensor_name and rewire graph edges accordingly."""
     graph_output_names = _graph_output_names(model)
@@ -357,7 +357,7 @@ class PropagateQuant(Transformation):
             )
 
         for tensor_name, quant_canonical in proposed_quant_nodes.items():
-            tensor_quant = TensorQuant.from_canonical_name(quant_canonical)
+            tensor_quant = QuantizedTensorType.from_canonical_name(quant_canonical)
             new_quant_node = _materialize_quant_node_for_tensor(
                 model=model,
                 tensor_name=tensor_name,

@@ -8,10 +8,8 @@ from nn2fpga.compiler.utils.codegen_utils import (
     NewCodeWriter,
     cpp_function,
     cpp_variable,
-    get_hls_quant_type,
-    get_cpp_quant_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 
 SOLUTION_NAME = "solution0"
 PROJECT_NAME = "hlsproj"
@@ -168,15 +166,15 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             ],
         )
 
-        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
 
         main_function.add_code(
             npy_read.generate_call(
                 [
                     f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
-                    get_hls_quant_type(tensor_quant),
-                    get_cpp_quant_type(tensor_quant),
+                    tensor_type.get_hls_data_type(),
+                    tensor_type.get_cpp_quant_type(),
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],
@@ -201,16 +199,16 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             ],
         )
 
-        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
         shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
 
         main_function.add_code(
             npy_write.generate_call(
                 [
                     f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
-                    get_hls_quant_type(tensor_quant),
-                    get_cpp_quant_type(tensor_quant),
+                    tensor_type.get_hls_data_type(),
+                    tensor_type.get_cpp_quant_type(),
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],

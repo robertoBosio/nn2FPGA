@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -9,7 +9,7 @@ from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
+    get_word_type,
 )
 import numpy as np
 
@@ -77,7 +77,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
         return ""
 
     def __get_object_declaration(self, model) -> str:
-        input_quant = require_tensor_quant(model, self.onnx_node.input[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
@@ -87,7 +87,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     "TWord",
                 ),
                 (input_shape[-3], "DIM0"),
@@ -176,7 +176,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
             for i in range(self.get_nodeattr("in_stream_array"))
@@ -197,7 +197,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 

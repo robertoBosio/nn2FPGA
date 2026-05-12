@@ -16,7 +16,6 @@
  * into the nn2FPGA data format.
  *
  * @tparam TInputWord      The type of the input word (AXI).
- * @tparam TInput          The type of the input data (AXI).
  * @tparam TOutputWord     The type of the output word.
  * @tparam TOutput         The type of the output data.
  * @tparam Quantizer       The quantizer functor used for quantization.
@@ -55,7 +54,7 @@
  * before writing to the output stream.
  */
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
+template <typename TInputWord, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t DATA_PER_WORD,
           size_t DIM0, size_t DIM1, size_t DIM2, size_t DIM1_UNROLL,
           size_t DIM2_UNROLL, bool ONLY_ONCE = false>

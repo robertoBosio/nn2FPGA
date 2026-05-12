@@ -1,12 +1,11 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 from qonnx.custom_op.registry import getCustomOp
 import logging
 import numpy as np
 import math
 from nn2fpga.compiler.transforms.add_streaming_params import quant_array, safe_int_quant_call
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
 logger = logging.getLogger(__name__)
 
 NODES_WITH_BIAS = [
@@ -131,9 +130,9 @@ class AdjustConvScale(Transformation):
                     "AdjustBiasScale only supports both per-tensor or both per-channel."
                 )
 
-            # Prepare TensorQuant objects to inspect quant params
-            bias_tensor_quant = TensorQuant.from_quant_node(bias_q, model)
-            weight_tensor_quant = TensorQuant.from_quant_node(w_q, model)
+            # Prepare TensorType objects to inspect quant params
+            bias_tensor_quant = QuantizedTensorType.from_quant_node(bias_q, model)
+            weight_tensor_quant = QuantizedTensorType.from_quant_node(w_q, model)
             eps = 1e-6
 
             # If per-tensor mode

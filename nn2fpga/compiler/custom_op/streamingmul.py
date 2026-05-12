@@ -4,7 +4,7 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, require_tensor_quant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -13,8 +13,7 @@ from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 from dataclasses import dataclass
 from onnx_ir import convenience as ir_convenience
@@ -161,13 +160,13 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         if (input_quantA.signed != input_quantB.signed):
             mul_bits += 1
 
-        mul_quant = TensorQuant(
+        mul_quant = QuantizedTensorType(
             bitwidth=mul_bits,
             signed=signed,
             scale=input_quantA.scale,
             zeropt=input_quantA.zeropt
         )
-        return f"{get_hls_quant_type(mul_quant)}"
+        return f"{mul_quant.get_hls_data_type()}"
 
     def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
         """ Returns the quantizer type for the Mul operation. """
@@ -182,7 +181,7 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                 + int(np.log2(input_quantB.scale))
                 - int(np.log2(output_quant.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_multiplier(input_quantA, input_quantB)}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_multiplier(input_quantA, input_quantB)}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingMul."
@@ -203,9 +202,9 @@ class StreamingMul(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quantA = require_tensor_quant(model, self.onnx_node.input[0])
-        input_quantB = require_tensor_quant(model, self.onnx_node.input[1])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        input_quantA = require_tensor_type(model, self.onnx_node.input[0])
+        input_quantB = require_tensor_type(model, self.onnx_node.input[1])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         input_layoutB = require_tensor_layout(model, self.onnx_node.input[1])
@@ -221,27 +220,27 @@ class StreamingMul(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quantA, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quantA, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordA",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quantA)}",
+                    f"{input_quantA.get_hls_data_type()}",
                     f"TInputA",
                 ),
                 (
-                    f"{get_struct_type(input_quantB, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quantB, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordB",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quantB)}",
+                    f"{input_quantB.get_hls_data_type()}",
                     f"TInputB",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
@@ -337,7 +336,7 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -359,7 +358,7 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -413,8 +412,8 @@ class StreamingMul(NN2FPGAOp, DSECapable):
         """
         silvia_packing = model.get_metadata_prop("silvia_packing") == "true"
 
-        inpA_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        inpB_quant = require_tensor_quant(model, self.onnx_node.input[1])
+        inpA_quant = require_tensor_type(model, self.onnx_node.input[0])
+        inpB_quant = require_tensor_type(model, self.onnx_node.input[1])
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
@@ -438,9 +437,9 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingMul.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingMul operation."""
 
-        inputA_quant = require_tensor_quant(model, self.onnx_node.input[0])
-        inputB_quant = require_tensor_quant(model, self.onnx_node.input[1])
-        output_quant = require_tensor_quant(model, self.onnx_node.output[0])
+        inputA_quant = require_tensor_type(model, self.onnx_node.input[0])
+        inputB_quant = require_tensor_type(model, self.onnx_node.input[1])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_layoutA = require_tensor_layout(model, self.onnx_node.input[0])
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
