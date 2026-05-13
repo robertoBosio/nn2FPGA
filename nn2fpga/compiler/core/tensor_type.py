@@ -76,7 +76,7 @@ class FloatTensorType(TensorType):
         return np.float32
     
     def get_hls_data_type(self) -> str:
-        return "float"
+        return "ap_float<32, 8>"
     
     def get_cpp_quant_type(self) -> str:
         return "float"

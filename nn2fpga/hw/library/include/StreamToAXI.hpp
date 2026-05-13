@@ -1,5 +1,6 @@
 #pragma once
 #include "ap_int.h"
+#include "ap_float.h"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include "utils/HLS_utils.hpp"
@@ -215,12 +216,12 @@ private:
       // If we have enough data to form an output word, proceed with packing.
       TOutputWord output_data;
       for (size_t i = 0; i < DATA_PER_WORD; i++) {
-        output_data.data.range((i + 1) * TInput::width - 1, i * TInput::width) =
-            quantizer(circular_buffer[tail + i]);
+        output_data.data.range((i + 1) * data_width_v<TInput> - 1, i * data_width_v<TInput>) =
+            get_raw_bits(quantizer(circular_buffer[tail + i]));
       }
 
       if (end_of_tensor) {
-        size_t valid_bytes = size * TInput::width / 8;
+        size_t valid_bytes = size * data_width_v<TInput> / 8;
         output_data.keep = (1 << valid_bytes) - 1;
         // tail_bank = 0; // Reset the tail bank at the end of the tensor.
         // size = 0; // Reset the size at the end of the tensor.

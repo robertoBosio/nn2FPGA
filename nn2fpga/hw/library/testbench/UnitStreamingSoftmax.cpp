@@ -18,7 +18,7 @@ using TOutputWord =
 void wrap_run(hls::stream<TInputWord> i_data[test_config::LANE_UNROLL],
               const test_config::TLUT LUTmem[test_config::LUT_SIZE],
               hls::stream<TOutputWord> o_data[test_config::LANE_UNROLL]) {
-  StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
+  StreamingOnlineSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
                    test_config::LUT_SIZE, test_config::DIM0 * test_config::DIM1,
@@ -106,7 +106,7 @@ bool test_step() {
   hls::stream<TInputWord> in_stream[test_config::LANE_UNROLL];
   hls::stream<TOutputWord> out_stream[test_config::LANE_UNROLL];
 
-  StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
+  StreamingOnlineSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
                    test_config::LUT_SIZE, test_config::DIM0 * test_config::DIM1,

@@ -97,24 +97,24 @@ class TestYoloHead(BaseHLSTest):
 
         Expected config_dict keys (in addition to your existing ones):
         INPUT_IS_UNSIGNED (bool, optional; default False)
-        OUTPUT_IS_UNSIGNED (bool, optional; default False)
-        INPUT_DATAWIDTH / OUTPUT_DATAWIDTH (int)
+        PROB_IS_UNSIGNED (bool, optional; default False)
+        INPUT_DATAWIDTH / PROB_DATAWIDTH (int)
         """
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
-        out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
+        prob_unsigned = bool(config_dict.get("PROB_IS_UNSIGNED", False))
         config_dict["EXP_PRECISION"] = 12  # Number of bits for LUT output (Q0.16 format for max precision)
         config_dict["DIV_PRECISION"] = 32
 
         in_bits = int(config_dict["INPUT_DATAWIDTH"])
-        out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
+        prob_bits = int(config_dict["PROB_DATAWIDTH"])
         exp_bits = config_dict["EXP_PRECISION"]
         div_bits = config_dict["DIV_PRECISION"]
         config_dict["LUT_SIZE"] = 1 << in_bits  # LUT size must match input index domain
 
         onnx_in_type = self.get_tensorproto_dtype(in_bits, in_unsigned)
-        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
+        onnx_out_type = self.get_tensorproto_dtype(prob_bits, prob_unsigned)
         np_in_type = self.get_numpy_dtype(in_bits, in_unsigned)
-        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+        np_out_type = self.get_numpy_dtype(prob_bits, prob_unsigned)
 
         # Random input tensor in correct integer domain/range
         in_info = np.iinfo(np_in_type)
@@ -129,7 +129,9 @@ class TestYoloHead(BaseHLSTest):
             ),
             dtype=np_in_type,
         )
-        
+
+        weights_tensor = np.arange(config_dict["OUT_CH"]).reshape(1, config_dict["OUT_CH"], 1, 1).astype(np.float32)
+
         def make_const(name, vals, data_type=TensorProto.INT64, dims=None):
             arr = np.array(vals)
             if dims is None:
@@ -152,10 +154,16 @@ class TestYoloHead(BaseHLSTest):
             onnx_in_type,
             [1, config_dict["IN_CH"], config_dict["IN_HEIGHT"], config_dict["IN_WIDTH"]],
         )
+        W = helper.make_tensor(
+            "W",
+            TensorProto.FLOAT,
+            [1, config_dict["OUT_CH"], 1, 1],
+            weights_tensor.flatten().tolist(),
+        )
         Y = helper.make_tensor_value_info(
             "Y",
-            onnx_out_type,
-            [1, config_dict["OUT_CH"], config_dict["OUT_HEIGHT"], config_dict["OUT_WIDTH"]],
+            TensorProto.FLOAT,
+            [1, 1, config_dict["OUT_HEIGHT"], config_dict["OUT_WIDTH"]],
         )
 
         X_scale = helper.make_tensor("X_scale", TensorProto.FLOAT, [], [float(config_dict["X_SCALE"])])
@@ -221,22 +229,52 @@ class TestYoloHead(BaseHLSTest):
         SoftMax = helper.make_node(
             "Softmax",
             inputs=["X_q_transposed_dq"],
-            outputs=["Y_dq"],
+            outputs=["P_dq"],
             axis=1,  # Channel dimension
         )
 
-        qlinear = helper.make_node(
+        qlinear_sofmax = helper.make_node(
             "QuantizeLinear",
-            inputs=["Y_dq", "Y_scale", "Y_zp"],
+            inputs=["P_dq", "Y_scale", "Y_zp"],
+            outputs=["P_q"],
+        )
+
+        dqlinear_softmax = helper.make_node(
+            "DequantizeLinear",
+            inputs=["P_q", "Y_scale", "Y_zp"],
+            outputs=["P"],
+        )
+
+        conv = helper.make_node(
+            "Conv",
+            inputs=["P", "W"],
             outputs=["Y"],
+            kernel_shape=[1, 1],
+            pads=[0, 0, 0, 0],
+            strides=[1, 1],
+            group=1,
+            dilations=[1, 1],
         )
 
         graph = helper.make_graph(
-            [dqlinear, SoftMax, qlinear, shapex, reshapex, qlinear_reshape, dqlinear_reshape, transpose, qlinear_transpose, dqlinear_transpose],
+            [
+                dqlinear,
+                SoftMax,
+                qlinear_sofmax,
+                shapex,
+                reshapex,
+                qlinear_reshape,
+                dqlinear_reshape,
+                transpose,
+                qlinear_transpose,
+                dqlinear_transpose,
+                dqlinear_softmax,
+                conv,
+            ],
             "qsoftmax_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp, W],
         )
         model = helper.make_model(graph, producer_name="qonnx")
 
@@ -246,15 +284,17 @@ class TestYoloHead(BaseHLSTest):
         y = sess.run(None, {"X": input_tensor})[0]
 
         # Optional: cast ORT output to expected numpy dtype (ORT should already produce correct dtype)
-        y = y.astype(np_out_type, copy=False)
+        y = y.astype(np.float32, copy=False)
 
         # shift based on Po2 scales (assumes ratio is power-of-two)
         shift = int(
             np.log2(float(config_dict["Y_SCALE"]) / 2 ** -(div_bits - exp_bits))
         )  # Output is in Q0.31 format for max precision
-        acc_bits = (
+        den_bits = (
             int(np.floor(np.log2(config_dict["OUT_CH"]) + 1)) + exp_bits
         )  # Bits needed to accumulate OUT_CH exponentials without overflow
+        acc_bits = int(np.ceil(np.log2(config_dict["OUT_CH"])) + prob_bits)
+        scale = -int(np.log2(float(config_dict["Y_SCALE"])))
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -276,13 +316,16 @@ class TestYoloHead(BaseHLSTest):
         typedef_suffix = "u" if in_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
 
-        typedef_suffix = "u" if out_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
+        cwr.add_line(f"typedef ap_float<32, 8> TOutput;")
+        typedef_suffix = "u" if prob_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{prob_bits}> TProb;")
 
         cwr.add_line(f"typedef ap_uint<{exp_bits}> TLUT;")
-        cwr.add_line(f"typedef ap_uint<{acc_bits}> TAcc;")
+        cwr.add_line(f"typedef ap_uint<{den_bits}> TDen;")
         cwr.add_line(f"typedef ap_uint<{div_bits}> TDiv;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TDiv, TOutput> Quantizer;")
+        cwr.add_line(f"typedef ap_uint<{acc_bits}> TAcc;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TDiv, TProb> ProbQuantizer;")
+        cwr.add_line(f"typedef DequantPo2ToFloat<TAcc, {scale}> OutQuantizer;")
 
         cwr.add_lines(
             csnake.Variable(
@@ -309,9 +352,9 @@ class TestYoloHead(BaseHLSTest):
         np.random.seed(0)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
-            "OUTPUT_DATAWIDTH": 8,
+            "PROB_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
-            "OUTPUT_IS_UNSIGNED": False,
+            "PROB_IS_UNSIGNED": False,
             "IN_HEIGHT": 2,
             "IN_WIDTH": 1,
             "IN_CH": 64,

@@ -5,7 +5,11 @@ from attr import dataclass
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_type import require_tensor_type
+from nn2fpga.compiler.core.tensor_type import (
+    require_tensor_type,
+    QuantizedTensorType,
+    FloatTensorType,
+)
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
@@ -16,7 +20,6 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
-from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
 from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
@@ -45,6 +48,7 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
     def softmax_pattern(
         op,
         x,
+        w,
         shape_in,
         rq_scale,
         rq_zeropt,
@@ -59,6 +63,17 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         tq_narrow,
         tq_rounding_mode,
         axis,
+        sq_scale,
+        sq_zeropt,
+        sq_bitwidth,
+        sq_signed,
+        sq_narrow,
+        sq_rounding_mode,
+        dilations,
+        group,
+        kernel_shape,
+        pads,
+        strides,
     ):
         x_r = op.Reshape(x, shape_in)
         x_rq = op.Quant(
@@ -84,12 +99,34 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             _allow_other_attributes=True,
             _domain="qonnx.custom_op.general",
         )
-        return op.Softmax(q_tq, axis=axis)
+        x_s = op.Softmax(q_tq, axis=axis)
+        sq = op.Quant(
+            x_s,
+            sq_scale,
+            sq_zeropt,
+            sq_bitwidth,
+            signed=sq_signed,
+            narrow=sq_narrow,
+            rounding_mode=sq_rounding_mode,
+            _allow_other_attributes=True,
+            _domain="qonnx.custom_op.general",
+        )
+        y = op.Conv(
+            sq,
+            w,
+            dilations=dilations,
+            group=group,
+            kernel_shape=kernel_shape,
+            pads=pads,
+            strides=strides,
+        )
+        return y
 
     @staticmethod
     def rewrite(
         op,
         x,
+        w,
         shape_in,
         rq_scale,
         rq_zeropt,
@@ -104,12 +141,29 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         tq_narrow,
         tq_rounding_mode,
         axis,
-        ):
+        sq_scale,
+        sq_zeropt,
+        sq_bitwidth,
+        sq_signed,
+        sq_narrow,
+        sq_rounding_mode,
+        dilations,
+        group,
+        kernel_shape,
+        pads,
+        strides,
+    ):
         return op.StreamingYoloHeadSoftmax(
             x,
+            sq_scale,
+            sq_zeropt,
+            sq_bitwidth,
             axis=axis,
             shape_in=_get_const_i64_list(shape_in),
             _domain="nn2fpga.compiler.custom_op",
+            sq_signed=sq_signed.value,
+            sq_narrow=sq_narrow.value,
+            sq_rounding_mode=sq_rounding_mode.value,
         )
 
     @register_rules
@@ -147,6 +201,9 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         return {
             "axis": ("i", False, -1),  # Axis for Softmax operation
             "shape_in": ("ints", False, []),  # Shape for the initial Reshape
+            "sq_signed": ("i", False, 0),
+            "sq_narrow": ("i", False, 0),
+            "sq_rounding_mode": ("s", False, ""),
 
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -218,11 +275,10 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         """
         return f"{name}_stream"
 
-    def __get_accumulator(self, n_sums: int, input_quant: QuantizedTensorType) -> str:
+    def __get_denominator(self, n_sums: int, input_quant: QuantizedTensorType) -> str:
         """
-        Get the accumulator type for the given input quantization.
+        Get the denominator type for the given input quantization.
         For softmax, we need to accumulate exponentials, so we need a wider type.
-        We can use a simple heuristic of doubling the bitwidth for the accumulator.
         """
         accumulator_bitwidth = EXP_PRECISION + int(np.floor(np.log2(n_sums) + 1))
 
@@ -234,6 +290,23 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             zeropt=input_quant.zeropt,
         )
         return f"{acc_quant.get_hls_data_type()}"
+    
+    def __get_accumulator(self, n_sums: int, input_quant: QuantizedTensorType) -> str:
+        """
+        Get the accumulator type for the given input quantization.
+        For the conv following the softmax, we need to accumulate probabilities
+        multiplied by channel number, so we need a wider type.
+        """
+        accumulator_bitwidth = input_quant.bitwidth + int(np.floor(np.log2(n_sums) + 1))
+
+        signed = False
+        acc_quant = QuantizedTensorType(
+            bitwidth=accumulator_bitwidth,
+            signed=signed,
+            scale=input_quant.scale,
+            zeropt=input_quant.zeropt,
+        )
+        return acc_quant
 
     def __get_lut_type(self) -> str:
         """
@@ -278,7 +351,7 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             raise ValueError(
                 "Float quantization is currently not supported for StreamingSoftmax."
             )
-
+        
     def __get_variable_declaration(self, model, input_quant) -> str:
         """ Get the internal cpp variables of the StreamingSoftmax node.
         Args:
@@ -320,8 +393,17 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = require_tensor_type(model, self.onnx_node.input[0])
-        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        (sq_scale, sq_zeropt, sq_bitwidth) = (1, 2, 3)
+        softmax_quant = QuantizedTensorType(
+            scale=model.get_initializer(self.onnx_node.input[sq_scale]),
+            zeropt=model.get_initializer(self.onnx_node.input[sq_zeropt]),
+            bitwidth=model.get_initializer(self.onnx_node.input[sq_bitwidth]),
+            signed=self.get_nodeattr("sq_signed"),
+            narrow=self.get_nodeattr("sq_narrow"),
+            rounding_mode=self.get_nodeattr("sq_rounding_mode"),
+        )
+        output_type = FloatTensorType()
 
         # We actually not consider the shape in input but the shape
         # after the initial reshape and the transpose in the pattern, which is stored
@@ -338,35 +420,42 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         # The input shape is in NCHW format, but we need the NHWC.
 
         dim_lanes = np.prod(input_shape) // dim_reduction
-
-        lut_size = 1 << input_quant.bitwidth
-        StreamingSoftmax = cpp_object(
-            "StreamingSoftmax",
+        lut_size = 1 << input_type.bitwidth
+        acc_quant = self.__get_accumulator(dim_reduction, softmax_quant)
+        acc_shift = -int(np.log2(float(acc_quant.scale)))
+        StreamingYoloHead = cpp_object(
+            "StreamingYoloHead",
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{input_quant.get_hls_data_type()}",
+                    f"{input_type.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{softmax_quant.get_hls_data_type()}",
+                    f"TProb",
+                ),
+                (
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{output_quant.get_hls_data_type()}",
+                    f"{output_type.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
                     f"{self.__get_lut_type()}",
                     f"TLUT",
                 ),
-                (f"{self.__get_accumulator(dim_reduction, input_quant)}", "TAcc"),
+                (f"{self.__get_denominator(dim_reduction, input_type)}", "TDen"),
                 (f"{self.__get_division_type()}", "TDiv"),
-                (f"{self.__get_quantizer(output_quant)}", "Quantizer"),
+                (f"{acc_quant.get_hls_data_type()}", "TAcc"),
+                (f"{self.__get_quantizer(softmax_quant)}", "ProbQuantizer"),
+                (f"DequantPo2ToFloat<{acc_quant.get_hls_data_type()}, {acc_shift}>", "OutQuantizer"),
                 (f"{lut_size}", "LUT_SIZE"),
                 (f"{dim_lanes}", "DIM_LANES"),
                 (f"{dim_reduction}", "DIM_REDUCTION"),
@@ -375,7 +464,7 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             ]
         )
 
-        return StreamingSoftmax.generate_declaration()
+        return StreamingYoloHead.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
 
@@ -443,8 +532,8 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        input_quant = require_tensor_type(model, self.onnx_node.input[0])
-        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -460,7 +549,7 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -473,7 +562,7 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(
-                model, input_quant
+                model, input_type
             ),
             hls_run_call=self.__get_run_call(hls_tag),
             hls_step_call=self.__get_step_call(),

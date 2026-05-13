@@ -1,5 +1,6 @@
 #pragma once
 #include "ap_int.h"
+#include "ap_float.h"
 #include "hls_math.h"
 #include <type_traits>
 
@@ -24,7 +25,6 @@ template <typename T> struct is_ap_signed {
       std::is_same<typename T::Base::Base,
                    _AP_ROOT_TYPE<T::Base::width, true>>::value;
 };
-
 
 template <int Shift, typename TAcc, typename TOut> struct DequantQuantPo2 {
 
@@ -77,9 +77,9 @@ private:
 
     // Widen enough to prevent wrap-around during the shift.
     // For signed, add +1 for sign growth safety.
-    using TWide = typename std::conditional<need_signed,
-                                            ap_int<TAcc::width + L + 1>,
-                                            ap_uint<TAcc::width + L>>::type;
+    using TWide =
+        typename std::conditional<need_signed, ap_int<TAcc::width + L + 1>,
+                                  ap_uint<TAcc::width + L>>::type;
 
     TWide wide = TWide(acc);
     wide = wide << L;
@@ -96,7 +96,8 @@ private:
   }
 };
 
-template <int Num, int Den, typename TAcc, typename TOut> struct DequantQuantFloat {
+template <int Num, int Den, typename TAcc, typename TOut>
+struct DequantQuantFloat {
 
   TOut operator()(TAcc acc) const {
 #pragma HLS inline
@@ -118,21 +119,29 @@ template <int Num, int Den, typename TAcc, typename TOut> struct DequantQuantFlo
 
     float lo = float(LimitsImpl<TOut>::min());
     float hi = float(LimitsImpl<TOut>::max());
-    if (r < lo) r = lo;
-    if (r > hi) r = hi;
-
-    std::cout << "DequantQuantFloat: acc=" << acc << ", x=" << x << ", r=" << r << std::endl;
+    if (r < lo)
+      r = lo;
+    if (r > hi)
+      r = hi;
 
     return TOut(r);
   }
 };
 
-template <typename T>
-struct DequantQuantEqual
-{
-    T operator()(T acc) const
-    {
+template <typename TIn, int Shift> struct DequantPo2ToFloat {
+  ap_float<32, 8> operator()(TIn acc) const {
 #pragma HLS inline
-        return acc;
-    }
+    ap_float<32, 8> val = ap_float<32, 8>(acc);
+    ap_uint<8> exp = val.exponent_ref();
+    exp -= Shift;
+    val.exponent_ref() = exp;
+    return val;
+  }
+};
+
+template <typename T> struct DequantQuantEqual {
+  T operator()(T acc) const {
+#pragma HLS inline
+    return acc;
+  }
 };

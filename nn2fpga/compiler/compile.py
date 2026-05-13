@@ -123,7 +123,8 @@ def nn2fpga_compile(config_dict: dict):
     hls_model = nn2fpga_model.transform(
         transformation.LowerToHLS(
             infer_fifo_depth=config_dict["steps"].get("ComputeFifoDepth", True),
-            optimize_fifo_storage=False,
+            ste_already_done=False,
+            optimize_fifo_storage=config_dict["steps"].get("OptimizeFifo", True),
             prj_root=config_dict["prj_root"]
         )
     )

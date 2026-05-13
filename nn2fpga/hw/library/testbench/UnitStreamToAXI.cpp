@@ -7,6 +7,7 @@
 #include <iostream>
 #include <unordered_map>
 #include "utils/CSDFG_utils.hpp"
+#include "utils/HLS_utils.hpp"
 #include "test_config.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
@@ -37,13 +38,13 @@ bool test_run() {
          i_dim2 += test_config::DIM2_UNROLL) {
       for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
            i_dim1_par++) {
-        TInputWord input_struct;
+        TInputWord input_word;
         for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
              i_dim2_par++) {
-          input_struct[i_dim2_par] =
-              (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par;
+          size_t index = (i_dim01 + i_dim1_par) * test_config::DIM2 + (i_dim2 + i_dim2_par);
+          input_word[i_dim2_par] = test_config::TInput(index);
         }
-        in_stream[i_dim1_par].write(input_struct);
+        in_stream[i_dim1_par].write(input_word);
       }
     }
   }
@@ -54,21 +55,22 @@ bool test_run() {
   // Read and check output
   bool flag = true;
   size_t data_in_word = 0;
-  test_config::TOutputWord output_struct;
+  test_config::TOutputWord output_word;
   for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
        i_dim01++) {
     for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2; i_dim2++) {
       if (data_in_word == 0) {
         // Read the output structure from the stream
-        output_struct = out_stream.read();
+        output_word = out_stream.read();
       }
 
-      ap_uint<test_config::TInput::width> bits_read = output_struct.data.range(
-          test_config::TInput::width * (data_in_word + 1) - 1,
-          test_config::TInput::width * data_in_word);
-      ap_uint<test_config::TInput::width> expected_bits =
-          test_config::TInput(i_dim01 * test_config::DIM2 + i_dim2)
-              .range(test_config::TInput::width - 1, 0);
+      constexpr size_t W = data_width_v<test_config::TInput>;
+
+      ap_uint<W> bits_read = output_word.data.range(
+          W * (data_in_word + 1) - 1, W * data_in_word);
+
+      ap_uint<W> expected_bits = get_raw_bits(
+          test_config::TInput(i_dim01 * test_config::DIM2 + i_dim2));
       flag &= (bits_read == expected_bits);
 
       if (!flag) {

@@ -1166,7 +1166,7 @@ class YoloHeadSoftmax(Pattern):
     """
     Match the softmax in the YOLO head, anchored at the Softmax node:
 
-      Quant -> Reshape -> Quant -> Transpose -> Quant -> Softmax -> Quant
+      Quant -> Reshape -> Quant -> Transpose -> Quant -> Softmax -> Quant -> Conv
     """
     name = "YoloHeadSoftmax"
     anchor_op = "Softmax"
@@ -1178,6 +1178,27 @@ class YoloHeadSoftmax(Pattern):
         if len(anchor_node.input) < 1:
             return Match(False, self.name, covered, ["Softmax missing required input"])
 
+        softmax_output_quant = model.find_consumer(anchor_node.output[0])
+        if softmax_output_quant is None or not check_act_quant(model, softmax_output_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax output must be consumed by supported activation Quant/IntQuant"],
+            )
+        covered.add(anchor_node.name)
+        covered.add(softmax_output_quant.name)
+
+        conv = model.find_consumer(softmax_output_quant.output[0])
+        if conv is None or conv.op_type != "Conv":
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax output quant must be consumed by a Conv"],
+            )
+        covered.add(conv.name)
+
         softmax_quant = model.find_producer(anchor_node.input[0])
         if softmax_quant is None or not check_act_quant(model, softmax_quant, reasons):
             return Match(
@@ -1186,7 +1207,6 @@ class YoloHeadSoftmax(Pattern):
                 covered,
                 ["Softmax input must be produced by supported activation Quant/IntQuant"],
             )
-        covered.add(anchor_node.name)
         covered.add(softmax_quant.name)
 
         softmax_transpose = model.find_producer(softmax_quant.input[0])
