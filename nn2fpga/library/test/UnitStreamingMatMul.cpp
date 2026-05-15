@@ -12,11 +12,12 @@
 
 using TInputWordA = std::array<test_config::TInputA, test_config::W_PAR>;
 using TInputWordB = std::array<test_config::TInputB, test_config::W_PAR>;
-using TOutputWord = ap_axiu<test_config::CH_PAR * test_config::OUTPUT_DATAWIDTH, 0, 0, 0>;
+//using TOutputWord = ap_axiu<test_config::CH_PAR * test_config::OUTPUT_DATAWIDTH, 0, 0, 0>;//?
+using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
 
 void wrap_run(hls::stream<TInputWordA> in_data_A[test_config::CH_PAR],
               hls::stream<TInputWordB> in_data_B[test_config::CH_PAR],
-              hls::stream<TOutputWord>& mat_out) {
+              hls::stream<TOutputWord> mat_out[test_config::CH_PAR]) {
   StreamingMatMul<TInputWordA, test_config::TInputA,
                   TInputWordB, test_config::TInputB,
                   TOutputWord, test_config::TOutput,
@@ -32,7 +33,7 @@ void wrap_run(hls::stream<TInputWordA> in_data_A[test_config::CH_PAR],
 bool test_run() {
   hls::stream<TInputWordA> in_data_A[test_config::CH_PAR];
   hls::stream<TInputWordB> in_data_B[test_config::CH_PAR];
-  hls::stream<TOutputWord> mat_out;
+  hls::stream<TOutputWord> mat_out[test_config::CH_PAR];
 
   // Stream A: read at j==0, order: r → k (step W_PAR) → i_ch
   for (int r = 0; r < (int)test_config::IN_HEIGHT_A; r++) {
@@ -76,11 +77,9 @@ bool test_run() {
   for (int r = 0; r < (int)test_config::IN_HEIGHT_A; r++) {
     for (int j = 0; j < (int)test_config::IN_WIDTH_B; j++) {
       for (int ch = 0; ch < (int)test_config::IN_CH_A; ch += test_config::CH_PAR) {
-        TOutputWord pkt = mat_out.read();
+        TOutputWord pkt = mat_out[ch / test_config::CH_PAR].read();
         for (int i_ch = 0; i_ch < (int)test_config::CH_PAR; i_ch++) {
-          test_config::TOutput got = pkt.data.range(
-              (i_ch * test_config::OUTPUT_DATAWIDTH) + test_config::OUTPUT_DATAWIDTH - 1,
-               i_ch * test_config::OUTPUT_DATAWIDTH);
+          test_config::TOutput got = pkt[i_ch];
           test_config::TOutput expected =
               test_config::output_tensor[0][ch + i_ch][r][j];
           bool cmp = (got == expected);
@@ -94,7 +93,7 @@ bool test_run() {
       }
     }
   }
-  if (!mat_out.empty()) {
+  if (!mat_out[0].empty()) {
     flag = false;
     std::cout << "Output stream not empty after reading." << std::endl;
   }
@@ -108,7 +107,7 @@ bool test_step() {
 
   hls::stream<TInputWordA> in_data_A[test_config::CH_PAR];
   hls::stream<TInputWordB> in_data_B[test_config::CH_PAR];
-  hls::stream<TOutputWord> mat_out;
+  hls::stream<TOutputWord> mat_out[test_config::CH_PAR];
 
   StreamingMatMul<TInputWordA, test_config::TInputA,
                   TInputWordB, test_config::TInputB,
@@ -150,7 +149,9 @@ bool test_step() {
 
   // Flush output stream
   TOutputWord out_val;
-  while (mat_out.read_nb(out_val));
+  for (int i = 0; i < test_config::CH_PAR; i++) {
+    while (mat_out[i].read_nb(out_val));
+  }
 
   bool flag = (II == expectedII);
   std::cout << "Expected II: " << expectedII

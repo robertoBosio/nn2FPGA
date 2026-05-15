@@ -28,7 +28,7 @@ class StreamingMatMul(NN2FPGAOp):
     Matches and absorbs:
 
         a ──► Transpose([0,1,3,2]) ──► Quant(outer) ──┐
-                                                        MatMul ──► Quant(out)
+                                                        MatMul ──► 
                                           b ────────────┘
 
     `a` is the pre-Transpose tensor (e.g. output of upstream Quant),
@@ -36,9 +36,6 @@ class StreamingMatMul(NN2FPGAOp):
     [B, CH, W, H] after the absorbed Transpose.
     """
 
-    # ------------------------------------------------------------------ #
-    #  Pattern B – Quant(A) → Transpose → Quant(outer) → MatMul → Quant(out)
-    # ------------------------------------------------------------------ #
     @staticmethod
     def pattern(
         op,
@@ -52,7 +49,7 @@ class StreamingMatMul(NN2FPGAOp):
         Matches (free vars `a`, `b` are already-quantised tensors):
 
             a ──► Transpose([0,1,3,2]) ──► Quant(outer) ──┐
-                                                            MatMul ──► Quant(out)
+                                                            MatMul ──► 
                                               b ────────────┘
         """
         a_t = op.Transpose(a, perm=[0, 1, 3, 2])
@@ -61,7 +58,7 @@ class StreamingMatMul(NN2FPGAOp):
             outer_scale,
             outer_zeropt,
             outer_bitwidth,
-            _allow_other_attributes=True,
+            _allow_other_attributes=True,# ← "I don't care what other attrs exist (attrs  : signed=1, narrow=0, rounding_mode=ROUND)"
             _domain="qonnx.custom_op.general",
         )
         return op.MatMul(a_outer, b, _allow_other_attributes=True)

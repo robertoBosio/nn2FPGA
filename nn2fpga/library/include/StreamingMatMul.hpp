@@ -58,7 +58,7 @@ public:
     template <size_t HLS_TAG>
     void run(hls::stream<TInputWordA> in_data_A[CH_PAR],
              hls::stream<TInputWordB> in_data_B[CH_PAR],
-             hls::stream<TOutputWord>& mat_out) {
+             hls::stream<TOutputWord> mat_out[CH_PAR]) {
         #pragma HLS INLINE off
 
         TInputA local_A[IN_CH][IN_WIDTH];
@@ -75,8 +75,9 @@ public:
         for (int r = 0; r < (int)IN_HEIGHT; r++) {
             for (int j = 0; j < (int)OUT_WIDTH; j++) {
                 for (int k = 0; k < (int)IN_WIDTH; k += (int)W_PAR) {
+                    #pragma HLS PIPELINE II=1
                     for(int ch=0 ; ch<(int)IN_CH; ch+= (int)CH_PAR) {
-                        #pragma HLS PIPELINE II=1
+                        
                     
                         StreamingMatMul::pipeline_body(
                             in_data_A, in_data_B,
@@ -91,7 +92,7 @@ public:
 
     ActorStatus step(hls::stream<TInputWordA> in_data_A[CH_PAR],
                      hls::stream<TInputWordB> in_data_B[CH_PAR],
-                     hls::stream<TOutputWord>& mat_out) {
+                     hls::stream<TOutputWord> mat_out[CH_PAR]) {
         auto it = registry().find(this);
         assert(it != registry().end() && "Instance not initialized");
         auto &st = it->second;
@@ -116,9 +117,9 @@ public:
 
         if (firing_condition) {
             // Use a local stream to capture instant output
-            hls::stream<TOutputWord> instant_out;
-            StreamingMatMul::pipeline_body(
-                in_data_A, in_data_B,
+            hls::stream<TOutputWord> instant_out[ch / (int)CH_PAR];
+            StreamingMatMul::pipeline_body(in_data_A,
+                in_data_B,
                 st.local_A, st.local_B, st.acc,
                 instant_out, r, j, k, ch);
 
@@ -145,8 +146,8 @@ public:
 
             // Write directly to output — no delay buffer needed
             TOutputWord out_val;
-            while (!instant_out.empty())
-                mat_out.write(instant_out.read());
+           while (!instant_out[ch / (int)CH_PAR].empty())
+                mat_out[ch / (int)CH_PAR].write(instant_out[ch / (int)CH_PAR].read());
         }
 
         st.actor_status.advance();
@@ -160,7 +161,7 @@ private:
             TInputA  local_A[IN_CH][IN_WIDTH],
             TInputB  local_B[OUT_WIDTH][IN_CH][IN_WIDTH],
             TAcc     acc[IN_CH],
-            hls::stream<TOutputWord>& mat_out,
+            hls::stream<TOutputWord> mat_out[CH_PAR],
             int r, int j, int k, int ch) {
         #pragma HLS inline
 
@@ -210,14 +211,9 @@ private:
             // Write output packet for this ch group when dot-product complete
             if (k == (int)IN_WIDTH - (int)W_PAR) {
                 for (int i_ch = 0; i_ch < (int)CH_PAR; i_ch++) {
-                    constexpr int OBW = TOutput::width;
-                    pktOut_reg.data.range((i_ch * OBW) + 7, i_ch * OBW) = q(acc[ch + i_ch]);
+                    pktOut_reg[i_ch] = (TOutput)q(acc[ch + i_ch]);
                 }
-                pktOut_reg.keep = -1;
-                pktOut_reg.last = (ch + (int)CH_PAR == (int)IN_CH &&
-                                   r == (int)IN_HEIGHT - 1 &&
-                                   j == (int)OUT_WIDTH  - 1);
-                mat_out.write(pktOut_reg);
+                mat_out[ch / (int)CH_PAR].write(pktOut_reg);
             }
         }
     
