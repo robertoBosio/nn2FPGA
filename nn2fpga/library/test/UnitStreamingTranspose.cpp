@@ -10,7 +10,7 @@
 #include <unordered_map>
 
 
-using TInputWordB = std::array<test_config::TInput, 1>;
+using TInputWord = std::array<test_config::TInput, 1>;
 using TOutputWord = std::array<test_config::TOutput, 1>;
 using INDEX_T    = test_config::INDEX_T;
 
