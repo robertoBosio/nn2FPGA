@@ -118,7 +118,7 @@ bool test_step() {
                   test_config::IN_CH_A, test_config::W_PAR,
                   test_config::CH_PAR>
                   matmul;
-  matmul.step_init();   
+  matmul.step_init(test_config::PIPELINE_DEPTH);   
 
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
   CSDFGState current_state;
