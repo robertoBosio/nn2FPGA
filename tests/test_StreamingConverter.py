@@ -30,7 +30,7 @@ class TestStreamingConverter(BaseHLSTest):
         cwr.dedent()
         cwr.add_line("}")
         return cwr.code
-
+    
     def test_same_par(self, hls_steps):
         config_dict = {
             "DATAWIDTH": 8,
@@ -45,7 +45,7 @@ class TestStreamingConverter(BaseHLSTest):
             config_dict,
             hls_steps,
         )
-
+    
     def test_diff_par(self, hls_steps):
         config_dict = {
             "DATAWIDTH": 8,
@@ -60,3 +60,4 @@ class TestStreamingConverter(BaseHLSTest):
             config_dict,
             hls_steps,
         )
+    

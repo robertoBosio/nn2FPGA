@@ -11,8 +11,8 @@
 
 using namespace test_config;
 
-using TInputWord = std::array<test_config::TInput, test_config::W_PAR>;
-using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
+using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
+using TOutputWord = std::array<test_config::TOutput, test_config::W_PAR>;
 
 // For this unit test, we build a StreamingConverter instance with the same
 // template as in config
