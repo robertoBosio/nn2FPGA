@@ -73,6 +73,7 @@ It includes:
 * Original tensor names.
 * Internal accelerator names.
 * Shapes.
+* Tensor layout.
 * Data types in the TensorQuant format.
 * Values in the case of static inputs (e.g. parameters).
 
@@ -214,6 +215,7 @@ pkg = AcceleratorPackage(
             "name": "input_0",
             "index": 0,
             "shape": [1, 3, 224, 224],
+            "layout": None,
             "quant": None,
             "value": None,
         }
@@ -223,6 +225,7 @@ pkg = AcceleratorPackage(
             "name": "output_0",
             "index": 0,
             "shape": [1, 1000],
+            "layout": None,
             "quant": None,
             "value": None,
         }
