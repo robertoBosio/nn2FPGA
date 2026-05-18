@@ -51,27 +51,79 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     function.add_code("#pragma HLS DATAFLOW disable_start_propagation")
     function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    for input_name in [input['new_name'] for input in ap.input_map.values()]:
+    for input in ap.input_map.values():
+        input_name = input['new_name']
+        mode = input['mode']
         tensor_fifo = get_custom_tensor_fifo_metadata(model, input_name)
+        if mode == "axis":
+            var = cpp_variable(
+                input_name,
+                f"hls::stream<{tensor_fifo.hls_type}>&",
+                pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
+            )
+        elif mode == "m_axi":
+            var = cpp_variable(
+                input_name,
+                f"{tensor_fifo.hls_type}*",
+                pragma=[
+                    f"#pragma HLS INTERFACE m_axi port={input_name} bundle={input_name}_bundle",
+                ],
+            )
+        else:
+            raise ValueError(f"Unsupported mode {mode} for input {input_name}")
+        function.add_argument(var)
+        for pragma in var.pragma:
+            function.add_code(pragma)
+
+    for output in ap.output_map.values():
+        output_name = output['new_name']
+        mode = output['mode']
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, output_name)
+        if mode == "axis":
+            var = cpp_variable(
+                output_name,
+                f"hls::stream<{tensor_fifo.hls_type}>&",
+                pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
+        )
+        elif mode == "m_axi":
+            var = cpp_variable(
+                output_name,
+                f"{tensor_fifo.hls_type}*",
+                pragma=[
+                    f"#pragma HLS INTERFACE m_axi port={output_name} bundle={output_name}_bundle",
+                ],
+            )
+        else:
+            raise ValueError(f"Unsupported mode {mode} for output {output_name}")
+        function.add_argument(var)
+        for pragma in var.pragma:
+            function.add_code(pragma)
+    
+    for buffer_name, buffer in ap.buffer_map.items():
+        read_buffer = f"{buffer_name}_read"
         var = cpp_variable(
-            input_name,
-            f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
+            read_buffer,
+            f"{buffer['hls_type']}*",
+            pragma=[
+                f"#pragma HLS INTERFACE m_axi port={read_buffer} bundle={read_buffer}_bundle",
+            ],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
 
-    for output_name in [output['new_name'] for output in ap.output_map.values()]:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, output_name)
+        write_buffer = f"{buffer_name}_write"
         var = cpp_variable(
-            output_name,
-            f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
+            write_buffer,
+            f"{buffer['hls_type']}*",
+            pragma=[
+                f"#pragma HLS INTERFACE m_axi port={write_buffer} bundle={write_buffer}_bundle",
+            ],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
+        function.add_code(f"#pragma ALIAS ports = {read_buffer}, {write_buffer}")
 
     stream_vars = {}
     for fifo in model.graph.value_info:

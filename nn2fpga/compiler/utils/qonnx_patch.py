@@ -145,6 +145,7 @@ def patch_qonnx_ops():
                     "layout": None,
                     "quant": None,
                     "value": None,
+                    "mode": "axis",
                 }
                 tensor_type = FloatTensorType()  # default to float if not quantized
                 if first_node.op_type == "Quant":
@@ -168,6 +169,7 @@ def patch_qonnx_ops():
                     "layout": None,
                     "quant": None,
                     "value": None,
+                    "mode": "axis",
                 }
                 tensor_type = FloatTensorType()  # default to float if not quantized
                 if last_node.op_type == "Quant":

@@ -136,7 +136,7 @@ class StreamingLineBuffer(NN2FPGAOp):
                     hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     n_array=FH * FW_EXTENDED,
                 )
-            output_name = f"{output_name}_prepad"
+            output_name = f"{self.onnx_node.output[0]}_prepad_stream"
 
         for i in range(FH * FW_EXTENDED):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
@@ -296,9 +296,9 @@ class StreamingLineBuffer(NN2FPGAOp):
 
         if self.get_nodeattr("pads") != [0, 0, 0, 0]:
             # Create the Pad kernel.
-            input_name = f"{self.__get_stream_name(self.onnx_node.output[0])}_prepad"
+            input_name = f"{self.onnx_node.output[0]}_prepad_stream"
             input_names = [
-                f"{self.__get_stream_name(self.onnx_node.output[0])}_prepad_{i}_"
+                f"{self.onnx_node.output[0]}_prepad_stream_{i}_"
                 for i in range(FH * FW_EXTENDED)
             ]
             output_name = f"{self.__get_stream_name(self.onnx_node.output[0])}"

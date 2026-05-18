@@ -204,6 +204,7 @@ class AddStreamingParams(Transformation):
             "quant": params_quant.get_canonical_name(),
             "layout": TensorLayout.identity(len(grouped_initializer.shape)).get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
+            "mode": "axis",
         }
         param_stream_input = helper.make_tensor_value_info(
             "const_param_stream", TensorProto.INT32, grouped_initializer.shape

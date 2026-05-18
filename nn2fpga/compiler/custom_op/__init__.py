@@ -4,6 +4,7 @@ from nn2fpga.compiler.custom_op.bandwidthadjust import (
 )
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.axitostream import AXIToStream
+from nn2fpga.compiler.custom_op.DDRStream import DDRStream
 from nn2fpga.compiler.custom_op.fixedthroughputdma import FixedThroughputDMA
 from nn2fpga.compiler.custom_op.infinitethroughputdma import InfiniteThroughputDMA
 from nn2fpga.compiler.custom_op.nn2fpgapartition import nn2fpgaPartition
@@ -37,6 +38,7 @@ custom_op = {
     "BandwidthAdjustIncreaseStreams": BandwidthAdjustIncreaseStreams,
     "HLSKernel": HLSKernel,
     "AXIToStream": AXIToStream,
+    "DDRStream": DDRStream,
     "FixedThroughputDMA": FixedThroughputDMA,
     "InfiniteThroughputDMA": InfiniteThroughputDMA,
     "nn2fpgaPartition": nn2fpgaPartition,

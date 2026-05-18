@@ -3,7 +3,6 @@ import json
 from dataclasses import dataclass, asdict, field
 from typing import Dict, Any, ClassVar
 
-
 @dataclass
 class AcceleratorPackage:
     """
@@ -30,6 +29,9 @@ class AcceleratorPackage:
     # as well as their shapes and data types.
     output_map: Dict[str, Any] = field(default_factory=dict)
 
+    # Mapping of tensor buffers to their properties.
+    buffer_map: Dict[str, Any] = field(default_factory=dict)
+
     # Working directory for the accelerator.
     work_dir: str = ""
 
@@ -54,6 +56,7 @@ class AcceleratorPackage:
         "hwh_b64",
         "input_map",
         "output_map",
+        "buffer_map",
         "work_dir",
         "board_name",
         "top_name",

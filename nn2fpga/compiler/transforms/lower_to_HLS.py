@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 
+from nn2fpga.compiler.transforms.optimize_fifo import OptimizeFifo
 import numpy as np
 from onnx import TensorProto, helper, StringStringEntryProto
 from qonnx.core.modelwrapper import ModelWrapper
@@ -490,5 +491,8 @@ class LowerToHLS(Transformation):
                     stream_vi.name,
                     get_custom_tensor_fifo_metadata(ste_model, stream_vi.name),
                 )
+        
+        if self.optimize_fifo_storage:
+            hls_model = hls_model.transform(OptimizeFifo(model))
 
         return hls_model, False
