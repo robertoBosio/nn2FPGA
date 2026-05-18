@@ -12,6 +12,7 @@ frequency = 250
 OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
+OptimizeFifo = true
 Simulate = true
 Deploy = true
 
