@@ -49,3 +49,9 @@ struct PortDesc {
   PortMode mode;
   size_t buffer_size; // in bytes
 };
+
+struct BufferDesc {
+  size_t size_bytes;
+  off_t read_axi_off;
+  off_t write_axi_off;
+};

@@ -493,6 +493,6 @@ class LowerToHLS(Transformation):
                 )
         
         if self.optimize_fifo_storage:
-            hls_model = hls_model.transform(OptimizeFifo(model))
+            hls_model = hls_model.transform(OptimizeFifo(model, prj_root=self.prj_root))
 
         return hls_model, False

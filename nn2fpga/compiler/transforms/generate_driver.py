@@ -22,6 +22,7 @@ def generate_spec(
     frequency: int,
     axilite_base_addr: int,
     axilite_size: int,
+    control_axi_offset: int,
     design_id: str,
 ) -> None:
 
@@ -48,6 +49,7 @@ def generate_spec(
     cwr.add_line(f'static constexpr uint32_t DesignID = {int(design_id)};')
     cwr.add_line(f"static constexpr uint64_t AXIL_BASE = 0x{axilite_base_addr:X};")
     cwr.add_line(f"static constexpr size_t AXIL_SIZE = 0x{axilite_size:X};")
+    cwr.add_line(f"static constexpr off_t ControlAxiOffset = 0x{control_axi_offset:X};")
 
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.input_map)}> Inputs{{{{")
     cwr.indent()
@@ -79,6 +81,15 @@ def generate_spec(
             buffer_size *= Nmax
         cwr.add_line(
             f"PortDesc{{DType::{tensor_type.get_spec_type()}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+        )
+    cwr.dedent()
+    cwr.add_line("}};")
+
+    cwr.add_line(f"static inline const std::array<BufferDesc, {len(ap.buffer_map)}> Buffers{{{{")
+    cwr.indent()
+    for buffer_name, buffer in ap.buffer_map.items():
+        cwr.add_line(
+            f"BufferDesc{{{buffer['size_bytes']}, 0x{buffer['read_axi_offset']:X}, 0x{buffer['write_axi_offset']:X}}}, // {buffer_name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -125,6 +136,14 @@ import time
 
 PL.reset()
 ol = Overlay("Overlay/design.bit")
+"""
+    if ap.buffer_map:
+        test_code += f"kernel = ol.{ap.top_name}_0\n"
+        test_code += """
+def write_u64(ip, offset, value):
+    ip.write(offset, value & 0xFFFFFFFF)
+    ip.write(offset + 4, (value >> 32) & 0xFFFFFFFF)
+
 """
     # Xilinx DMA has a maximum transfer size of 64MB, so we need to choose a batch size that fits 
     # within this limit based on the input and output buffer sizes defined in the accelerator package.
@@ -181,6 +200,13 @@ ol = Overlay("Overlay/design.bit")
         test_code += f"{dma_name}_data = np.zeros(({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
         test_code += f"ol.{dma_name}_dma.recvchannel._max_size = {buffer_size}\n"
         test_code += f"ol.{dma_name}_dma.recvchannel._align = 1\n"
+
+    for buffer_name, buffer in ap.buffer_map.items():
+        test_code += f"{buffer_name}_buffer = allocate(shape=({buffer['size_bytes']},), dtype=np.int8)\n"
+        test_code += f"{buffer_name}_buffer[:] = 0\n"
+        test_code += f"{buffer_name}_addr = {buffer_name}_buffer.device_address\n"
+        test_code += f"write_u64(kernel, 0x{buffer['read_axi_offset']:X}, {buffer_name}_addr)\n"
+        test_code += f"write_u64(kernel, 0x{buffer['write_axi_offset']:X}, {buffer_name}_addr)\n"
 
     # Load the static inputs
     for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
@@ -241,6 +267,8 @@ print(f"Avg img latency (ms):    {avg_img_ms:.3f}")
     for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
         dma_name = value['new_name']
         test_code += f"del {dma_name}_buffer\n"
+    for buffer_name in ap.buffer_map:
+        test_code += f"del {buffer_name}_buffer\n"
     return test_code
 
 def make_deploy_directory(work_dir: str, top_name: str) -> str:
@@ -261,6 +289,7 @@ class GenerateDriver(Transformation):
         top_name = model.get_metadata_prop("top_name")
         axilite_address = int(model.get_metadata_prop("axilite_address"))
         axilite_size = int(model.get_metadata_prop("axilite_size"))
+        control_axi_offset = int(model.get_metadata_prop("control_axi_offset") or 0)
         board = model.get_metadata_prop("board_name")
         frequency = model.get_metadata_prop("frequency")
         design_id = model.get_metadata_prop("design_id")
@@ -287,6 +316,7 @@ class GenerateDriver(Transformation):
                     frequency=frequency,
                     axilite_base_addr=axilite_address,
                     axilite_size=axilite_size,
+                    control_axi_offset=control_axi_offset,
                     design_id=design_id,
                 )
             )

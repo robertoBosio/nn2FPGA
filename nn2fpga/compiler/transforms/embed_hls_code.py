@@ -105,7 +105,8 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
             read_buffer,
             f"{buffer['hls_type']}*",
             pragma=[
-                f"#pragma HLS INTERFACE m_axi port={read_buffer} bundle={read_buffer}_bundle",
+                f"#pragma HLS INTERFACE m_axi port={read_buffer} bundle={read_buffer}_bundle depth={buffer['depth']}",
+                f"#pragma HLS STABLE variable={read_buffer}",
             ],
         )
         function.add_argument(var)
@@ -117,13 +118,14 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
             write_buffer,
             f"{buffer['hls_type']}*",
             pragma=[
-                f"#pragma HLS INTERFACE m_axi port={write_buffer} bundle={write_buffer}_bundle",
+                f"#pragma HLS INTERFACE m_axi port={write_buffer} bundle={write_buffer}_bundle depth={buffer['depth']}",
+                f"#pragma HLS STABLE variable={write_buffer}",
             ],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
-        function.add_code(f"#pragma ALIAS ports = {read_buffer}, {write_buffer}")
+        function.add_code(f"#pragma ALIAS ports = {read_buffer}, {write_buffer} distance = 0")
 
     stream_vars = {}
     for fifo in model.graph.value_info:

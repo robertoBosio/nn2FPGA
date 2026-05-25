@@ -76,15 +76,14 @@ class DDRStream(NN2FPGAOp):
         input_type = require_tensor_type(model, self.onnx_node.input[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
-        word_bits = input_type.bitwidth * self.get_nodeattr("dim2_unroll") 
         axiword_bits = self.get_nodeattr("axiword")
         burst_length = self.get_nodeattr("burst_length")
-        words_in_axiword = axiword_bits // word_bits
+        words_in_axiword = axiword_bits // input_type.bitwidth
         buffer_size = np.prod(input_shape) // (self.get_nodeattr("axiword") // input_type.bitwidth)
 
         # Create the DDRStream object.
         DDRStream = cpp_object(
-            "DDRStream",
+            "DDRstream",
             f"{self.onnx_node.name}",
             template_args=[
                 (

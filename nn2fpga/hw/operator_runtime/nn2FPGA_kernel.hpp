@@ -60,6 +60,11 @@ inline void check_ort_dtype(ONNXTensorElementDataType ort, DType d) {
   }
 }
 
+inline void write_u64(volatile uint32_t *regs, off_t off, uint64_t value) {
+  wr32(regs, off, static_cast<uint32_t>(value & 0xFFFFFFFFull));
+  wr32(regs, off + 4, static_cast<uint32_t>(value >> 32));
+}
+
 // Generic FPGA runner (templated on Spec)
 template <class Spec> class FpgaRunnerT {
 public:
@@ -196,14 +201,18 @@ private:
   void build_ports() {
     in_bos_.clear();
     out_bos_.clear();
+    buffer_bos_.clear();
     in_host_ptrs_.assign(Spec::Inputs.size(), nullptr);
     out_host_ptrs_.assign(Spec::Outputs.size(), nullptr);
+    buffer_host_ptrs_.assign(Spec::Buffers.size(), nullptr);
     tx_.clear();
     rx_.clear();
     in_bos_.reserve(Spec::Inputs.size());
     out_bos_.reserve(Spec::Outputs.size());
+    buffer_bos_.reserve(Spec::Buffers.size());
     in_host_ptrs_.resize(Spec::Inputs.size());
     out_host_ptrs_.resize(Spec::Outputs.size());
+    buffer_host_ptrs_.resize(Spec::Buffers.size());
     tx_.resize(Spec::Inputs.size());
     rx_.resize(Spec::Outputs.size());
 
@@ -225,6 +234,19 @@ private:
       out_host_ptrs_[o] = out_bos_.back().map<void *>();
       rx_[o].emplace(mmio_.regs, pd.dma_off, dev_, out_bos_.back(), bpi,
                      Spec::N_MAX);
+    }
+
+    // Internal DDR-backed buffers used by HLS m_axi pointer ports.
+    for (size_t b = 0; b < Spec::Buffers.size(); ++b) {
+      const auto &bd = Spec::Buffers[b];
+      buffer_bos_.emplace_back(dev_, bd.size_bytes, 0, 0);
+      buffer_host_ptrs_[b] = buffer_bos_.back().map<void *>();
+      std::memset(buffer_host_ptrs_[b], 0, bd.size_bytes);
+      buffer_bos_.back().sync(XCL_BO_SYNC_BO_TO_DEVICE, bd.size_bytes, 0);
+
+      const uint64_t addr = buffer_bos_.back().address();
+      write_u64(mmio_.regs, Spec::ControlAxiOffset + bd.read_axi_off, addr);
+      write_u64(mmio_.regs, Spec::ControlAxiOffset + bd.write_axi_off, addr);
     }
   }
 
@@ -278,8 +300,10 @@ private:
 
   std::vector<xrt::bo> in_bos_;
   std::vector<xrt::bo> out_bos_;
+  std::vector<xrt::bo> buffer_bos_;
   std::vector<void *> in_host_ptrs_;
   std::vector<void *> out_host_ptrs_;
+  std::vector<void *> buffer_host_ptrs_;
 
   std::vector<std::optional<Mm2sSimple>> tx_;
   std::vector<std::optional<S2mmSG>> rx_;

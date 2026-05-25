@@ -79,7 +79,7 @@ def dump_tcl_script(
     return "\n".join(lines)
 
 
-def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
+def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidth) -> str:
     """Generate HLS driver code for the given model.
     Args:
         model (ModelWrapper): The model to generate HLS driver code for.
@@ -119,6 +119,22 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
         )
         kernel_function.add_argument(var)
         kernel_arguments.append(output["new_name"])
+    
+    for buffer_name, buffer in buffer_map.items():
+        read_buffer = f"{buffer_name}_read"
+        var = cpp_variable(
+            read_buffer,
+            f"{buffer['hls_type']}*",
+        )
+        kernel_function.add_argument(var)
+        kernel_arguments.append(buffer_name)
+        write_buffer = f"{buffer_name}_write"
+        var = cpp_variable(
+            write_buffer,
+            f"{buffer['hls_type']}*",
+        )        
+        kernel_function.add_argument(var)
+        kernel_arguments.append(buffer_name)
 
     # Add the function prototype, which will be called from the main function.
     cwr.add_function_prototype(kernel_function)
@@ -152,6 +168,9 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
         )
         main_function.add_code(f"{var.generate_declaration()};")
         file_arg_idx += 1
+    
+    for buffer_name, buffer in buffer_map.items():
+        main_function.add_code(f"{buffer['hls_type']} {buffer_name}[{buffer['depth']}];")
 
     # Add read from file calls for input streams
     for value in input_map.values():
@@ -287,6 +306,7 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
             top_name=ap.top_name,
             input_map=ap.input_map,
             output_map=ap.output_map,
+            buffer_map=ap.buffer_map,
             axi_bitwidth=int(board_info["axi_bitwidth"]),
         ))
 
