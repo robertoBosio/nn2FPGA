@@ -125,7 +125,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
-        function.add_code(f"#pragma ALIAS ports = {read_buffer}, {write_buffer} distance = 0")
+        function.add_code(f"#pragma HLS ALIAS ports = {read_buffer}, {write_buffer} distance = 0")
 
     stream_vars = {}
     for fifo in model.graph.value_info:
