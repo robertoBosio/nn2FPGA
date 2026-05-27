@@ -7,6 +7,7 @@ import math
 import logging
 import numpy as np
 from qonnx.custom_op.registry import getCustomOp
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout, set_custom_tensor_layout
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ def insert_comm_node(
     w_par_in,
     w_par_out,
     tensor_shape,
+    tensor_layout,
 ):
     node = helper.make_node(
         op_type,
@@ -39,6 +41,7 @@ def insert_comm_node(
     )
 
     model.set_tensor_shape(output_name, tensor_shape)
+    set_custom_tensor_layout(model, output_name, tensor_layout)
     model.graph.node.append(node)
     return output_name, ch_par_out, w_par_out
 
@@ -53,7 +56,9 @@ def adjust_bandwidth(
     target_w_par,
     producer,
     consumer,
-    tensor_shape,
+    raw_tensor_shape,
+    layout_tensor_shape,
+    tensor_layout,
     model_II,
 ):
     def adjust(par_in, par_out, axis, op_decr, op_incr, name_suffix):
@@ -71,7 +76,7 @@ def adjust_bandwidth(
 
         if middle is not None:
             divisor = middle * last_w_par if axis == "ch" else middle * last_ch_par
-            node_II = np.prod(tensor_shape) // divisor
+            node_II = np.prod(layout_tensor_shape) // divisor
             if node_II > model_II:
                 logger.info(
                     f"Bandwidth adjustment computed based on GCD may not meet the throughput requirement of the model. Switching to LCM."
@@ -91,7 +96,8 @@ def adjust_bandwidth(
                 middle if axis == "ch" else last_ch_par,
                 par_in if axis == "w" else last_w_par,
                 middle if axis == "w" else last_w_par,
-                tensor_shape,
+                raw_tensor_shape,
+                tensor_layout,
             )
             par_in = middle
 
@@ -106,17 +112,18 @@ def adjust_bandwidth(
             par_out if axis == "ch" else last_ch_par,
             par_in if axis == "w" else last_w_par,
             par_out if axis == "w" else last_w_par,
-            tensor_shape,
+            raw_tensor_shape,
+            tensor_layout,
         )
         return par_out
 
     II_chfirst_graph = max(
-        np.prod(tensor_shape) // (last_w_par * min(target_ch_par, last_ch_par)),
-        np.prod(tensor_shape) // (target_ch_par * min(last_w_par, target_w_par)),
+        np.prod(layout_tensor_shape) // (last_w_par * min(target_ch_par, last_ch_par)),
+        np.prod(layout_tensor_shape) // (target_ch_par * min(last_w_par, target_w_par)),
     )
     II_wfirst_graph = max(
-        np.prod(tensor_shape) // (last_ch_par * min(target_w_par, last_w_par)),
-        np.prod(tensor_shape) // (target_w_par * min(last_ch_par, target_ch_par)),
+        np.prod(layout_tensor_shape) // (last_ch_par * min(target_w_par, last_w_par)),
+        np.prod(layout_tensor_shape) // (target_w_par * min(last_ch_par, target_ch_par)),
     )
     if min(II_chfirst_graph, II_wfirst_graph) > model_II:
         raise ValueError(
@@ -239,28 +246,30 @@ class AdjustStreamingCommunication(Transformation):
                 last_output = output
                 last_ch_par = in_ch_par
                 last_w_par = in_w_par
-                tensor_shape = model.get_tensor_shape(output)
+                raw_tensor_shape = model.get_tensor_shape(output)
 
-                if tensor_shape is None:
+                if raw_tensor_shape is None:
                     raise ValueError(
                         f"Tensor shape for {output} is not defined. Cannot adjust bandwidth without tensor shape information."
                     )
-                tensor_shape = tensor_shape + [1] * (
-                    4 - len(tensor_shape)
-                )  # Ensure 4D shape.
+                tensor_layout = require_tensor_layout(model, output)
+                output_index = list(producer.output).index(output)
+                layout_tensor_shape = getCustomOp(producer).require_4d_output_shape(
+                    model, output_index, tensor_layout
+                )
                 if (
-                    tensor_shape[3] % out_w_par != 0
-                    or tensor_shape[3] % last_w_par != 0
+                    layout_tensor_shape[-2] % out_w_par != 0
+                    or layout_tensor_shape[-2] % last_w_par != 0
                 ):
                     raise ValueError(
-                        f"Output width {tensor_shape[3]} is not divisible by the width parallelism of producer ({last_w_par}) or consumer ({out_w_par})."
+                        f"Output width {layout_tensor_shape[-2]} is not divisible by the width parallelism of producer ({last_w_par}) or consumer ({out_w_par})."
                     )
                 if (
-                    tensor_shape[1] % out_ch_par != 0
-                    or tensor_shape[1] % last_ch_par != 0
+                    layout_tensor_shape[-1] % out_ch_par != 0
+                    or layout_tensor_shape[-1] % last_ch_par != 0
                 ):
                     raise ValueError(
-                        f"Output channels {tensor_shape[1]} is not divisible by the channel parallelism of producer ({last_ch_par}) or consumer ({out_ch_par})."
+                        f"Output channels {layout_tensor_shape[-1]} is not divisible by the channel parallelism of producer ({last_ch_par}) or consumer ({out_ch_par})."
                     )
 
                 last_output, last_ch_par, last_w_par = adjust_bandwidth(
@@ -273,7 +282,9 @@ class AdjustStreamingCommunication(Transformation):
                     out_w_par,
                     producer,
                     consumer,
-                    tensor_shape,
+                    raw_tensor_shape,
+                    layout_tensor_shape,
+                    tensor_layout,
                     model_II,
                 )
 
