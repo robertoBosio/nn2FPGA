@@ -39,8 +39,11 @@ template <typename TWord, typename TData, typename TAXIWord, size_t DIM,
           size_t BURST_SIZE, size_t AXIWORD_PAR, size_t DIM2_UNROLL, size_t DEPTH>
 class DDRstream {
 
-  static_assert(DIM % DIM2_UNROLL == 0, "DIM must be a multiple of DIM2_UNROLL");
-  static_assert(AXIWORD_PAR % DIM2_UNROLL == 0, "AXIWORD_PAR must be a multiple of DIM2_UNROLL");
+  static_assert(DIM2_UNROLL != 0 && AXIWORD_PAR != 0 &&
+                    AXIWORD_PAR % DIM2_UNROLL == 0,
+                "AXIWORD_PAR must be a non-zero multiple of DIM2_UNROLL");
+  static_assert(BURST_SIZE != 0 && DIM % BURST_SIZE == 0,
+                "DIM must be a multiple of BURST_SIZE");
 
   constexpr static size_t width = data_width_v<TData>;
 
