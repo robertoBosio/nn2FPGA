@@ -475,7 +475,7 @@ class LowerToHLS(Transformation):
             ste_model = ste_model.transform(
                 ComputeFifoDepth(
                     work_root=self.prj_root,
-                    erase=False,
+                    erase=True,
                     ste_already_done=self.ste_already_done,
                 )
             )
