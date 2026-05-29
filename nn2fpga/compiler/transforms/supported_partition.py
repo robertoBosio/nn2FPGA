@@ -58,14 +58,10 @@ def _is_const_source(model, tensor_name: str) -> bool:
     """Initializer OR produced by Constant op."""
     if tensor_name == "" or tensor_name is None:
         return False
+    if _is_initializer(model, tensor_name):
+        return True
     p = model.find_producer(tensor_name)
-    if p is None:
-        return False
-    if p.op_type == "Constant":
-        return True
-    if _is_initializer(model, p.input[0]):
-        return True
-    return False
+    return p is not None and p.op_type == "Constant"
 
 def check_attribute(
     node: onnx.NodeProto, attr_name: str, expected_value, reasons: list, optional=False
@@ -363,6 +359,9 @@ class MulHardSigmoidTimesConst(Pattern):
 
         hs = None
         const_op = None
+        logger.info(
+            f"Checking Mul inputs for HardSigmoid+Const pattern: a={a} (producer {pa.op_type if pa else 'None'}), b={b} (producer {pb.op_type if pb else 'None'})"
+        )
 
         if pa is not None and pa.op_type == "HardSigmoid" and _is_const_source(model, b):
             hs = pa
@@ -1806,6 +1805,7 @@ class SupportedPartition(Transformation):
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
         
+
         # Build adjacency list between FPGA nodes
         adj = defaultdict(list)
         for node in graph.node:
