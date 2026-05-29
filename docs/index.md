@@ -33,6 +33,8 @@ git submodule update --init --recursive
 ./run.sh
 ```
 
+For custom board images or OS versions, see [Generating a board sysroot](developer/sysroot.md).
+
 ---
 
 ## Quick Start
