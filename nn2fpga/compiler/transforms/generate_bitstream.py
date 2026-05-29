@@ -12,6 +12,24 @@ from nn2fpga.compiler.utils.board_util import read_board_info
 
 SOLUTION_NAME = "solution0"
 PROJECT_NAME = "hlsproj"
+SMARTCONNECT_MAX_SI = 16
+HP_PORTS = [0, 1, 2, 3]
+
+def split_ddr_masters(ddr_masters: list[dict]) -> list[list[dict]]:
+    """Balance DDR AXI masters across PS HP ports without exceeding SmartConnect SI limits."""
+    if len(ddr_masters) > len(HP_PORTS) * SMARTCONNECT_MAX_SI:
+        raise ValueError(
+            f"Cannot connect {len(ddr_masters)} DDR AXI masters: "
+            f"capacity is {len(HP_PORTS) * SMARTCONNECT_MAX_SI} masters "
+            f"({len(HP_PORTS)} HP ports x {SMARTCONNECT_MAX_SI} SmartConnect SI)."
+        )
+
+    groups = [[] for _ in HP_PORTS]
+    for master in ddr_masters:
+        group = min(groups, key=len)
+        group.append(master)
+
+    return groups
 
 def optimize_ram_decomp(v_file: Path):
     # Match any Verilog attribute block: (* ... *)
@@ -236,14 +254,18 @@ def vivado_tcl_script(
         buffer_master_interfaces.append((f"{buffer}_read", f"{top_name}_0/m_axi_{buffer}_read_bundle"))
         buffer_master_interfaces.append((f"{buffer}_write", f"{top_name}_0/m_axi_{buffer}_write_bundle"))
 
-    master_axi_interfaces = []
+    ddr_masters = []
     for input, _ in inputs:
-        master_axi_interfaces.append((f"{input}_maxi", f"{input}_dma/M_AXI_MM2S"))
+        ddr_masters.append({"net_name": f"{input}_maxi", "interface": f"{input}_dma/M_AXI_MM2S", "kind": "data"})
     for output, _ in outputs:
-        master_axi_interfaces.append((f"{output}_maxi", f"{output}_dma/M_AXI_S2MM"))
-    master_axi_interfaces.extend(
-        (f"{buffer}_maxi", interface) for buffer, interface in buffer_master_interfaces
+        ddr_masters.append({"net_name": f"{output}_maxi", "interface": f"{output}_dma/M_AXI_S2MM", "kind": "data"})
+    ddr_masters.extend(
+        {"net_name": f"{buffer}_maxi", "interface": interface, "kind": "data"}
+        for buffer, interface in buffer_master_interfaces
     )
+    for output, _ in outputs:
+        ddr_masters.append({"net_name": f"{output}_sg", "interface": f"{output}_dma/M_AXI_SG", "kind": "sg"})
+    hp_groups = split_ddr_masters(ddr_masters)
 
     # Add the Process System Reset
     lines.append(
@@ -282,29 +304,26 @@ def vivado_tcl_script(
     lines.append(f'create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_axilite_0')
     lines.append(f'set_property -dict [list CONFIG.NUM_SI {{{1}}} CONFIG.NUM_MI {{{axilite_mi_count}}}] [get_bd_cells smartconnect_axilite_0]')
 
-    # Add smartconnect for scatter-gather interfaces
-    lines.append(f'create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_sg_0')
-    lines.append(f'set_property -dict [list CONFIG.NUM_SI {{{len(outputs)}}} CONFIG.NUM_MI {{{1}}}] [get_bd_cells smartconnect_sg_0]')
-
-    smartconnect_hp_needed = (
-        len(master_axi_interfaces) > 3
-    )  # 4 HP ports available on Zynq UltraScale+ MPSoC, 1 is needed for smartconnector gathering SG DMAs
-    if smartconnect_hp_needed:
-        # Add smartconnect for extra AXI HP ports
-        lines.append(f'create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_hp_0')
-        lines.append(f'set_property -dict [list CONFIG.NUM_SI {{{len(master_axi_interfaces) - 2}}} CONFIG.NUM_MI {{{1}}}] [get_bd_cells smartconnect_hp_0]')
+    # Add SmartConnects for DDR AXI masters. Each SmartConnect has at most 16 SI.
+    for hp_idx, group in enumerate(hp_groups):
+        if not group:
+            continue
+        lines.append(f'create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_hp_{hp_idx}')
+        lines.append(f'set_property -dict [list CONFIG.NUM_SI {{{len(group)}}} CONFIG.NUM_MI {{{1}}}] [get_bd_cells smartconnect_hp_{hp_idx}]')
 
     # Connect clock to every block
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {top_name}_0/ap_clk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins proc_sys_reset_0/slowest_sync_clk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smartconnect_axilite_0/aclk]')
-    lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smartconnect_sg_0/aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_fpd_aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/saxihp0_fpd_aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/saxihp1_fpd_aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/saxihp2_fpd_aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/saxihp3_fpd_aclk]')
     lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins axi_gpio_id/s_axi_aclk]')
+    for hp_idx, group in enumerate(hp_groups):
+        if group:
+            lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smartconnect_hp_{hp_idx}/aclk]')
     for input, _ in inputs:
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {input}_dma/s_axi_lite_aclk]')
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {input}_dma/m_axi_mm2s_aclk]')
@@ -312,21 +331,18 @@ def vivado_tcl_script(
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {output}_dma/s_axi_lite_aclk]')
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {output}_dma/m_axi_s2mm_aclk]')
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {output}_dma/m_axi_sg_aclk]')
-    if smartconnect_hp_needed:
-        lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smartconnect_hp_0/aclk]')
-
     # Connect reset to every block
     lines.append(f'connect_bd_net -net ps_rst [get_bd_pins proc_sys_reset_0/ext_reset_in] [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0]')
     lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins {top_name}_0/ap_rst_n]')
     lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins smartconnect_axilite_0/aresetn]')
-    lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins smartconnect_sg_0/aresetn]')
     lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins axi_gpio_id/s_axi_aresetn]')
+    for hp_idx, group in enumerate(hp_groups):
+        if group:
+            lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins smartconnect_hp_{hp_idx}/aresetn]')
     for input, _ in inputs:
         lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins {input}_dma/axi_resetn]')
     for output, _ in outputs:
         lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins {output}_dma/axi_resetn]')
-    if smartconnect_hp_needed:
-        lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins smartconnect_hp_0/aresetn]')
 
     # Connect AXI lite interfaces to the smartconnect
     for i, (input, _) in enumerate(inputs):
@@ -346,23 +362,21 @@ def vivado_tcl_script(
     for output, _ in outputs:
         lines.append(f'connect_bd_intf_net -intf_net {output}_axis [get_bd_intf_pins {top_name}_0/{output}] [get_bd_intf_pins {output}_dma/S_AXIS_S2MM]')
 
-    # Connect DMA and HLS master AXI interfaces to PS DDR.
-    for i, (net_name, interface) in enumerate(master_axi_interfaces):
-        if i >= 2 and smartconnect_hp_needed:
-            lines.append(f'connect_bd_intf_net -intf_net {net_name} [get_bd_intf_pins smartconnect_hp_0/S0{i - 2}_AXI] [get_bd_intf_pins {interface}]')
-        else:
-            lines.append(f'connect_bd_intf_net -intf_net {net_name} [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP{i}_FPD] [get_bd_intf_pins {interface}]')
-
-    # Connect scatter-gather DMA to the smartconnect
-    for i, (output, _) in enumerate(outputs):
-        lines.append(f'connect_bd_intf_net -intf_net {output}_sg [get_bd_intf_pins {output}_dma/M_AXI_SG] [get_bd_intf_pins smartconnect_sg_0/S0{i}_AXI]')
-    
-    # Connect SmartConnect HP to PS using HP2
-    if smartconnect_hp_needed:
-        lines.append(f'connect_bd_intf_net -intf_net ps_hp_extra [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP2_FPD] [get_bd_intf_pins smartconnect_hp_0/M00_AXI]')
-
-    # Connect smartconnect scatter-gather to the PS using HP3
-    lines.append(f'connect_bd_intf_net -intf_net ps_sg [get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP3_FPD] [get_bd_intf_pins smartconnect_sg_0/M00_AXI]')
+    # Connect DMA and HLS master AXI interfaces to PS DDR through balanced HP groups.
+    for hp_idx, group in enumerate(hp_groups):
+        if not group:
+            continue
+        for si_idx, master in enumerate(group):
+            lines.append(
+                f'connect_bd_intf_net -intf_net {master["net_name"]} '
+                f'[get_bd_intf_pins smartconnect_hp_{hp_idx}/S{si_idx:02d}_AXI] '
+                f'[get_bd_intf_pins {master["interface"]}]'
+            )
+        lines.append(
+            f'connect_bd_intf_net -intf_net ps_hp_{hp_idx} '
+            f'[get_bd_intf_pins zynq_ultra_ps_e_0/S_AXI_HP{hp_idx}_FPD] '
+            f'[get_bd_intf_pins smartconnect_hp_{hp_idx}/M00_AXI]'
+        )
 
     # Assign addresses to the PS interfaces
     lines.append(f'assign_bd_address')
