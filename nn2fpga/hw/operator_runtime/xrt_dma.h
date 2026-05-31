@@ -99,13 +99,19 @@ public:
     if (start + nbytes > src_.size())
       throw std::runtime_error("MM2S transfer range is out of bounds.");
 
+    transfer_from_addr(src_.address() + start, nbytes);
+  }
+
+  void transfer_from_addr(uint64_t device_addr, size_t nbytes) {
+    if (!nbytes)
+      throw std::runtime_error("MM2S transfer length must be greater than 0.");
+
     // Clear status register.
     reset_and_halt_();
 
     // Program source address.
-    uint64_t sa = src_.address() + start;
-    wr32(regs_, MM2S_SA, (uint32_t)(sa & 0xFFFFFFFFull));
-    wr32(regs_, MM2S_SA_MSB, (uint32_t)(sa >> 32));
+    wr32(regs_, MM2S_SA, (uint32_t)(device_addr & 0xFFFFFFFFull));
+    wr32(regs_, MM2S_SA_MSB, (uint32_t)(device_addr >> 32));
 
     // Set the DMA in run state.
     wr32(regs_, MM2S_DMACR,

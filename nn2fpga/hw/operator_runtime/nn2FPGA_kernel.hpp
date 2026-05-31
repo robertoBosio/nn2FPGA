@@ -1,5 +1,8 @@
 #pragma once
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <fstream>
 #include <mutex>
 #include <optional>
@@ -65,6 +68,89 @@ inline void write_u64(volatile uint32_t *regs, off_t off, uint64_t value) {
   wr32(regs, off + 4, static_cast<uint32_t>(value >> 32));
 }
 
+using Nn2FpgaAllocatorLookupFn = bool (*)(const void *, size_t *, uint64_t *);
+using Nn2FpgaAllocatorSyncToDeviceFn = bool (*)(const void *, size_t, size_t);
+
+inline bool nn2fpga_zero_copy_log_enabled() {
+  static const bool enabled = []() {
+    const char *value = std::getenv("NN2FPGA_ZERO_COPY_LOG");
+    return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+  }();
+  return enabled;
+}
+
+inline bool nn2fpga_zero_copy_disabled() {
+  static const bool disabled = []() {
+    const char *value = std::getenv("NN2FPGA_DISABLE_ZERO_COPY");
+    return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+  }();
+  return disabled;
+}
+
+inline Nn2FpgaAllocatorLookupFn nn2fpga_allocator_lookup_fn() {
+  static Nn2FpgaAllocatorLookupFn fn = []() -> Nn2FpgaAllocatorLookupFn {
+    void *sym = dlsym(RTLD_DEFAULT, "nn2fpga_allocator_lookup");
+    return reinterpret_cast<Nn2FpgaAllocatorLookupFn>(sym);
+  }();
+  return fn;
+}
+
+inline Nn2FpgaAllocatorSyncToDeviceFn nn2fpga_allocator_sync_to_device_fn() {
+  static Nn2FpgaAllocatorSyncToDeviceFn fn = []() -> Nn2FpgaAllocatorSyncToDeviceFn {
+    void *sym = dlsym(RTLD_DEFAULT, "nn2fpga_allocator_sync_to_device");
+    return reinterpret_cast<Nn2FpgaAllocatorSyncToDeviceFn>(sym);
+  }();
+  return fn;
+}
+
+inline bool nn2fpga_lookup_allocator_pointer(const void *ptr, size_t *size_out,
+                                            uint64_t *device_addr_out) {
+  Nn2FpgaAllocatorLookupFn fn = nn2fpga_allocator_lookup_fn();
+  if (fn == nullptr) {
+    if (size_out != nullptr) {
+      *size_out = 0;
+    }
+    if (device_addr_out != nullptr) {
+      *device_addr_out = 0;
+    }
+    return false;
+  }
+  return fn(ptr, size_out, device_addr_out);
+}
+
+inline bool nn2fpga_sync_allocator_pointer_to_device(const void *ptr,
+                                                     size_t bytes) {
+  Nn2FpgaAllocatorSyncToDeviceFn fn = nn2fpga_allocator_sync_to_device_fn();
+  return fn != nullptr && fn(ptr, bytes, 0);
+}
+
+inline void nn2fpga_log_input_path(size_t index, bool zero_copy,
+                                   uint64_t device_addr, size_t bytes) {
+  if (!nn2fpga_zero_copy_log_enabled()) {
+    return;
+  }
+  std::fprintf(stderr,
+               "[nn2fpga zero-copy] input %zu path=%s bytes=%zu device_addr=0x%lx\n",
+               index, zero_copy ? "zero-copy" : "copy", bytes,
+               static_cast<unsigned long>(device_addr));
+}
+
+inline void nn2fpga_log_allocator_pointer(const char *kind, size_t index,
+                                          const void *ptr, size_t bytes) {
+  if (!nn2fpga_zero_copy_log_enabled()) {
+    return;
+  }
+
+  size_t alloc_size = 0;
+  uint64_t device_addr = 0;
+  const bool registered = nn2fpga_lookup_allocator_pointer(
+      ptr, &alloc_size, &device_addr);
+  std::fprintf(stderr,
+               "[nn2fpga zero-copy] %s %zu ptr=%p registered=%d alloc_size=%zu bytes=%zu device_addr=0x%lx\n",
+               kind, index, ptr, registered ? 1 : 0, alloc_size, bytes,
+               static_cast<unsigned long>(device_addr));
+}
+
 // Generic FPGA runner (templated on Spec)
 template <class Spec> class FpgaRunnerT {
 public:
@@ -106,14 +192,45 @@ public:
 
     std::lock_guard<std::mutex> lock(mtx_);
 
-    // Copy + sync inputs
+    std::vector<bool> input_zero_copy(Spec::Inputs.size(), false);
+    std::vector<uint64_t> input_device_addrs(Spec::Inputs.size(), 0);
+
+    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+      const auto &pd = Spec::Inputs[i];
+      if (pd.mode == PortMode::StaticInit)
+        continue;
+      size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
+      nn2fpga_log_allocator_pointer("input", i, in_ptrs[i], bytes);
+    }
+
+    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+      const auto &pd = Spec::Outputs[o];
+      size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
+      nn2fpga_log_allocator_pointer("output", o, out_ptrs[o], bytes);
+    }
+
+    // Prepare inputs. Allocator-backed ORT tensors can be used directly as
+    // MM2S sources; otherwise we keep the existing staging BO copy path.
     for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
       const auto &pd = Spec::Inputs[i];
       if (pd.mode == PortMode::StaticInit)
         continue; // already uploaded
       size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
-      std::memcpy(in_host_ptrs_[i], in_ptrs[i], bytes);
-      in_bos_[i].sync(XCL_BO_SYNC_BO_TO_DEVICE, bytes, 0);
+      size_t alloc_size = 0;
+      uint64_t device_addr = 0;
+      const bool can_zero_copy =
+          !nn2fpga_zero_copy_disabled() &&
+          nn2fpga_lookup_allocator_pointer(in_ptrs[i], &alloc_size,
+                                           &device_addr) &&
+          alloc_size >= bytes &&
+          nn2fpga_sync_allocator_pointer_to_device(in_ptrs[i], bytes);
+      input_zero_copy[i] = can_zero_copy;
+      input_device_addrs[i] = device_addr;
+      nn2fpga_log_input_path(i, can_zero_copy, device_addr, bytes);
+      if (!can_zero_copy) {
+        std::memcpy(in_host_ptrs_[i], in_ptrs[i], bytes);
+        in_bos_[i].sync(XCL_BO_SYNC_BO_TO_DEVICE, bytes, 0);
+      }
     }
 
     // Prepare and start S2MM for each output
@@ -127,7 +244,11 @@ public:
       if (pd.mode == PortMode::StaticInit)
         continue; // already uploaded
       size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
-      tx_[i]->transfer(bytes, 0);
+      if (input_zero_copy[i]) {
+        tx_[i]->transfer_from_addr(input_device_addrs[i], bytes);
+      } else {
+        tx_[i]->transfer(bytes, 0);
+      }
     }
 
     // Wait inputs to complete

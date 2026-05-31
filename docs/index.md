@@ -37,6 +37,8 @@ For custom board images or OS versions, see [Generating a board sysroot](develop
 
 For custom operator internals, see [Runtime operator](developer/runtime_operator.md).
 
+For the YOLOv5nu allocator and zero-copy measurements, see [Zero-copy investigation](developer/zero_copy_investigation.md).
+
 ---
 
 ## Quick Start

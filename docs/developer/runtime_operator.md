@@ -167,6 +167,8 @@ allocator-enabled C++ ORT session
 
 This mode removes the partition input staging copy when allocator lookup succeeds. If lookup or sync fails, the runtime falls back to the standard input copy path.
 
+See [Zero-Copy Investigation](zero_copy_investigation.md) for measured YOLOv5nu results, including why input zero-copy is currently kept as an experimental/diagnostic path instead of the default production path.
+
 ## Static Inputs
 
 Some input ports are marked as `PortMode::StaticInit`. These ports are not exposed as dynamic ORT inputs.
@@ -227,10 +229,24 @@ The allocator can also keep freed XRT BOs in an exact-size process-local pool in
 export NN2FPGA_ALLOCATOR_POOL=1
 ```
 
+On embedded platforms, the allocator can request cacheable XRT BO mappings:
+
+```bash
+export NN2FPGA_ALLOCATOR_CACHEABLE=1
+```
+
+This is useful when profiling allocator-backed ORT CPU tensors. If CPU-heavy ORT nodes such as `Transpose` become slow on default XRT BO mappings, cacheable BOs can determine whether the slowdown is caused by uncached or weakly cached CPU access. Keep explicit sync calls around FPGA DMA; allocator-backed partition inputs are synced before direct MM2S use.
+
 The generic C++ runner prints only setup, final output metadata, and average latency by default. Enable per-run logs with:
 
 ```bash
 export NN2FPGA_RUNNER_VERBOSE=1
+```
+
+Allocator mode disables ORT memory pattern by default because early allocator tests needed predictable allocation behavior. To test whether memory pattern reuse affects performance, enable it with:
+
+```bash
+export NN2FPGA_ENABLE_MEM_PATTERN=1
 ```
 
 Set the following environment variable to force the input copy path even when allocator lookup succeeds:
@@ -284,6 +300,12 @@ Add `--profile` to emit an ONNX Runtime profiling trace:
 ```bash
 ./run_ort_with_allocator --profile model.onnx libnn2fpga_customop.so 20
 ./run_ort_with_allocator --no-allocator --profile model.onnx libnn2fpga_customop.so 20
+```
+
+Summarize traces with:
+
+```bash
+python3 tools/summarize_ort_profile.py onnxruntime_profile_*.json --top 20
 ```
 
 The runner implements this setup:
@@ -342,6 +364,53 @@ unset NN2FPGA_DISABLE_ZERO_COPY
 ```
 
 If pooling removes most of the allocator slowdown, repeated `xrt::bo` construction/destruction is the main issue. If pooling does not help, CPU execution on XRT-mapped memory or cache synchronization is likely the dominant cost.
+
+To test whether ORT memory pattern planning affects allocator mode, run:
+
+```bash
+NN2FPGA_DISABLE_ZERO_COPY=1 \
+NN2FPGA_ALLOCATOR_POOL=1 \
+NN2FPGA_ALLOCATOR_STATS=1 \
+NN2FPGA_ENABLE_MEM_PATTERN=1 \
+  ./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
+```
+
+To test whether default XRT BO mappings are responsible for CPU-kernel slowdown, repeat the allocator profiling run with cacheable BOs:
+
+```bash
+NN2FPGA_DISABLE_ZERO_COPY=1 \
+NN2FPGA_ALLOCATOR_CACHEABLE=1 \
+NN2FPGA_ALLOCATOR_POOL=1 \
+NN2FPGA_ALLOCATOR_STATS=1 \
+NN2FPGA_ENABLE_MEM_PATTERN=1 \
+  ./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
+```
+
+Then collect a comparable trace:
+
+```bash
+NN2FPGA_DISABLE_ZERO_COPY=1 \
+NN2FPGA_ALLOCATOR_CACHEABLE=1 \
+NN2FPGA_ALLOCATOR_POOL=1 \
+NN2FPGA_ENABLE_MEM_PATTERN=1 \
+  ./run_ort_with_allocator --profile nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
+```
+
+If nodes such as `global_in_transpose` remain much slower than the `--no-allocator` baseline, global XRT-backed allocation is not a viable general-purpose ORT allocator and selective boundary allocation or fused preprocessing should be preferred.
+
+To identify which nodes become slower with allocator-backed CPU tensors, collect comparable traces:
+
+```bash
+./run_ort_with_allocator --no-allocator --profile \
+  nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
+
+NN2FPGA_DISABLE_ZERO_COPY=1 \
+NN2FPGA_ALLOCATOR_POOL=1 \
+NN2FPGA_ENABLE_MEM_PATTERN=1 \
+  ./run_ort_with_allocator --profile nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
+
+python3 summarize_ort_profile.py nn2fpga_runner_profile*.json --top 30
+```
 
 ## Limitations
 
