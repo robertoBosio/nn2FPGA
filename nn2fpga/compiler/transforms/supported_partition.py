@@ -61,7 +61,13 @@ def _is_const_source(model, tensor_name: str) -> bool:
     if _is_initializer(model, tensor_name):
         return True
     p = model.find_producer(tensor_name)
-    return p is not None and p.op_type == "Constant"
+    if p is None:
+        return False
+    if p.op_type == "Constant":
+        return True
+    if p.op_type == "Quant" or p.op_type == "IntQuant":
+        # Check if all inputs to this Quant node are initializers (params quant) or not (act quant)
+        return is_constant_input_node(model, p)
 
 def check_attribute(
     node: onnx.NodeProto, attr_name: str, expected_value, reasons: list, optional=False

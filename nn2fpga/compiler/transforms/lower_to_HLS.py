@@ -283,7 +283,7 @@ def _annotate_pipeline_depths(hls_model: ModelWrapper, ste_model: ModelWrapper, 
                 "StreamingAdd",
                 "BandwidthAdjustIncreaseStreams",
                 "BandwidthAdjustDecreaseStreams",
-                "TensorDuplicator",
+                "StreamingTensorDuplicator",
             ]:
                 if read_op:
                     read_skew += 1

@@ -1,6 +1,6 @@
 #include "StreamingConstMul.hpp"
 #include "StreamingSoftmax.hpp"
-#include "TensorDuplicator.hpp"
+#include "StreamingTensorDuplicator.hpp"
 #include "YoloAttention/QKMatMul.hpp"
 #include "YoloAttention/SplitReshapeQKV.hpp"
 #include "YoloAttention/ReshapeV.hpp"
@@ -46,7 +46,7 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
       split_reshape;
   split_reshape.run<0>(input_data, stream_q, stream_k, stream_v);
 
-  TensorDuplicator<
+  StreamingTensorDuplicator<
       test_config::TSplitWord,
       test_config::DIM_V,
       test_config::DIM_SEQ_VP,
@@ -56,7 +56,7 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
       tensor_duplicator_head0;
   tensor_duplicator_head0.run<1>(&stream_v[0], &stream_v_out[0], &stream_v_copy[0]);
   
-  TensorDuplicator<
+  StreamingTensorDuplicator<
       test_config::TSplitWord,
       test_config::DIM_V,
       test_config::DIM_SEQ_VP,

@@ -725,7 +725,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         )
         hls_tag += 1
 
-        # TensorDuplicator first head for V stream
+        # StreamingTensorDuplicator first head for V stream
         TensorDuplicator0_output_names = ["stream_v_out_0_", "stream_v_copy_0_"]
         for output in TensorDuplicator0_output_names:
             fifos[output] = TensorFifo(
@@ -737,7 +737,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         TensorDuplicator0_step_call = "tensorduplicator_head0.step(&stream_v[0], &stream_v_out[0], &stream_v_copy[0])"
 
         TensorDuplicator0 = cpp_object(
-            f"TensorDuplicator",
+            f"StreamingTensorDuplicator",
             f"tensorduplicator_head0",
             template_args=[
                 (f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
@@ -755,7 +755,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 outputs=TensorDuplicator0_output_names,
                 name=f"tensorduplicator_head0",
                 domain="nn2fpga.compiler.custom_op",
-                original_op_type="TensorDuplicator",
+                original_op_type="StreamingTensorDuplicator",
                 hls_tag=hls_tag,
                 hls_object_name=f"tensorduplicator_head0",
                 hls_variable_declarations="",
@@ -766,7 +766,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         )
         hls_tag += 1
 
-        # TensorDuplicator second head for V stream
+        # StreamingTensorDuplicator second head for V stream
         TensorDuplicator1_output_names = ["stream_v_out_1_", "stream_v_copy_1_"]
         for output in TensorDuplicator1_output_names:
             fifos[output] = TensorFifo(
@@ -778,7 +778,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         TensorDuplicator1_step_call = "tensorduplicator_head1.step(&stream_v[1], &stream_v_out[1], &stream_v_copy[1])"
 
         TensorDuplicator1 = cpp_object(
-            f"TensorDuplicator",
+            f"StreamingTensorDuplicator",
             f"tensorduplicator_head1",
             template_args=[
                 (f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('in_word_array'))}", "TSplitWord"),
@@ -796,7 +796,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 outputs=TensorDuplicator1_output_names,
                 name=f"tensorduplicator_head1",
                 domain="nn2fpga.compiler.custom_op",
-                original_op_type="TensorDuplicator",
+                original_op_type="StreamingTensorDuplicator",
                 hls_tag=hls_tag,
                 hls_object_name=f"tensorduplicator_head1",
                 hls_variable_declarations="",
@@ -1279,7 +1279,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in VPMatMul0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(VPMatMul_output_quant, 1)}",
                 n_array=2, 
             )
         VPMatMul0_run_call = f"matmulvp_head0.run<{hls_tag}>(&stream_v_transposed[0], &stream_p[0], &stream_y[0])"
@@ -1327,7 +1327,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in VPMatMul1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(VPMatMul_output_quant, 1)}",
                 n_array=2, 
             )
         VPMatMul1_run_call = f"matmulvp_head1.run<{hls_tag}>(&stream_v_transposed[1], &stream_p[1], &stream_y[1])"
@@ -1371,7 +1371,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         hls_tag += 1
 
         # Reshape for V
-        output_v_quant = get_custom_tensor_datatype(model, self.onnx_node.output[1])
+        output_v_quant = require_tensor_type(model, self.onnx_node.output[1])
         if output_v_quant is None:
             raise ValueError(
                 f"Tensor quantization for output '{self.onnx_node.output[1]}' not found in model."
@@ -1399,12 +1399,12 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 ),
                 (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TSplit"),
                 (
-                    f"{get_word_type(SplitReshapeQKV_output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_v_quant, self.get_nodeattr('out_word_array'))}",
                     "TReshapeWord",
                 ),
-                (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TReshape"),
+                (f"{output_v_quant.get_hls_data_type()}", "TReshape"),
                 (
-                    f"DequantQuantEqual<{SplitReshapeQKV_output_quant.get_hls_data_type()}>",
+                    f"{self.__get_shift_quantizer(SplitReshapeQKV_output_quant, output_v_quant)}",
                     "Quantizer",
                 ),
                 (f"2", "IN_HEADS"),
@@ -1435,7 +1435,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         hls_tag += 1
 
         # Reshape for Y
-        output_y_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
+        output_y_quant = require_tensor_type(model, self.onnx_node.output[0])
         if output_y_quant is None:
             raise ValueError(
                 f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
@@ -1468,7 +1468,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                     "TOutputWord",
                 ),
                 (f"{output_y_quant.get_hls_data_type()}", "TOutput"),
-                (f"DequantQuantEqual<{output_y_quant.get_hls_data_type()}>",
+                (f"{self.__get_shift_quantizer(VPMatMul_output_quant, output_y_quant)}",
                     "Quantizer"),
                 (f"2", "IN_HEADS"),
                 (f"64", "IN_DIM"),

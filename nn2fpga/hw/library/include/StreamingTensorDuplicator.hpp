@@ -5,7 +5,7 @@
 #include <cstddef>
 
 /**
- * @class TensorDuplicator
+ * @class StreamingTensorDuplicator
  * @brief Implements a tensor duplicator for HWC-formatted data.
  *
  * This class duplicates a tensor in a streaming fashion.

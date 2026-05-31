@@ -35,6 +35,8 @@ git submodule update --init --recursive
 
 For custom board images or OS versions, see [Generating a board sysroot](developer/sysroot.md).
 
+For custom operator internals, see [Runtime operator](developer/runtime_operator.md).
+
 ---
 
 ## Quick Start

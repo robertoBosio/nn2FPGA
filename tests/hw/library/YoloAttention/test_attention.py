@@ -3,13 +3,13 @@ import onnxruntime as ort
 import csnake
 import onnx
 from onnx import TensorProto, helper
-from tests.base_hls_test import BaseHLSTest
+from tests.hw.library.base_hls_test import BaseHLSTest
 
 class TestQKMatMul(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return ["YoloAttention/QKMatMul", "YoloAttention/SplitReshape", "StreamingSoftmax", "YoloAttention/VPMatMul", "StreamingConstMul"]
+        return ["YoloAttention/QKMatMul", "YoloAttention/SplitReshapeQKV", "StreamingSoftmax", "YoloAttention/VPMatMul", "StreamingConstMul"]
 
     @property
     def unit_filename(self):
