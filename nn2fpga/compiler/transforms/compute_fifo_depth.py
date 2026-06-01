@@ -406,12 +406,12 @@ class ComputeFifoDepth(Transformation):
 
         # Optionally erase the working directory.
         if self.erase:
-            logger.info(f"Erasing working directory {self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')} to save space.")
+            logger.info(f"Erasing working directory {self.work_root}/proj_{model.get_metadata_prop('top_name')} to save space.")
             subprocess.run(
                 [
                     "rm",
                     "-rf",
-                    f"{self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')}",
+                    f"{self.work_root}/proj_{model.get_metadata_prop('top_name')}",
                 ],
                 check=True,
             )
