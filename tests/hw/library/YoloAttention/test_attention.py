@@ -9,7 +9,7 @@ class TestQKMatMul(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return ["YoloAttention/QKMatMul", "YoloAttention/SplitReshapeQKV", "StreamingSoftmax", "YoloAttention/VPMatMul", "StreamingConstMul"]
+        return ["YoloAttention/QKMatMul", "YoloAttention/SplitReshapeQKV", "StreamingSoftmax", "YoloAttention/VPMatMul", "StreamingConstMul", "BandwidthAdjust"]
 
     @property
     def unit_filename(self):
@@ -525,6 +525,7 @@ class TestQKMatMul(BaseHLSTest):
 
         # Conservative serial testbench parallelism
         reduce_par = 1
+        vp_reduce_par = 2
         ch_par = 1
         w_par = 1
         heads_par = 1
@@ -581,6 +582,7 @@ class TestQKMatMul(BaseHLSTest):
 
         # Parallelism
         cwr.add_line(f"const int REDUCE_PAR = {reduce_par};")
+        cwr.add_line(f"const int VP_REDUCE_PAR = {vp_reduce_par};")
         cwr.add_line(f"const int CH_PAR = {ch_par};")
         cwr.add_line(f"const int W_PAR = {w_par};")
         cwr.add_line(f"const int HEADS_PAR = {heads_par};")
@@ -618,6 +620,8 @@ class TestQKMatMul(BaseHLSTest):
         cwr.add_line("using TQKWord = std::array<TQK, 1>;")
         cwr.add_line("using TQKScaledWord = std::array<TQKScaled, 1>;")
         cwr.add_line("using TSoftmaxWord = std::array<TSoftmax, 1>;")
+        cwr.add_line("using TVPackedWord = std::array<TSplit, VP_REDUCE_PAR>;")
+        cwr.add_line("using TPPackedWord = std::array<TSoftmax, VP_REDUCE_PAR>;")
         cwr.add_line("using TYOutputWord = std::array<TYOutput, 1>;")
 
         # Accumulator / LUT types

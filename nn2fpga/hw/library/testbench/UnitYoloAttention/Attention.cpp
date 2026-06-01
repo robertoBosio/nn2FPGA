@@ -1,5 +1,6 @@
 #include "StreamingConstMul.hpp"
 #include "StreamingSoftmax.hpp"
+#include "BandwidthAdjust.hpp"
 #include "StreamingTensorDuplicator.hpp"
 #include "YoloAttention/QKMatMul.hpp"
 #include "YoloAttention/SplitReshapeQKV.hpp"
@@ -29,6 +30,8 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
   hls::stream<test_config::TQKWord> stream_qk[2];
   hls::stream<test_config::TQKScaledWord> stream_qkscaled[2];
   hls::stream<test_config::TSoftmaxWord> stream_softmax[2];
+  hls::stream<test_config::TVPackedWord> stream_v_transposed_packed[2];
+  hls::stream<test_config::TPPackedWord> stream_softmax_packed[2];
   hls::stream<test_config::TYOutputWord> stream_attention_out[2];
   hls::stream<test_config::TSplitWord> stream_v_transposed[2];
   hls::stream<test_config::TSplitWord> stream_v_out[2];
@@ -184,27 +187,74 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
       transpose_v_head1;
   transpose_v_head1.run<10>(&stream_v_copy[1], &stream_v_transposed[1]);
 
-  VPMatMul<
+  BandwidthAdjustIncreaseWord<
       test_config::TSplitWord,
       test_config::TSplit,
-      test_config::TSoftmaxWord,
-      test_config::TSoftmax,
-      test_config::TYOutputWord,
-      test_config::TYOutput,
-      test_config::TAccVP,
-      test_config::VPQuantizer,
+      test_config::TVPackedWord,
+      test_config::TSplit,
+      DequantQuantEqual<test_config::TSplit>,
       1,
       test_config::DIM_V,
+      test_config::DIM_SEQ_VP,
+      1,
+      1,
+      1,
+      test_config::VP_REDUCE_PAR>
+      pack_v_head0;
+  pack_v_head0.run<11>(&stream_v_transposed[0], &stream_v_transposed_packed[0]);
+
+  BandwidthAdjustIncreaseWord<
+      test_config::TSplitWord,
+      test_config::TSplit,
+      test_config::TVPackedWord,
+      test_config::TSplit,
+      DequantQuantEqual<test_config::TSplit>,
+      1,
+      test_config::DIM_V,
+      test_config::DIM_SEQ_VP,
+      1,
+      1,
+      1,
+      test_config::VP_REDUCE_PAR>
+      pack_v_head1;
+  pack_v_head1.run<12>(&stream_v_transposed[1], &stream_v_transposed_packed[1]);
+
+  BandwidthAdjustIncreaseWord<
+      test_config::TSoftmaxWord,
+      test_config::TSoftmax,
+      test_config::TPPackedWord,
+      test_config::TSoftmax,
+      DequantQuantEqual<test_config::TSoftmax>,
+      1,
       test_config::DIM_P,
       test_config::DIM_SEQ_VP,
-      test_config::REDUCE_PAR>
-      matmulvp_head0;
-  matmulvp_head0.run<11>(&stream_v_transposed[0], &stream_softmax[0], &stream_attention_out[0]);
+      1,
+      1,
+      1,
+      test_config::VP_REDUCE_PAR>
+      pack_softmax_head0;
+  pack_softmax_head0.run<13>(&stream_softmax[0], &stream_softmax_packed[0]);
+
+  BandwidthAdjustIncreaseWord<
+      test_config::TSoftmaxWord,
+      test_config::TSoftmax,
+      test_config::TPPackedWord,
+      test_config::TSoftmax,
+      DequantQuantEqual<test_config::TSoftmax>,
+      1,
+      test_config::DIM_P,
+      test_config::DIM_SEQ_VP,
+      1,
+      1,
+      1,
+      test_config::VP_REDUCE_PAR>
+      pack_softmax_head1;
+  pack_softmax_head1.run<14>(&stream_softmax[1], &stream_softmax_packed[1]);
 
   VPMatMul<
-      test_config::TSplitWord,
+      test_config::TVPackedWord,
       test_config::TSplit,
-      test_config::TSoftmaxWord,
+      test_config::TPPackedWord,
       test_config::TSoftmax,
       test_config::TYOutputWord,
       test_config::TYOutput,
@@ -214,23 +264,40 @@ void wrap_run(hls::stream<test_config::TInputWord> input_data[1],
       test_config::DIM_V,
       test_config::DIM_P,
       test_config::DIM_SEQ_VP,
-      test_config::REDUCE_PAR>
+      test_config::VP_REDUCE_PAR>
+      matmulvp_head0;
+  matmulvp_head0.run<15>(&stream_v_transposed_packed[0], &stream_softmax_packed[0], &stream_attention_out[0]);
+
+  VPMatMul<
+      test_config::TVPackedWord,
+      test_config::TSplit,
+      test_config::TPPackedWord,
+      test_config::TSoftmax,
+      test_config::TYOutputWord,
+      test_config::TYOutput,
+      test_config::TAccVP,
+      test_config::VPQuantizer,
+      1,
+      test_config::DIM_V,
+      test_config::DIM_P,
+      test_config::DIM_SEQ_VP,
+      test_config::VP_REDUCE_PAR>
       matmulvp_head1;
-  matmulvp_head1.run<12>(&stream_v_transposed[1], &stream_softmax[1], &stream_attention_out[1]);
+  matmulvp_head1.run<16>(&stream_v_transposed_packed[1], &stream_softmax_packed[1], &stream_attention_out[1]);
 
   ReshapeV<test_config::TSplitWord, test_config::TSplit,
            test_config::TSplitWord, test_config::TSplit,
            DequantQuantEqual<test_config::TSplit>, 2, 64, 400, 20, 20, 128,
            test_config::REDUCE_PAR>
       reshape_v;
-  reshape_v.run<13>(stream_v_out, o_v_data);
+  reshape_v.run<17>(stream_v_out, o_v_data);
 
   ReshapeV<test_config::TYOutputWord, test_config::TYOutput,
            test_config::TYOutputWord, test_config::TYOutput,
            DequantQuantEqual<test_config::TYOutput>, 2, 64, 400, 20, 20, 128,
            test_config::REDUCE_PAR>
       reshape_y;
-  reshape_y.run<14>(stream_attention_out, o_matmul_data);
+  reshape_y.run<18>(stream_attention_out, o_matmul_data);
 }
 
 bool test_run() {
