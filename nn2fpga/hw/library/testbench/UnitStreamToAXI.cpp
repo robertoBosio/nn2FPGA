@@ -55,6 +55,16 @@ bool test_run() {
   // Read and check output
   bool flag = true;
   size_t data_in_word = 0;
+  size_t output_word_index = 0;
+  constexpr size_t total_elems = test_config::DIM0 * test_config::DIM1 *
+                                 test_config::DIM2;
+  constexpr size_t output_words =
+      (total_elems + test_config::DATA_PER_WORD - 1) /
+      test_config::DATA_PER_WORD;
+  constexpr size_t last_word_elems =
+      total_elems - ((output_words - 1) * test_config::DATA_PER_WORD);
+  constexpr size_t last_word_bytes =
+      last_word_elems * data_width_v<test_config::TInput> / 8;
   test_config::TOutputWord output_word;
   for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
        i_dim01++) {
@@ -62,6 +72,26 @@ bool test_run() {
       if (data_in_word == 0) {
         // Read the output structure from the stream
         output_word = out_stream.read();
+        bool expected_last = output_word_index == output_words - 1;
+        decltype(output_word.keep) expected_keep = 0;
+        if (expected_last) {
+          for (size_t i = 0; i < last_word_bytes; i++) {
+            expected_keep[i] = 1;
+          }
+        } else {
+          expected_keep = ~expected_keep;
+        }
+
+        flag &= (output_word.last == expected_last);
+        flag &= (output_word.keep == expected_keep);
+        if (output_word.last != expected_last || output_word.keep != expected_keep) {
+          std::cout << "AXI metadata mismatch at word " << output_word_index
+                    << " Expected last: " << expected_last
+                    << ", got: " << output_word.last
+                    << " Expected keep: " << expected_keep
+                    << ", got: " << output_word.keep << std::endl;
+        }
+        output_word_index++;
       }
 
       constexpr size_t W = data_width_v<test_config::TInput>;
@@ -85,6 +115,9 @@ bool test_run() {
       }
     }
   }
+
+  flag &= (output_word_index == output_words);
+  flag &= out_stream.empty();
 
   return flag;
 }

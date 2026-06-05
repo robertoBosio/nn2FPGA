@@ -60,11 +60,20 @@ template <typename TInputWord, typename TInput,
           size_t DATA_PER_WORD, size_t DIM0, size_t DIM1, size_t DIM2,
           size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamToAXI {
+  static constexpr size_t TOTAL_ELEMS = DIM0 * DIM1 * DIM2;
   static constexpr size_t READS =
-      DIM0 * DIM1 * DIM2 / (DIM1_UNROLL * DIM2_UNROLL);
+      TOTAL_ELEMS / (DIM1_UNROLL * DIM2_UNROLL);
+  static constexpr size_t OUTPUT_WORDS =
+      (TOTAL_ELEMS + DATA_PER_WORD - 1) / DATA_PER_WORD;
+  static constexpr size_t LAST_WORD_ELEMS =
+      TOTAL_ELEMS - ((OUTPUT_WORDS - 1) * DATA_PER_WORD);
+  static constexpr size_t LAST_WORD_BYTES =
+      LAST_WORD_ELEMS * data_width_v<TInput> / 8;
   static_assert(
       DATA_PER_WORD >= (DIM1_UNROLL * DIM2_UNROLL),
       "DATA_PER_WORD must be bigger or equal to DIM2_UNROLL * DIM1_UNROLL");
+  static_assert(TOTAL_ELEMS % (DIM1_UNROLL * DIM2_UNROLL) == 0,
+                "Total elements must be divisible by input parallelism");
   static_assert(DIM1_UNROLL == 1 || DIM2 == DIM2_UNROLL,
                 "DIM2 must be equal to DIM2_UNROLL when DIM1_UNROLL > 1");
   static_assert(DIM2 % DIM2_UNROLL == 0,
@@ -83,6 +92,7 @@ class StreamToAXI {
 
     // Loop iteration index for the input word.
     size_t i_input_word = 0;
+    size_t i_output_word = 0;
     ActorStatus actor_status{1, 1};
     PipelineDelayBuffer<TOutputWord> delayed_output;
     bool initialized = false;
@@ -112,14 +122,15 @@ public:
     ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
     ap_uint<1> tail = 0;
     ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> size = 0;
+    size_t i_output_word = 0;
 
     // Loop through the input height and width.
   STREAM_TO_NHWC_MAINLOOP:
     for (size_t i_input_word = 0; i_input_word < ITER; i_input_word++) {
 #pragma HLS pipeline II = 1
       StreamToAXI::pipeline_body(input_data_stream, output_data_stream,
-                                 circular_buffer, head, size, tail,
-                                 i_input_word);
+                                  circular_buffer, head, size, tail,
+                                  i_input_word, i_output_word);
     }
   }
 
@@ -150,11 +161,12 @@ public:
     if (firing_condition) {
       hls::stream<TOutputWord> instant_output_stream;
       StreamToAXI::pipeline_body(input_data_stream, instant_output_stream,
-                                 st.circular_buffer, st.head, st.size, st.tail,
-                                 st.i_input_word);
+                                  st.circular_buffer, st.head, st.size, st.tail,
+                                  st.i_input_word, st.i_output_word);
       st.i_input_word++;
       if (st.i_input_word >= ITER) {
         st.i_input_word = 0;
+        st.i_output_word = 0;
       }
 
       st.actor_status.fire(); // Fire the actor status.
@@ -191,7 +203,8 @@ private:
                 TInput circular_buffer[DATA_PER_WORD * 2],
                 ap_uint<bits_for(DATA_PER_WORD * 2)> &head,
                 ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> &size,
-                ap_uint<1> &tail_bank, size_t i_input_word) {
+                ap_uint<1> &tail_bank, size_t i_input_word,
+                size_t &i_output_word) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.
 
@@ -208,9 +221,9 @@ private:
       size += DIM1_UNROLL * DIM2_UNROLL;
     }
 
-    // Check if we have enough data to form an output word or if we are at the
-    // end of the tensor.
-    if (size >= DATA_PER_WORD || end_of_tensor) {
+    // Check if we have enough data to form an output word or a final partial
+    // word after all input data has been consumed.
+    if (size >= DATA_PER_WORD || (end_of_tensor && size > 0)) {
       ap_uint<bits_for(DATA_PER_WORD * 2)> tail = tail_bank ? DATA_PER_WORD : 0;
 
       // If we have enough data to form an output word, proceed with packing.
@@ -220,19 +233,22 @@ private:
             get_raw_bits(quantizer(circular_buffer[tail + i]));
       }
 
-      if (end_of_tensor) {
-        size_t valid_bytes = size * data_width_v<TInput> / 8;
-        output_data.keep = (1 << valid_bytes) - 1;
-        // tail_bank = 0; // Reset the tail bank at the end of the tensor.
-        // size = 0; // Reset the size at the end of the tensor.
-        // head = 0; // Reset the head at the end of the tensor.
+      const bool last_word = (i_output_word == OUTPUT_WORDS - 1);
+      if (last_word) {
         output_data.last = true;
+        output_data.keep = 0;
+        for (size_t i = 0; i < LAST_WORD_BYTES; i++) {
+#pragma HLS unroll
+          output_data.keep[i] = 1;
+        }
       } else {
-        tail_bank ^= ap_uint<1>(1);
-        size -= DATA_PER_WORD;
         output_data.last = false;
         output_data.keep = ~0; // Set all bytes as valid.
       }
+
+      tail_bank ^= ap_uint<1>(1);
+      size -= last_word ? LAST_WORD_ELEMS : DATA_PER_WORD;
+      i_output_word++;
 
       output_data.strb = output_data.keep;
       output_data_stream.write(output_data);
