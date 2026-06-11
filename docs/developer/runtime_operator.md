@@ -167,6 +167,8 @@ allocator-enabled C++ ORT session
 
 This mode removes the partition input staging copy when allocator lookup succeeds. If lookup or sync fails, the runtime falls back to the standard input copy path.
 
+See [Zero-Copy Investigation](zero_copy_investigation.md) for measured YOLOv5nu results and replication notes for the archived `zero-copy-investigation-2026-05` branch.
+
 ## Static Inputs
 
 Some input ports are marked as `PortMode::StaticInit`. These ports are not exposed as dynamic ORT inputs.

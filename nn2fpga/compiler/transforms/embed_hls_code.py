@@ -27,6 +27,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
     # Include sections for HLS
     cwr.include("ap_int.h")
+    cwr.include("ap_float.h")
     cwr.include("hls_stream.h")
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")

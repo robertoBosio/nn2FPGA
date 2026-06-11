@@ -1,6 +1,7 @@
 import os
 import logging
 import numpy as np
+import copy
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import (
@@ -10,7 +11,6 @@ from qonnx.transformation.general import (
 )
 import nn2fpga.compiler.transforms as transformation
 from nn2fpga.compiler.utils.compare_models import test_transformation_equivalence
-
 
 def nn2fpga_compile(config_dict: dict):
     """Compile an ONNX model for FPGA using nn2FPGA flow.
@@ -112,6 +112,24 @@ def nn2fpga_compile(config_dict: dict):
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertStreamingLineBuffer())
     nn2fpga_model = nn2fpga_model.transform(transformation.InferQuant())
 
+    if config_dict["steps"].get("GenerateLightningSim", False):
+        lightning_source_model = copy.deepcopy(nn2fpga_model)
+        lightning_source_model = lightning_source_model.transform(GiveUniqueNodeNames())
+        lightning_source_model = lightning_source_model.transform(GiveReadableTensorNames())
+        lightning_source_model = lightning_source_model.transform(transformation.InferLayouts())
+        lightning_source_model.save("lightningsim_model.onnx")
+        lightning_hls_model = lightning_source_model.transform(
+            transformation.LowerToHLS(
+                infer_fifo_depth=False,
+                optimize_fifo_storage=False,
+                prj_root=config_dict["prj_root"],
+            )
+        )
+        lightning_hls_model.save("lightningsim_hls_model.onnx")
+        lightning_hls_model = lightning_hls_model.transform(
+            transformation.GenerateLightningSimCode(work_root=config_dict["prj_root"])
+        )
+
     if config_dict["steps"].get("AddStreamingParams", True):
         nn2fpga_model = nn2fpga_model.transform(
             transformation.AddStreamingParams(nn2fpga_root=config_dict["prj_root"])
@@ -139,6 +157,7 @@ def nn2fpga_compile(config_dict: dict):
         logging.error(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
         raise FileNotFoundError(f"Wrapper model file '{wrapper_model_dir}' does not exist.")
     hls_model.save("hls_model.onnx")
+    # hls_model = ModelWrapper("hls_model.onnx")
     model = ModelWrapper("wrapper_model.onnx")
 
     # Embed HLS code into the model.
@@ -163,9 +182,11 @@ def nn2fpga_compile(config_dict: dict):
                 work_dir=config_dict["prj_root"],
                 already_exported=False,
                 only_synthesize=False,
+                vivado_already_done=False,
             )
         )
         model.save("bitstream_generated.onnx")
+        model = ModelWrapper("bitstream_generated.onnx")
 
         # Deploy converted model and original model.
         model = model.transform(

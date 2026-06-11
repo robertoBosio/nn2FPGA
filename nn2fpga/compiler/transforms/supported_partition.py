@@ -1789,6 +1789,37 @@ class SupportedPartition(Transformation):
 
         return violations
 
+    def _largest_connected_component(self, model: ModelWrapper, node_set: Set[str]) -> Set[str]:
+        """Return the largest connected component within node_set (undirected)."""
+        graph = model.graph
+        adj = defaultdict(list)
+        for node in graph.node:
+            if node.name not in node_set:
+                continue
+            for succ in model.find_direct_successors(node) or []:
+                if succ.name in node_set:
+                    adj[node.name].append(succ.name)
+                    adj[succ.name].append(node.name)
+
+        visited = set()
+        components = []
+        for node_name in node_set:
+            if node_name in visited:
+                continue
+            component = set()
+            queue = deque([node_name])
+            visited.add(node_name)
+            while queue:
+                curr = queue.popleft()
+                component.add(curr)
+                for neighbor in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            components.append(component)
+
+        return max(components, key=len, default=set())
+
     def __find_largest_connected_component(self, model: ModelWrapper) -> list:
         
         graph = model.graph
@@ -1810,46 +1841,18 @@ class SupportedPartition(Transformation):
 
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
-        
 
-        # Build adjacency list between FPGA nodes
-        adj = defaultdict(list)
-        for node in graph.node:
-            if node.name not in fpga_nodes:
-                continue
-            for succ in model.find_direct_successors(node) or []:
-                if succ.name in fpga_nodes:
-                    adj[node.name].append(succ.name)
-                    adj[succ.name].append(node.name)  # undirected edge
-
-        # Find connected components using BFS
-        visited = set()
-        components = []
-
-        for node_name in fpga_nodes:
-            if node_name in visited:
-                continue
-            component = set()
-            queue = deque([node_name])
-            visited.add(node_name)
-
-            while queue:
-                curr = queue.popleft()
-                component.add(curr)
-                for neighbor in adj[curr]:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append(neighbor)
-
-            components.append(component)
-
-        # Select the largest component
-        largest_component = max(components, key=len, default=set())
-        logger.info(f"Found {len(components)} connected components among FPGA-supported nodes.")
-        logger.info(f"Largest component has {len(largest_component)} nodes.")
+        largest_component = self._largest_connected_component(model, fpga_nodes)
+        logger.info(f"Found {len(fpga_nodes)} FPGA-supported nodes.")
+        logger.info(f"Largest connected component has {len(largest_component)} nodes.")
         
         # Solve convexity violations by removing re-entry destination nodes until no violations remain
         subgraph = self.__repair_convexity_remove_reentries(model, largest_component)
+
+        # Re-run connected component analysis to drop orphaned nodes
+        # (ancillary nodes like Constant ops or param quants whose consumer was removed)
+        subgraph = self._largest_connected_component(model, subgraph)
+        logger.info(f"After convexity repair, largest component has {len(subgraph)} nodes.")
 
         return subgraph
 

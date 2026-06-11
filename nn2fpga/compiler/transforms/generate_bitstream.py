@@ -4,6 +4,7 @@ import base64
 import os
 import subprocess
 import re
+import logging
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -14,6 +15,7 @@ SOLUTION_NAME = "solution0"
 PROJECT_NAME = "hlsproj"
 SMARTCONNECT_MAX_SI = 16
 HP_PORTS = [0, 1, 2, 3]
+logger = logging.getLogger(__name__)
 
 def split_ddr_masters(ddr_masters: list[dict]) -> list[list[dict]]:
     """Balance DDR AXI masters across PS HP ports without exceeding SmartConnect SI limits."""
@@ -453,12 +455,14 @@ class GenerateBitstream(Transformation):
         axilite_dma_window: int = 4096,
         only_synthesize: bool = False,
         already_exported: bool = False,
+        vivado_already_done: bool = False,
     ):
         super().__init__()
         self.work_dir = work_dir
         self.erase = erase
         self.only_synthesize = only_synthesize
         self.already_exported = already_exported
+        self.vivado_already_done = vivado_already_done
 
         # Check axilite_dma_window is a power of two
         if axilite_dma_window & (axilite_dma_window - 1) != 0:
@@ -577,33 +581,36 @@ class GenerateBitstream(Transformation):
             axi_offset += self.axilite_dma_window
         model.set_metadata_prop("control_axi_offset", str(control_axi_offset or 0))
 
-        # Write the Vivado block design.
-        with open(f"{work_dir}/vivado.tcl", "w") as f:
-            f.write(
-                vivado_tcl_script(
-                    work_dir=work_dir,
-                    top_name=top_name,
-                    part_name=part_name,
-                    board_part_name=board_part_name,
-                    frequency=frequency,
-                    hls_version=hls_version,
-                    axilite_base_addr=axilite_address,
-                    axilite_dma_window=self.axilite_dma_window,
-                    interface_width=interface_width,
-                    design_id=design_id,
-                    inputs=input_list,
-                    outputs=output_list,
-                    buffers=buffer_list,
-                    control_axi_offset=control_axi_offset,
+        if self.vivado_already_done:
+            logger.info("Skipping Vivado synthesis/implementation because vivado_already_done=True.")
+        else:
+            # Write the Vivado block design.
+            with open(f"{work_dir}/vivado.tcl", "w") as f:
+                f.write(
+                    vivado_tcl_script(
+                        work_dir=work_dir,
+                        top_name=top_name,
+                        part_name=part_name,
+                        board_part_name=board_part_name,
+                        frequency=frequency,
+                        hls_version=hls_version,
+                        axilite_base_addr=axilite_address,
+                        axilite_dma_window=self.axilite_dma_window,
+                        interface_width=interface_width,
+                        design_id=design_id,
+                        inputs=input_list,
+                        outputs=output_list,
+                        buffers=buffer_list,
+                        control_axi_offset=control_axi_offset,
+                    )
                 )
-            )
 
-        # Run Vivado to generate the bitstream.
-        subprocess.run(
-            ["vivado", "-mode", "batch", "-source", f"{work_dir}/vivado.tcl"],
-            cwd=work_dir,
-            check=True
-        )
+            # Run Vivado to generate the bitstream.
+            subprocess.run(
+                ["vivado", "-mode", "batch", "-source", f"{work_dir}/vivado.tcl"],
+                cwd=work_dir,
+                check=True
+            )
 
         # Check if the bitstream was generated successfully.
         bitstream_path = f"{work_dir}/vivadoproj/vivadoproj.runs/impl_1/{top_name}_bd.bit"

@@ -1,6 +1,8 @@
 import os
 import time
 import json
+import argparse
+import sys
 import numpy as np
 import onnxruntime as ort
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -115,6 +117,54 @@ def check_correctness_single_output(
         np.asarray(expected[0]).flatten(),
         np.asarray(actual[0]).flatten(),
     )
+
+
+def make_session_options(
+    custom_op_so: str,
+    enable_profiling: bool,
+    graph_optimization_level: ort.GraphOptimizationLevel,
+) -> ort.SessionOptions:
+    so = ort.SessionOptions()
+    so.register_custom_ops_library(custom_op_so)
+    so.graph_optimization_level = graph_optimization_level
+    so.enable_profiling = enable_profiling
+    return so
+
+
+def outputs_exactly_match(expected: list[np.ndarray], produced: list[np.ndarray], image_idx: int) -> bool:
+    if len(expected) != len(produced):
+        print(
+            f"Image {image_idx}: FAIL - output count mismatch "
+            f"expected={len(expected)}, produced={len(produced)}"
+        )
+        return False
+
+    image_ok = True
+    for output_idx, (expected_out, produced_out) in enumerate(zip(expected, produced)):
+        expected_arr = np.asarray(expected_out)
+        produced_arr = np.asarray(produced_out)
+
+        if expected_arr.shape != produced_arr.shape:
+            print(
+                f"Image {image_idx}, output {output_idx}: FAIL - shape mismatch "
+                f"expected={expected_arr.shape}, produced={produced_arr.shape}"
+            )
+            image_ok = False
+            continue
+
+        if not np.array_equal(expected_arr, produced_arr):
+            print(f"Image {image_idx}, output {output_idx}: FAIL - values differ")
+            report_error_stats(
+                f"image_{image_idx}_out_{output_idx}",
+                expected_arr.flatten(),
+                produced_arr.flatten(),
+            )
+            image_ok = False
+
+    if image_ok:
+        print(f"Image {image_idx}: PASS")
+
+    return image_ok
 
 
 # -----------------------------
@@ -341,90 +391,175 @@ def write_results_file(filepath: str, orig: dict, opt: dict, comparison: dict):
 
 
 # -----------------------------
-# Main
+# Modes / CLI
 # -----------------------------
-def main():
-    MODEL_PATH = "nn2FPGA_yolov5nu.onnx"
-    ORIGINAL_MODEL_PATH = "original_model_qcdq.onnx"
-    CUSTOM_OP_SO = os.path.abspath("libnn2fpga_customop.so")
-    RESULTS_FILE = "performance_improvement.txt"
+def run_correctness(args) -> int:
+    custom_op_so = os.path.abspath(args.custom_op)
+    print("Loading the operator:", custom_op_so)
+    print("Starting exact correctness sessions with ORT optimizations disabled...")
 
-    batch_size = 1
-    sample_size = 10
-    warmup_batches = 5
-    measure_batches = None
-
-    # -----------------------------
-    # Session for correctness only
-    # Profiling disabled here on purpose
-    # -----------------------------
-    so_no_prof = ort.SessionOptions()
-    print("Loading the operator:", CUSTOM_OP_SO)
-    so_no_prof.register_custom_ops_library(CUSTOM_OP_SO)
-    so_no_prof.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    so_no_prof.enable_profiling = False
-
-    print("Starting correctness-check sessions...")
-    sess_opt_check = ort.InferenceSession(MODEL_PATH, sess_options=so_no_prof, providers=["CPUExecutionProvider"])
-    sess_orig_check = ort.InferenceSession(ORIGINAL_MODEL_PATH, sess_options=so_no_prof, providers=["CPUExecutionProvider"])
-
-    input_name = sess_orig_check.get_inputs()[0].name
-
-    # Correctness check
-    x = np.random.rand(1, 3, 640, 640).astype(np.float32)
-    check_correctness_single_output(sess_opt_check, sess_orig_check, input_name, x)
-
-    # Explicitly release correctness-only sessions
-    del sess_opt_check
-    del sess_orig_check
-
-    # -----------------------------
-    # Prepare benchmark data
-    # -----------------------------
-    dataloader = coco_dataloader(
-        batch_size=batch_size,
-        sample_size=sample_size,
-        num_workers=0,
+    sess_orig = ort.InferenceSession(
+        args.original_model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=False,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
     )
-    batches = preload_batches(dataloader, measure_batches=measure_batches)
+    sess_opt = ort.InferenceSession(
+        args.model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=False,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_DISABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
 
-    # -----------------------------
-    # Sessions for benchmark only
-    # Profiling enabled here so traces only include actual benchmark work
-    # -----------------------------
-    so_prof = ort.SessionOptions()
-    so_prof.register_custom_ops_library(CUSTOM_OP_SO)
-    so_prof.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    so_prof.enable_profiling = True
+    input_name = sess_orig.get_inputs()[0].name
+    dataloader = coco_dataloader(batch_size=1, sample_size=args.num_images, num_workers=args.num_workers)
 
-    print("Starting benchmark sessions...")
-    sess_orig = ort.InferenceSession(ORIGINAL_MODEL_PATH, sess_options=so_prof, providers=["CPUExecutionProvider"])
-    sess_opt = ort.InferenceSession(MODEL_PATH, sess_options=so_prof, providers=["CPUExecutionProvider"])
+    checked_images = 0
+    failed_images = 0
 
-    # Warmup both models
-    warmup_session(sess_orig, input_name, batches, warmup_batches=warmup_batches)
-    warmup_session(sess_opt, input_name, batches, warmup_batches=warmup_batches)
+    for image_idx, features in enumerate(dataloader):
+        x = features.numpy().astype(np.float32)
+        expected = sess_orig.run(None, {input_name: x})
+        produced = sess_opt.run(None, {input_name: x})
 
-    # Benchmark both
+        checked_images += 1
+        if not outputs_exactly_match(expected, produced, image_idx):
+            failed_images += 1
+
+    passed_images = checked_images - failed_images
+    print("\n===== Exact correctness summary =====")
+    print(f"Checked images: {checked_images}")
+    print(f"Passed images:  {passed_images}")
+    print(f"Failed images:  {failed_images}")
+    print("=====================================")
+
+    return 0 if failed_images == 0 else 1
+
+
+def run_speed(args) -> int:
+    custom_op_so = os.path.abspath(args.custom_op)
+    print("Loading the operator:", custom_op_so)
+
+    dataloader = coco_dataloader(
+        batch_size=args.batch_size,
+        sample_size=args.sample_size,
+        num_workers=args.num_workers,
+    )
+    batches = preload_batches(dataloader, measure_batches=args.measure_batches)
+
+    print("Starting optimized benchmark sessions...")
+    sess_orig = ort.InferenceSession(
+        args.original_model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=True,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+    sess_opt = ort.InferenceSession(
+        args.model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=True,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+
+    input_name = sess_orig.get_inputs()[0].name
+
+    warmup_session(sess_orig, input_name, batches, warmup_batches=args.warmup_batches)
+    warmup_session(sess_opt, input_name, batches, warmup_batches=args.warmup_batches)
+
     orig_results = benchmark_preloaded(sess_orig, batches, input_name, label="original")
     opt_results = benchmark_preloaded(sess_opt, batches, input_name, label="optimized")
 
-    # Comparison
     comparison = build_comparison(orig_results, opt_results)
     report_text = format_comparison_text(orig_results, opt_results, comparison)
     print("\n" + report_text + "\n")
 
-    # Write report file
-    write_results_file(RESULTS_FILE, orig_results, opt_results, comparison)
-    print(f"Performance report written to: {os.path.abspath(RESULTS_FILE)}")
+    write_results_file(args.results_file, orig_results, opt_results, comparison)
+    print(f"Performance report written to: {os.path.abspath(args.results_file)}")
 
-    # End profiling
     prof_file_orig = sess_orig.end_profiling()
     print(f"Original profiling trace written to: {prof_file_orig}")
 
     prof_file_opt = sess_opt.end_profiling()
     print(f"Optimized profiling trace written to: {prof_file_opt}")
 
+    return 0
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run exact COCO correctness checks or optimized ONNX throughput benchmarks."
+    )
+    parser.add_argument("--mode", choices=["correctness", "speed"], required=True)
+    parser.add_argument("--model", default="nn2FPGA_yolov5nu.onnx")
+    parser.add_argument("--original-model", default="original_model_qcdq.onnx")
+    parser.add_argument("--custom-op", default="libnn2fpga_customop.so")
+    parser.add_argument("--num-workers", type=int, default=0)
+
+    parser.add_argument(
+        "--num-images",
+        type=int,
+        default=10,
+        help="Number of COCO images to check in correctness mode.",
+    )
+
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for speed mode.")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=10,
+        help="Number of COCO images to preload for speed mode. Use -1 for all images.",
+    )
+    parser.add_argument(
+        "--warmup-batches",
+        type=int,
+        default=5,
+        help="Number of warmup batches for speed mode.",
+    )
+    parser.add_argument(
+        "--measure-batches",
+        type=int,
+        default=None,
+        help="Number of preloaded batches to benchmark in speed mode.",
+    )
+    parser.add_argument("--results-file", default="performance_improvement.txt")
+
+    args = parser.parse_args()
+    if args.num_images <= 0:
+        parser.error("--num-images must be > 0")
+    if args.batch_size <= 0:
+        parser.error("--batch-size must be > 0")
+    if args.sample_size == -1:
+        args.sample_size = None
+    elif args.sample_size is not None and args.sample_size <= 0:
+        parser.error("--sample-size must be > 0 or -1")
+    if args.warmup_batches < 0:
+        parser.error("--warmup-batches must be >= 0")
+    if args.measure_batches is not None and args.measure_batches <= 0:
+        parser.error("--measure-batches must be > 0")
+
+    return args
+
+
+def main():
+    args = parse_args()
+    if args.mode == "correctness":
+        return run_correctness(args)
+    if args.mode == "speed":
+        return run_speed(args)
+    raise RuntimeError(f"Unsupported mode: {args.mode}")
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

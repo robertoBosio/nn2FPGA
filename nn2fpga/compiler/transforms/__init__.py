@@ -17,6 +17,7 @@ from nn2fpga.compiler.transforms.fullyconnected_to_conv import FullyConnectedToP
 from nn2fpga.compiler.transforms.fuse_elementwise_op import FuseElementwiseOps
 from nn2fpga.compiler.transforms.generate_bitstream import GenerateBitstream
 from nn2fpga.compiler.transforms.generate_driver import GenerateDriver
+from nn2fpga.compiler.transforms.generate_lightningsim_code import GenerateLightningSimCode
 from nn2fpga.compiler.transforms.infer_quant import InferQuant
 from nn2fpga.compiler.transforms.infer_layouts import InferLayouts
 from nn2fpga.compiler.transforms.insert_axi_converters import InsertAXIConverters

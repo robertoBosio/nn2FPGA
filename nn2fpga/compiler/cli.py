@@ -37,10 +37,11 @@ def load_config(config_path: str) -> dict:
             "AddStreamingParams": True,
             "ComputeFifoDepth": True,
             "OptimizeFifo": True,
+            "GenerateLightningSim": False,
             "Simulate": True,
             "Deploy": True,
         })  
-        
+
         # Optional fields with defaults
         config_dict["silvia_packing"] = config.get("options", {}).get("silvia_packing", False)
         config_dict["dsp_limit"] = config.get("options", {}).get("dsp_limit", None)
