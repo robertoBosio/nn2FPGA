@@ -92,6 +92,15 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
             size = tensor_fifo.depth
             size = max(size, 1)
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
+        elif "StreamingCircularLineBuffer" in custom_op.get_nodeattr("original_op_type"):
+            output_depths = []
+            for output in node.output:
+                tensor_fifo = get_custom_tensor_fifo_metadata(model, output)
+                if tensor_fifo is not None:
+                    output_depths.append(tensor_fifo.depth)
+            size = max(output_depths) if output_depths else 1
+            size = max(size, 1)
+            function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
         else:
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
         num_objects += 1

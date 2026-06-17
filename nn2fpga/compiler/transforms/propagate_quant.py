@@ -37,6 +37,7 @@ QUANT_INVARIANT_NODES = [
     "Split",
     "StreamingConcat",  # nn2FPGA
     "StreamingLineBuffer",  # nn2FPGA
+    "StreamingCircularLineBuffer",  # nn2FPGA
     "StreamingMaxPool",  # nn2FPGA
     "StreamingSplit",  # nn2FPGA
     "StreamToAXI",  # nn2FPGA

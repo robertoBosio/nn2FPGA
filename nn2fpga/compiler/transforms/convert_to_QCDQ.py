@@ -17,123 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Transpose split analysis  (analysis only — no graph rewriting)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_CACHE_LINE_BYTES    = 64
-_BAD_THRESHOLD_BYTES = _CACHE_LINE_BYTES // 2   # 32 B — half a cache line
-
-
-def _dtype_itemsize(tensor_type: int) -> int:
-    return {
-        TensorProto.FLOAT:   4,
-        TensorProto.FLOAT16: 2,
-        TensorProto.DOUBLE:  8,
-        TensorProto.INT8:    1,
-        TensorProto.UINT8:   1,
-        TensorProto.INT16:   2,
-        TensorProto.UINT16:  2,
-        TensorProto.INT32:   4,
-        TensorProto.UINT32:  4,
-        TensorProto.INT64:   8,
-        TensorProto.UINT64:  8,
-        TensorProto.BOOL:    1,
-    }.get(tensor_type, 4)
-
-
-def analyze_transpose_split(
-    tensor_name: str,
-    shape: list[int],
-    perm: list[int],
-    tensor_type: int,
-) -> None:
-    """
-    Analyse whether a Reshape -> Transpose -> Reshape split would help.
-    Logs DEBUG when the transpose is fine, WARNING when it is cache-hostile
-    together with a concrete split suggestion.  Never modifies the graph.
-
-    Cache-hostility metric:
-        The innermost output axis corresponds to perm[-1] in input coordinates.
-        If shape[perm[-1]] * itemsize < half a cache line, each output row is
-        too short for the prefetcher to be effective.
-
-    Split strategy:
-        Keep leading identity-mapped (batch) axes intact so ORT can loop over
-        them independently — this proved faster on the Cortex-A53 than
-        collapsing them into the matrix rows.  Then walk trailing input axes
-        inward, accumulating their product, until the combined size reaches one
-        full cache line.  Those axes are collapsed into a single dimension for
-        a 3-D transpose that has a cache-line-wide inner dimension.
-    """
-    itemsize     = _dtype_itemsize(tensor_type)
-    ndim         = len(shape)
-    total_bytes  = int(np.prod(shape)) * itemsize
-
-    inner_dim_size  = shape[perm[-1]]
-    inner_dim_bytes = inner_dim_size * itemsize
-    util            = min(inner_dim_bytes, _CACHE_LINE_BYTES) / _CACHE_LINE_BYTES
-    wasted          = 1.0 / util if util > 0 else float("inf")
-    is_bad          = inner_dim_bytes < _BAD_THRESHOLD_BYTES
-
-    if not is_bad:
-        logger.debug(
-            "[transpose-analysis] OK | tensor=%s shape=%s perm=%s "
-            "inner=%d elems/%dB util=%.0f%% total=%.2fMB",
-            tensor_name, shape, perm,
-            inner_dim_size, inner_dim_bytes, util * 100, total_bytes / 1e6,
-        )
-        return
-
-    # ── Identify batch axes (leading identity-mapped dims) ────────────────
-    n_batch = 0
-    for i, p in enumerate(perm):
-        if p == i:
-            n_batch += 1
-        else:
-            break
-
-    # ── Find a collapse group among trailing input axes ───────────────────
-    accumulated   = 1
-    collapse_axes = []
-    for ax in range(ndim - 1, n_batch - 1, -1):
-        accumulated *= shape[ax]
-        collapse_axes.insert(0, ax)
-        if accumulated * itemsize >= _CACHE_LINE_BYTES:
-            break
-
-    if len(collapse_axes) > 1 and accumulated * itemsize >= _CACHE_LINE_BYTES:
-        batch_shape  = list(shape[:n_batch])
-        middle_axes  = [ax for ax in range(n_batch, ndim) if ax not in collapse_axes]
-        middle_shape = [shape[ax] for ax in middle_axes]
-        inter_shape  = batch_shape + middle_shape + [accumulated]
-
-        # Generalised 3-D perm: keep batch, then swap the last two dims.
-        split_perm = list(range(n_batch)) + [n_batch + 1, n_batch]
-
-        out_shape  = [shape[p] for p in perm]
-        split_hint = (
-            f"Reshape {shape} -> {inter_shape}, "
-            f"Transpose {split_perm}, "
-            f"Reshape -> {out_shape}  "
-            f"[collapsed {len(collapse_axes)} axes into {accumulated} elems "
-            f"= {accumulated * itemsize}B >= {_CACHE_LINE_BYTES}B cache line]"
-        )
-    else:
-        split_hint = (
-            "No clean collapse group found — "
-            "consider redesigning the kernel output layout."
-        )
-
-    logger.warning(
-        "[transpose-analysis] SLOW | tensor=%s shape=%s perm=%s "
-        "inner=%d elems/%dB util=%.0f%% wasted=%.1fx total=%.2fMB | %s",
-        tensor_name, shape, perm,
-        inner_dim_size, inner_dim_bytes, util * 100, wasted,
-        total_bytes / 1e6, split_hint,
-    )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Existing helpers (unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -341,10 +224,6 @@ class ConvertToQCDQ(Transformation):
       Output side:
         partition → Transpose(int8) → DequantizeLinear(int8→float)
 
-    For every inserted transpose, analyze_transpose_split() is called.
-    It logs a WARNING with a concrete Reshape→Transpose→Reshape suggestion
-    whenever the inner output dimension is narrower than half a cache line.
-    No split rewriting is performed yet.
     """
 
     def __init__(self):
@@ -442,12 +321,6 @@ class ConvertToQCDQ(Transformation):
                     # The expected input layout is not the onnx layout, 
                     # thus we need to insert a Transpose.
 
-                    analyze_transpose_split(
-                        tensor_name=inp,
-                        shape=inp_shape,
-                        perm=input_layout.perm,
-                        tensor_type=input_tensor_type.get_tensorproto_dtype(),
-                    )
                     transpose_node = helper.make_node(
                         "Transpose",
                         name=f"{inp}_transpose",
@@ -494,8 +367,6 @@ class ConvertToQCDQ(Transformation):
                 if out_shape is None:
                     continue
 
-                logger.info(f"Processing partition output '{out}' with shape {out_shape}")
-
                 output_layout = TensorLayout.from_canonical_name(
                     ap.output_map[out].get("layout")
                 )
@@ -537,12 +408,6 @@ class ConvertToQCDQ(Transformation):
                     tensor_name = f"{tensor_name}_quantized"
 
                 if not output_layout.is_identity():
-                    analyze_transpose_split(
-                        tensor_name=out,
-                        shape=out_shape_perm,
-                        perm=output_layout.perm,
-                        tensor_type=output_tensor_type.get_tensorproto_dtype(),
-                    )
                     transpose_node = helper.make_node(
                         "Transpose",
                         name=f"{out}_transpose",
