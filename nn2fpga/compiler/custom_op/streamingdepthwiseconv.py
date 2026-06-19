@@ -18,6 +18,11 @@ from nn2fpga.compiler.custom_op.op_base import (
     ParamDesc,
 )
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
+from nn2fpga.compiler.utils.linebuffer_utils import (
+    circular_linebuffer_compatible_or_bypassed,
+    circular_linebuffer_latency,
+    validate_circular_linebuffer_attrs,
+)
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
@@ -869,8 +874,15 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             * point.filter_width_unroll
         )
 
-        # Compute the latency of the line buffer in input.
-        latency_lb = np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        # Compute the latency of the circular linebuffer's padded virtual scan.
+        latency_lb = 0
+        if self.has_linebuffer():
+            latency_lb = circular_linebuffer_latency(
+                input_shape,
+                self.get_nodeattr("pads"),
+                point.width_unroll,
+                point.channel_unroll,
+            )
         return max(latency_depthconv, latency_lb)
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -1013,6 +1025,12 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         output_shape = self.require_4d_output_shape(model, 0, output_layout)
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        pads = self.get_nodeattr("pads")
+        strides = self.get_nodeattr("strides")
+        dilations = self.get_nodeattr("dilations")
+        kernel_shape = self.get_nodeattr("kernel_shape")
+
+        validate_circular_linebuffer_attrs(kernel_shape, pads, dilations)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
@@ -1021,6 +1039,17 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 [output_shape[-2], input_shape[-2]],
                 min(output_shape[-2], input_shape[-2]),
             ):
+                if not circular_linebuffer_compatible_or_bypassed(
+                    input_shape,
+                    output_shape,
+                    kernel_shape,
+                    strides,
+                    pads,
+                    width_unroll,
+                    dilations,
+                ):
+                    continue
+
                 # Check dimension of weight streams
                 if (weight_bits * channel_unroll) > 4096:
                     continue

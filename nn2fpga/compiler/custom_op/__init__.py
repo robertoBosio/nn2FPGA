@@ -16,6 +16,7 @@ from nn2fpga.compiler.custom_op.streamingdepthwiseconv import StreamingDepthwise
 from nn2fpga.compiler.custom_op.streamingglobalaveragepool import StreamingGlobalAveragePool
 from nn2fpga.compiler.custom_op.streamingleakyrelu import StreamingLeakyReLU
 from nn2fpga.compiler.custom_op.streaminglinebuffer import StreamingLineBuffer
+from nn2fpga.compiler.custom_op.streamingcircularlinebuffer import StreamingCircularLineBuffer
 from nn2fpga.compiler.custom_op.streamingmaxpool import StreamingMaxPool
 from nn2fpga.compiler.custom_op.streamingmemory import StreamingMemory
 from nn2fpga.compiler.custom_op.streamingmul import StreamingMul
@@ -50,6 +51,7 @@ custom_op = {
     "StreamingGlobalAveragePool": StreamingGlobalAveragePool,
     "StreamingLeakyReLU": StreamingLeakyReLU,
     "StreamingLineBuffer": StreamingLineBuffer,
+    "StreamingCircularLineBuffer": StreamingCircularLineBuffer,
     "StreamingMaxPool": StreamingMaxPool,
     "StreamingMemory": StreamingMemory,
     "StreamingMul": StreamingMul,

@@ -26,7 +26,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 MIN_FIFO_BITS =  100 * 1024 # 100 Kb is a heuristic threshold 
-MAX_DDR_FIFOS = 8
+MAX_DDR_FIFOS = 12
 MAX_AXIWORD_BITS = 128
 DEFAULT_DDR_BURST_LENGTH = 4
 

@@ -46,6 +46,7 @@ def load_config(config_path: str) -> dict:
         config_dict["silvia_packing"] = config.get("options", {}).get("silvia_packing", False)
         config_dict["dsp_limit"] = config.get("options", {}).get("dsp_limit", None)
         config_dict["simulation"] = config.get("options", {}).get("simulation", "csim")
+        config_dict["store_intermediate"] = config.get("options", {}).get("store_intermediate", False)
 
     except KeyError as e:
         print(f"Missing configuration field: {e}")
@@ -109,6 +110,9 @@ def check_config(config_dict: dict):
 
     if config_dict["simulation"] not in ["csim", "cosim", "export"]:
         raise ValueError("Invalid 'simulation' option. It must be either 'csim', 'cosim', or 'export'.")
+
+    if not isinstance(config_dict["store_intermediate"], bool):
+        raise ValueError("Invalid 'store_intermediate' option. It must be a boolean.")
 
 def main():
     parser = argparse.ArgumentParser(

@@ -62,7 +62,7 @@ class InsertStreamingLineBuffer(Transformation):
 
             # Create the StreamingLineBuffer node
             streaming_line_buffer_node = helper.make_node(
-                op_type="StreamingLineBuffer",
+                op_type="StreamingCircularLineBuffer",
                 domain="nn2fpga.compiler.custom_op",
                 inputs=[node.input[0]],
                 outputs=[f"{node.name}_window"],

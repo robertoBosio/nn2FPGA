@@ -22,6 +22,11 @@ from nn2fpga.compiler.utils.codegen_utils import (
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
+from nn2fpga.compiler.utils.linebuffer_utils import (
+    circular_linebuffer_compatible_or_bypassed,
+    circular_linebuffer_latency,
+    validate_circular_linebuffer_attrs,
+)
 from dataclasses import dataclass
 from typing import Iterable
 from logging import getLogger
@@ -795,10 +800,15 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             * point.filter_height_unroll
         )
 
-        # Compute the latency of the line buffer in input.
-        latency_lb = np.prod(input_shape) // (
-            point.in_channel_unroll * point.width_unroll
-        )
+        # Compute the latency of the circular linebuffer's padded virtual scan.
+        latency_lb = 0
+        if self.has_linebuffer():
+            latency_lb = circular_linebuffer_latency(
+                input_shape,
+                self.get_nodeattr("pads"),
+                point.width_unroll,
+                point.in_channel_unroll,
+            )
         return max(latency_conv, latency_lb)
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -940,6 +950,12 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
 
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
         output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        pads = self.get_nodeattr("pads")
+        strides = self.get_nodeattr("strides")
+        dilations = self.get_nodeattr("dilations")
+        kernel_shape = self.get_nodeattr("kernel_shape")
+
+        validate_circular_linebuffer_attrs(kernel_shape, pads, dilations)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
@@ -953,6 +969,17 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                     [output_shape[-2], input_shape[-2]],
                     min(output_shape[-2], input_shape[-2]),
                 ):
+                    if not circular_linebuffer_compatible_or_bypassed(
+                        input_shape,
+                        output_shape,
+                        kernel_shape,
+                        strides,
+                        pads,
+                        width_unroll,
+                        dilations,
+                    ):
+                        continue
+
                     # Check dimension of weight streams
                     if (weight_bits * in_channel_unroll * out_channel_unroll) > 4096:
                         continue
@@ -984,6 +1011,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                         )
                     )
 
+        # logger.info(f"Generated {len(DSE_points)} DSE points for StreamingConv node {self.onnx_node.name}")
+        # logger.info(f"DSE points: {DSE_points}")
         return DSE_points
 
     def apply_point(self, model: ModelWrapper, point: "StreamingConv.DSEPoint"):

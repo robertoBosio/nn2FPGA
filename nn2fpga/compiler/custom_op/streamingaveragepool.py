@@ -9,6 +9,12 @@ from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
+from nn2fpga.compiler.utils.linebuffer_utils import (
+    circular_linebuffer_compatible_or_bypassed,
+    circular_linebuffer_latency,
+    normalize_pads,
+    validate_circular_linebuffer_attrs,
+)
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
@@ -379,12 +385,24 @@ class StreamingAveragePool(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        output_shape = self.require_output_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
-        return np.prod(output_shape) // (point.dim2_unroll * point.dim1_unroll)
+        latency_pool = np.prod(output_shape) // (point.dim2_unroll * point.dim1_unroll)
+        latency_lb = 0
+        if self.has_linebuffer():
+            latency_lb = circular_linebuffer_latency(
+                input_shape,
+                self.get_nodeattr("pads"),
+                point.dim1_unroll,
+                point.dim2_unroll,
+            )
+        return max(latency_pool, latency_lb)
 
     def get_brams(self, model: ModelWrapper) -> int:
         """Estimate the BRAM usage of the StreamingAveragePool operation.
@@ -427,11 +445,27 @@ class StreamingAveragePool(NN2FPGAOp, DSECapable):
 
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
         output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        pads = normalize_pads(self.get_nodeattr("pads"))
+        strides = self.get_nodeattr("strides")
+
+        validate_circular_linebuffer_attrs([kernel_height, kernel_width], pads)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
         for dim2_unroll in self.divisors([output_shape[-1]], output_shape[-1]):
             for dim1_unroll in self.divisors([output_shape[-2]], output_shape[-2]):
+                if not circular_linebuffer_compatible_or_bypassed(
+                    input_shape,
+                    output_shape,
+                    [kernel_height, kernel_width],
+                    strides,
+                    pads,
+                    dim1_unroll,
+                ):
+                    continue
+
                 # Check dimension of input streams
                 if (input_bits * dim2_unroll) > 4096:
                     continue

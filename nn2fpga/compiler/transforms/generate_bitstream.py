@@ -433,6 +433,7 @@ def vivado_tcl_script(
     lines.append(f'update_compile_order -fileset sources_1')
 
     # Launch synthesis
+    lines.append(f'set_property strategy Flow_AreaOptimized_high [get_runs synth_1]')
     lines.append(f'launch_runs synth_1 -jobs 8')
     lines.append(f'wait_on_run synth_1')
 
@@ -490,7 +491,7 @@ class GenerateBitstream(Transformation):
         hls_version = model.get_metadata_prop("hls_version")
         axilite_size = int(model.get_metadata_prop("axilite_size"))
         axilite_address = int(model.get_metadata_prop("axilite_address"))
-        silvia_packing = model.get_metadata_prop("silvia_packing") == "True"
+        silvia_packing = str(model.get_metadata_prop("silvia_packing")).lower() == "true"
         design_id = model.get_metadata_prop("design_id")
         interface_width = read_board_info(board)["axi_bitwidth"]
         part_name = read_board_info(board)["part"]

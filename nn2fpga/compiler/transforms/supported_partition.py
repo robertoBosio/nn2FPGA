@@ -189,10 +189,10 @@ def check_act_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list) ->
     scale = numpy_helper.to_array(get_by_name(graph.initializer, scale_name))
     zeropt = numpy_helper.to_array(get_by_name(graph.initializer, zeropt_name))
 
-    # Check if per-channel (length > 1)
-    if scale.ndim > 1 or zeropt.ndim > 1:
-        reasons.append(f"Activation Quant with unspported per-channel quantization")
-        return False  # Per-channel quantization is not supported for activations.
+    # Activation quantization must be per-tensor, not per-channel.
+    if np.asarray(scale).size != 1 or np.asarray(zeropt).size != 1:
+        reasons.append("Activation Quant with unsupported per-channel quantization")
+        return False
     
     # Check that the zero point is close to integer values
     if float(zeropt.item()).is_integer() is False:
