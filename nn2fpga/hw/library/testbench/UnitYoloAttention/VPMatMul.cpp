@@ -27,21 +27,24 @@ bool test_run() {
   hls::stream<test_config::TPInputWord> i_datap[test_config::DIM_HEADS];
   hls::stream<test_config::TOutputWord> o_data[test_config::DIM_HEADS];
 
-  // Streaming v tensor
-  for (size_t i_vrow = 0; i_vrow < test_config::DIM_V; i_vrow++) {
+  // Stream replayed V tensor in the same order produced by the replaying
+  // transpose: pcol -> head -> vrow -> seq_group.
+  for (size_t i_pcol = 0; i_pcol < test_config::DIM_P; i_pcol++) {
     for (size_t i_heads = 0; i_heads < test_config::DIM_HEADS; i_heads++) {
-      for (size_t i_reduce = 0;
-           i_reduce < test_config::DIM_SEQ / test_config::REDUCE_PAR;
-           i_reduce++) {
-        test_config::TVInputWord v_word;
-        for (size_t i_reduce_par = 0; i_reduce_par < test_config::REDUCE_PAR;
-             i_reduce_par++) {
-          v_word[i_reduce_par] =
-              test_config::v_tensor[0][i_heads][i_vrow]
-                                   [i_reduce * test_config::REDUCE_PAR +
-                                    i_reduce_par];
+      for (size_t i_vrow = 0; i_vrow < test_config::DIM_V; i_vrow++) {
+        for (size_t i_reduce = 0;
+             i_reduce < test_config::DIM_SEQ / test_config::REDUCE_PAR;
+             i_reduce++) {
+          test_config::TVInputWord v_word;
+          for (size_t i_reduce_par = 0; i_reduce_par < test_config::REDUCE_PAR;
+               i_reduce_par++) {
+            v_word[i_reduce_par] =
+                test_config::v_tensor[0][i_heads][i_vrow]
+                                     [i_reduce * test_config::REDUCE_PAR +
+                                      i_reduce_par];
+          }
+          i_datav[i_heads].write(v_word);
         }
-        i_datav[i_heads].write(v_word);
       }
     }
   }

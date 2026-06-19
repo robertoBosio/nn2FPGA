@@ -523,12 +523,18 @@ class TestQKMatMul(BaseHLSTest):
         assert config_dict["OUT_CH"] == 128
         assert config_dict["OUT_CH"] == dim_heads * dim_v
 
-        # Conservative serial testbench parallelism
+        # Shared attention latency knob: QK uses u/2, VP uses u.
+        attn_reduction_unroll = int(config_dict.get("ATTN_REDUCTION_UNROLL", 2))
+        assert attn_reduction_unroll % 2 == 0
+        qk_reduce_par = attn_reduction_unroll // 2
         reduce_par = 1
-        vp_reduce_par = 2
+        vp_reduce_par = attn_reduction_unroll
         ch_par = 1
         w_par = 1
         heads_par = 1
+
+        assert dim_seq_qk % qk_reduce_par == 0
+        assert dim_seq_vp % vp_reduce_par == 0
 
         # Accumulator widths
         acc_bits_qk = int(np.ceil(np.log2(dim_k))) + in_bits + in_bits
@@ -582,6 +588,7 @@ class TestQKMatMul(BaseHLSTest):
 
         # Parallelism
         cwr.add_line(f"const int REDUCE_PAR = {reduce_par};")
+        cwr.add_line(f"const int QK_REDUCE_PAR = {qk_reduce_par};")
         cwr.add_line(f"const int VP_REDUCE_PAR = {vp_reduce_par};")
         cwr.add_line(f"const int CH_PAR = {ch_par};")
         cwr.add_line(f"const int W_PAR = {w_par};")
@@ -617,6 +624,8 @@ class TestQKMatMul(BaseHLSTest):
         # AXI stream word types
         cwr.add_line("using TInputWord = std::array<TInput, 1>;")
         cwr.add_line("using TSplitWord = std::array<TSplit, 1>;")
+        cwr.add_line("using TQPackedWord = std::array<TSplit, QK_REDUCE_PAR>;")
+        cwr.add_line("using TKPackedWord = std::array<TSplit, QK_REDUCE_PAR>;")
         cwr.add_line("using TQKWord = std::array<TQK, 1>;")
         cwr.add_line("using TQKScaledWord = std::array<TQKScaled, 1>;")
         cwr.add_line("using TSoftmaxWord = std::array<TSoftmax, 1>;")
@@ -747,6 +756,7 @@ class TestQKMatMul(BaseHLSTest):
             "CONST_ZP": 0,
             "QK_SCALED_ZP": 0,
             "P_ZP": 0,
+            "ATTN_REDUCTION_UNROLL": 4,
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps, workdir=".", clean=False)

@@ -647,6 +647,15 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         k_shape = [1, 2, 32, 400]
         v_shape = [1, 2, 64, 400]
         vp_reduce_par = self.get_nodeattr("reduction_unroll")
+        if vp_reduce_par <= 1:
+            qk_reduce_par = 1
+        else:
+            if vp_reduce_par % 2 != 0:
+                raise ValueError(
+                    "StreamingYoloAttention requires an even reduction_unroll "
+                    "when sharing the knob across QK and VP paths."
+                )
+            qk_reduce_par = vp_reduce_par // 2
 
         ####### SplitReshapeQKV ########
         input_quant = require_tensor_type(model, self.onnx_node.input[0])
@@ -808,6 +817,86 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         )
         hls_tag += 1
 
+        def add_qk_pack_kernel(
+            input_array,
+            output_array,
+            head,
+            dim1,
+            object_name,
+            hls_tag,
+        ):
+            output_name = f"{output_array}_{head}_"
+            fifos[output_name] = TensorFifo(
+                depth=0,
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}",
+                n_array=2,
+            )
+
+            pack_run_call = (
+                f"{object_name}.run<{hls_tag}>(&{input_array}[{head}], "
+                f"&{output_array}[{head}])"
+            )
+            pack_step_call = (
+                f"{object_name}.step(&{input_array}[{head}], "
+                f"&{output_array}[{head}])"
+            )
+            pack_object = cpp_object(
+                "BandwidthAdjustIncreaseWord",
+                object_name,
+                template_args=[
+                    (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                    (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TInput"),
+                    (f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}", "TOutputWord"),
+                    (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TOutput"),
+                    (
+                        f"DequantQuantEqual<{SplitReshapeQKV_output_quant.get_hls_data_type()}>",
+                        "Quantizer",
+                    ),
+                    ("1", "IN_DIM0"),
+                    (f"{dim1}", "IN_DIM1"),
+                    (f"{q_shape[2]}", "IN_DIM2"),
+                    ("1", "IN_DIM1_UNROLL"),
+                    ("1", "OUT_DIM1_UNROLL"),
+                    ("1", "IN_DIM2_UNROLL"),
+                    (f"{qk_reduce_par}", "OUT_DIM2_UNROLL"),
+                ],
+            )
+
+            hls_kernels.append(
+                HLSKernel.make_node(
+                    inputs=[f"{input_array}_{head}_"],
+                    outputs=[output_name],
+                    name=object_name,
+                    domain="nn2fpga.compiler.custom_op",
+                    original_op_type="BandwidthAdjustIncreaseWord",
+                    hls_tag=hls_tag,
+                    hls_object_name=object_name,
+                    hls_variable_declarations="",
+                    hls_run_call=pack_run_call,
+                    hls_step_call=pack_step_call,
+                    hls_object_declaration=pack_object.generate_declaration(),
+                )
+            )
+            return hls_tag + 1
+
+        qk_q_input_array = "stream_q"
+        qk_k_input_array = "stream_k"
+        if qk_reduce_par > 1:
+            qk_q_input_array = "stream_q_packed"
+            qk_k_input_array = "stream_k_packed"
+            hls_tag = add_qk_pack_kernel(
+                "stream_q", qk_q_input_array, 0, q_shape[3], "packq_head0", hls_tag
+            )
+            hls_tag = add_qk_pack_kernel(
+                "stream_q", qk_q_input_array, 1, q_shape[3], "packq_head1", hls_tag
+            )
+            hls_tag = add_qk_pack_kernel(
+                "stream_k", qk_k_input_array, 0, k_shape[3], "packk_head0", hls_tag
+            )
+            hls_tag = add_qk_pack_kernel(
+                "stream_k", qk_k_input_array, 1, k_shape[3], "packk_head1", hls_tag
+            )
+
         # QK matmul first head
         (qk_scale, qk_zeropt, qk_bitwidth) = (16, 17, 18)
         QKMatMul_output_quant = QuantizedTensorType(
@@ -831,16 +920,16 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 hls_type=f"{get_word_type(QKMatMul_output_quant, 1)}",
                 n_array=2, 
             )
-        QKMatMul0_run_call = f"matmulqk_head0.run<{hls_tag}>(&stream_q[0], &stream_k[0], &stream_qk[0])"
-        QKMatMul0_step_call = f"matmulqk_head0.step(&stream_q[0], &stream_k[0], &stream_qk[0])"
+        QKMatMul0_run_call = f"matmulqk_head0.run<{hls_tag}>(&{qk_q_input_array}[0], &{qk_k_input_array}[0], &stream_qk[0])"
+        QKMatMul0_step_call = f"matmulqk_head0.step(&{qk_q_input_array}[0], &{qk_k_input_array}[0], &stream_qk[0])"
 
         QKMatMul0 = cpp_object(
             f"QKMatMul",
             f"matmulqk_head0",
             template_args=[
-                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}", "TQInputWord"),
                 (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TQInput"),
-                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}", "TKInputWord"),
                 (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TKInput"),
                 (f"{get_word_type(QKMatMul_output_quant, 1)}", "TQKWord"),
                 (f"{QKMatMul_output_quant.get_hls_data_type()}", "TQK"),
@@ -850,13 +939,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 (f"{q_shape[3]}", "DIM_Q"),
                 (f"{k_shape[3]}", "DIM_K"),
                 (f"{q_shape[2]}", "DIM_SEQ_QK"),
-                ("1", "REDUCE_PAR"),
+                (f"{qk_reduce_par}", "REDUCE_PAR"),
             ],
         )
 
         hls_kernels.append(
             HLSKernel.make_node(
-                inputs=["stream_q_0_", "stream_k_0_"],
+                inputs=[f"{qk_q_input_array}_0_", f"{qk_k_input_array}_0_"],
                 outputs=QKMatMul0_output_names,
                 name=f"matmulqk_head0",
                 domain="nn2fpga.compiler.custom_op",
@@ -879,16 +968,16 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 hls_type=f"{get_word_type(QKMatMul_output_quant, 1)}",
                 n_array=2, 
             )
-        QKMatMul1_run_call = f"matmulqk_head1.run<{hls_tag}>(&stream_q[1], &stream_k[1], &stream_qk[1])"
-        QKMatMul1_step_call = f"matmulqk_head1.step(&stream_q[1], &stream_k[1], &stream_qk[1])"
+        QKMatMul1_run_call = f"matmulqk_head1.run<{hls_tag}>(&{qk_q_input_array}[1], &{qk_k_input_array}[1], &stream_qk[1])"
+        QKMatMul1_step_call = f"matmulqk_head1.step(&{qk_q_input_array}[1], &{qk_k_input_array}[1], &stream_qk[1])"
 
         QKMatMul1 = cpp_object(
             f"QKMatMul",
             f"matmulqk_head1",
             template_args=[
-                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TQInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}", "TQInputWord"),
                 (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TQInput"),
-                (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TKInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, qk_reduce_par)}", "TKInputWord"),
                 (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TKInput"),
                 (f"{get_word_type(QKMatMul_output_quant, 1)}", "TQKWord"),
                 (f"{QKMatMul_output_quant.get_hls_data_type()}", "TQK"),
@@ -898,13 +987,13 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
                 (f"{q_shape[3]}", "DIM_Q"),
                 (f"{k_shape[3]}", "DIM_K"),
                 (f"{q_shape[2]}", "DIM_SEQ_QK"),
-                ("1", "REDUCE_PAR"),
+                (f"{qk_reduce_par}", "REDUCE_PAR"),
             ],
         )
 
         hls_kernels.append(
             HLSKernel.make_node(
-                inputs=["stream_q_1_", "stream_k_1_"],
+                inputs=[f"{qk_q_input_array}_1_", f"{qk_k_input_array}_1_"],
                 outputs=QKMatMul1_output_names,
                 name=f"matmulqk_head1",
                 domain="nn2fpga.compiler.custom_op",
@@ -1178,36 +1267,104 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         )
         hls_tag += 1
 
+        def add_v_parallelize_kernel(head, object_name, hls_tag):
+            output_names = [
+                f"stream_v_parallel_{head}_{lane}_"
+                for lane in range(vp_reduce_par)
+            ]
+            for output in output_names:
+                fifos[output] = TensorFifo(
+                    depth=0,
+                    hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
+                    n_array=vp_reduce_par,
+                )
+
+            stream_expand_run_call = (
+                f"{object_name}.run<{hls_tag}>(&stream_v_copy[{head}], "
+                f"stream_v_parallel_{head})"
+            )
+            stream_expand_step_call = (
+                f"{object_name}.step(&stream_v_copy[{head}], "
+                f"stream_v_parallel_{head})"
+            )
+            stream_expand_object = cpp_object(
+                "BandwidthAdjustIncreaseStreams",
+                object_name,
+                template_args=[
+                    (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                    (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TInput"),
+                    (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TOutputWord"),
+                    (f"{SplitReshapeQKV_output_quant.get_hls_data_type()}", "TOutput"),
+                    (
+                        f"DequantQuantEqual<{SplitReshapeQKV_output_quant.get_hls_data_type()}>",
+                        "Quantizer",
+                    ),
+                    ("1", "IN_DIM0"),
+                    (f"{v_shape[3]}", "IN_DIM1"),
+                    (f"{v_shape[2]}", "IN_DIM2"),
+                    ("1", "IN_DIM1_UNROLL"),
+                    (f"{vp_reduce_par}", "OUT_DIM1_UNROLL"),
+                    ("1", "IN_DIM2_UNROLL"),
+                    ("1", "OUT_DIM2_UNROLL"),
+                ],
+            )
+
+            hls_kernels.append(
+                HLSKernel.make_node(
+                    inputs=[f"stream_v_copy_{head}_"],
+                    outputs=output_names,
+                    name=object_name,
+                    domain="nn2fpga.compiler.custom_op",
+                    original_op_type="BandwidthAdjustIncreaseStreams",
+                    hls_tag=hls_tag,
+                    hls_object_name=object_name,
+                    hls_variable_declarations="",
+                    hls_run_call=stream_expand_run_call,
+                    hls_step_call=stream_expand_step_call,
+                    hls_object_declaration=stream_expand_object.generate_declaration(),
+                )
+            )
+            return output_names, hls_tag + 1
+
+        v_parallel0_input_names, hls_tag = add_v_parallelize_kernel(
+            0, "stream_expand_v_head0", hls_tag
+        )
+        v_parallel1_input_names, hls_tag = add_v_parallelize_kernel(
+            1, "stream_expand_v_head1", hls_tag
+        )
+
         # Transpose V for first head
         TransposeV0_output_names = ["stream_v_transposed_0_"]
         for output in TransposeV0_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, vp_reduce_par)}",
                 n_array=2, 
             )
 
-        TransposeV0_run_call = f"transposev_head0.run<{hls_tag}>(&stream_v_copy[0], &stream_v_transposed[0])"
-        TransposeV0_step_call = f"transposev_head0.step(&stream_v_copy[0], &stream_v_transposed[0])"
+        TransposeV0_run_call = f"transposev_head0.run<{hls_tag}>(stream_v_parallel_0, &stream_v_transposed[0])"
+        TransposeV0_step_call = f"transposev_head0.step(stream_v_parallel_0, &stream_v_transposed[0])"
 
         TransposeV0 = cpp_object(
-            f"TransposeRowCol",
+            f"TransposeRowColReplayPacked",
             f"transposev_head0",
             template_args=[
                 (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, vp_reduce_par)}", "TOutputWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
-                ("1", "DIM_HEADS"),
+                (f"{q_shape[3]}", "DIM_P"),
+                (f"{vp_reduce_par}", "REDUCE_PAR"),
             ],
         )
 
         hls_kernels.append(
             HLSKernel.make_node(
-                inputs=["stream_v_copy_0_"],
+                inputs=v_parallel0_input_names,
                 outputs=TransposeV0_output_names,
                 name=f"transposev_head0",
                 domain="nn2fpga.compiler.custom_op",
-                original_op_type="TransposeRowCol",
+                original_op_type="TransposeRowColReplayPacked",
                 hls_tag=hls_tag,
                 hls_object_name=f"transposev_head0",
                 hls_variable_declarations="",
@@ -1223,31 +1380,33 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         for output in TransposeV1_output_names:
             fifos[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, 1)}",
+                hls_type=f"{get_word_type(SplitReshapeQKV_output_quant, vp_reduce_par)}",
                 n_array=2, 
             )
 
-        TransposeV1_run_call = f"transposev_head1.run<{hls_tag}>(&stream_v_copy[1], &stream_v_transposed[1])"
-        TransposeV1_step_call = f"transposev_head1.step(&stream_v_copy[1], &stream_v_transposed[1])"
+        TransposeV1_run_call = f"transposev_head1.run<{hls_tag}>(stream_v_parallel_1, &stream_v_transposed[1])"
+        TransposeV1_step_call = f"transposev_head1.step(stream_v_parallel_1, &stream_v_transposed[1])"
 
         TransposeV1 = cpp_object(
-            f"TransposeRowCol",
+            f"TransposeRowColReplayPacked",
             f"transposev_head1",
             template_args=[
                 (f"{get_word_type(SplitReshapeQKV_output_quant, 1)}", "TInputWord"),
+                (f"{get_word_type(SplitReshapeQKV_output_quant, vp_reduce_par)}", "TOutputWord"),
                 (f"{v_shape[2]}", "DIM_V"),
                 (f"{v_shape[3]}", "DIM_SEQ_VP"),
-                ("1", "DIM_HEADS"),
+                (f"{q_shape[3]}", "DIM_P"),
+                (f"{vp_reduce_par}", "REDUCE_PAR"),
             ],
         )
 
         hls_kernels.append(
             HLSKernel.make_node(
-                inputs=["stream_v_copy_1_"],
+                inputs=v_parallel1_input_names,
                 outputs=TransposeV1_output_names,
                 name=f"transposev_head1",
                 domain="nn2fpga.compiler.custom_op",
-                original_op_type="TransposeRowCol",
+                original_op_type="TransposeRowColReplayPacked",
                 hls_tag=hls_tag,
                 hls_object_name=f"transposev_head1",
                 hls_variable_declarations="",
@@ -1327,28 +1486,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         vp_v_input_array = "stream_v_transposed"
         vp_p_input_array = "stream_p"
         if vp_reduce_par > 1:
-            vp_v_input_array = "stream_v_transposed_packed"
             vp_p_input_array = "stream_p_packed"
-            hls_tag = add_vp_pack_kernel(
-                "stream_v_transposed",
-                vp_v_input_array,
-                0,
-                SplitReshapeQKV_output_quant,
-                v_shape[2],
-                v_shape[3],
-                "packv_head0",
-                hls_tag,
-            )
-            hls_tag = add_vp_pack_kernel(
-                "stream_v_transposed",
-                vp_v_input_array,
-                1,
-                SplitReshapeQKV_output_quant,
-                v_shape[2],
-                v_shape[3],
-                "packv_head1",
-                hls_tag,
-            )
             hls_tag = add_vp_pack_kernel(
                 "stream_p",
                 vp_p_input_array,
@@ -1609,7 +1747,7 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             )
         )
 
-        return hls_kernels, [], fifos, hls_tag
+        return hls_kernels, [], fifos, hls_tag + 1
 
     def get_latency(self, model: ModelWrapper) -> int:
         """ Estimate the latency of the StreamingSoftmax operation.
@@ -1619,7 +1757,10 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             int: Estimated latency in clock cycles.
         """
         point = self.__current_dse_point()
-        return 64 * 400 * 400 // point.reduction_unroll
+        # Shared knob semantics: QK uses u/2 while the replay transpose and VP
+        # path use u. This keeps the two matmuls balanced and leaves the
+        # replaying transpose as the dominant stage by one preload pass.
+        return 64 * 400 * 401 // point.reduction_unroll
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingSoftmax operation.
@@ -1638,7 +1779,8 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
             int: Estimated DSP usage.
         """
         point = self.__current_dse_point()
-        return 7 + point.reduction_unroll
+        qk_reduce_par = point.reduction_unroll // 2 if point.reduction_unroll > 1 else 1
+        return 7 + point.reduction_unroll + qk_reduce_par
 
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingSoftmax operation requires a line buffer.
@@ -1658,10 +1800,34 @@ class StreamingYoloAttention(NN2FPGAOp, DSECapable):
         self, model: ModelWrapper
     ) -> list["StreamingYoloAttention.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingYoloAttention operation."""
-        return [
-            self.DSEPoint(lanes_unroll=1, reduction_unroll=1),
-            self.DSEPoint(lanes_unroll=1, reduction_unroll=2),
-        ]
+        # Shared knob u: QK uses u/2, VP uses u. Therefore u must be even,
+        # divide the VP reduction dimension, and u/2 must divide the QK
+        # reduction dimension.
+        dim_vp_reduction = 400
+        dim_qk_reduction = 32
+
+        rq_bitwidth = int(model.get_initializer(self.onnx_node.input[3]))
+        p_bitwidth = int(model.get_initializer(self.onnx_node.input[27]))
+
+        DSE_points = []
+        for reduction_unroll in self.divisors([dim_vp_reduction], dim_vp_reduction):
+            if reduction_unroll % 2 != 0:
+                continue
+            if dim_qk_reduction % (reduction_unroll // 2) != 0:
+                continue
+            # Input fanout before transpose stays scalar, so only the number of
+            # streams grows there. The packed V/P words after transpose/pack are
+            # the widths that must fit inside the implementation limits.
+            if (rq_bitwidth * reduction_unroll) > 4096:
+                continue
+            if (p_bitwidth * reduction_unroll) > 4096:
+                continue
+
+            DSE_points.append(
+                self.DSEPoint(lanes_unroll=1, reduction_unroll=reduction_unroll)
+            )
+
+        return DSE_points
 
     def apply_point(self, model: ModelWrapper, point: "StreamingYoloAttention.DSEPoint"):
         """ Set the parallelization attributes for the StreamingYoloAttention operation.

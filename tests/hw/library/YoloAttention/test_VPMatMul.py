@@ -2,7 +2,7 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
-from tests.base_hls_test import BaseHLSTest
+from tests.hw.library.base_hls_test import BaseHLSTest
 
 class TestVPMatMul(BaseHLSTest):
 
