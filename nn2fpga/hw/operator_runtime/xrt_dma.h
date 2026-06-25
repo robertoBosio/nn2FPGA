@@ -1,7 +1,10 @@
 #pragma once
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <optional>
 #include <xrt/xrt_bo.h>
@@ -44,6 +47,8 @@ static constexpr uint32_t DMASR_SG_SLVERR = (1u << 9);
 static constexpr uint32_t DMASR_SG_DECERR = (1u << 10);
 static constexpr uint32_t DMASR_SG_ERROR_MASK =
     DMASR_SG_INTERR | DMASR_SG_SLVERR | DMASR_SG_DECERR;
+
+static constexpr size_t AXI_DMA_MAX_BD_LENGTH = 0x3FFFFFFu;
 
 static inline void wr32(volatile uint32_t *b, off_t off, uint32_t v) {
   b[off / 4] = v;
@@ -162,6 +167,22 @@ public:
           "S2MM bytes_per_descriptor must be greater than 0.");
     if (batch_max_ == 0)
       throw std::runtime_error("S2MM batch_max must be greater than 0.");
+    if (bytes_per_descriptor_ > AXI_DMA_MAX_BD_LENGTH) {
+      throw std::runtime_error(
+          "S2MM bytes_per_descriptor exceeds AXI DMA BD length field. Actual: " +
+          std::to_string(bytes_per_descriptor_) + ", max: " +
+          std::to_string(AXI_DMA_MAX_BD_LENGTH));
+    }
+    if (batch_max_ > std::numeric_limits<size_t>::max() / bytes_per_descriptor_) {
+      throw std::runtime_error("S2MM descriptor byte range overflows size_t.");
+    }
+    const size_t required_dst_bytes = batch_max_ * bytes_per_descriptor_;
+    if (required_dst_bytes > dst_.size()) {
+      throw std::runtime_error(
+          "S2MM descriptor range exceeds destination BO size. Required: " +
+          std::to_string(required_dst_bytes) + ", BO size: " +
+          std::to_string(dst_.size()));
+    }
 
     build_descriptors();
   }
@@ -312,11 +333,9 @@ private:
       bd_[i].buf_l = (uint32_t)(da & 0xFFFFFFFFull);
       bd_[i].buf_h = (uint32_t)(da >> 32);
 
-      // Set the buffer length.
-      // AXI DMA supports up to 26 bits for buffer length (see PG021), so we
-      // mask with 0x3FFFFFFu.
-      bd_[i].ctrl_len =
-          (uint32_t)(bytes_per_descriptor_ & 0x3FFFFFFu);
+      // Set the buffer length. The constructor rejects lengths that do not fit
+      // in the AXI DMA 26-bit BD length field.
+      bd_[i].ctrl_len = (uint32_t)bytes_per_descriptor_;
 
       // Reserved fields.
       bd_[i].rsv4 = bd_[i].rsv5 = 0;

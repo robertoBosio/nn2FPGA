@@ -1283,6 +1283,15 @@ class YoloAttentionFromInputReshape(Pattern):
 
         if len(anchor_node.output) < 1:
             return Match(False, self.name, covered, ["Reshape has no output"])
+        
+        reshape_input_quant = model.find_producer(anchor_node.input[0])
+        if reshape_input_quant is None or not check_act_quant(model, reshape_input_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Reshape input must come from supported activation Quant/IntQuant"],
+            )
 
         reshape_quant = model.find_consumer(anchor_node.output[0])
         if reshape_quant is None or not check_act_quant(model, reshape_quant, reasons):
@@ -1447,6 +1456,7 @@ class YoloAttentionFromInputReshape(Pattern):
             return Match(False, self.name, covered, ["V Reshape output must feed Quant/IntQuant"])
 
         covered.update({
+            reshape_input_quant.name,
             anchor_node.name,
             reshape_quant.name,
             q_slice.name,

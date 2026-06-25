@@ -33,12 +33,17 @@ import random
 import statistics
 import time
 from contextlib import redirect_stdout
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
+import numpy as np
+import torch
+from PIL import Image
 from ultralytics import YOLO
+from ultralytics.data.loaders import LoadPilAndNumpy
 
 
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
+STAGE_NAMES = ("source_misc", "preprocess", "inference", "postprocess")
 
 
 # ----------------------------
@@ -86,6 +91,135 @@ def pct_gain(old: float, new: float) -> float:
     if old == 0:
         return float("nan")
     return 100.0 * (new - old) / old
+
+
+class PredictorStageTimer:
+    """
+    Time predictor stages during model.predict().
+
+    The residual time after explicit predictor methods is reported as
+    source_misc, which mostly captures file loading/decoding plus framework
+    overhead around the predictor calls.
+    """
+
+    def __init__(self, task: str):
+        self.task = task
+        self._patches: List[Tuple[type, str, Callable]] = []
+        self._current: Optional[dict[str, float]] = None
+        self._current_total_start: Optional[float] = None
+        self._batch_records: List[dict] = []
+
+    def __enter__(self):
+        self.enable()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.disable()
+
+    def enable(self) -> None:
+        import ultralytics.engine.predictor as predictor_mod
+
+        self._patch_method(predictor_mod.BasePredictor, "preprocess", "preprocess")
+        self._patch_method(predictor_mod.BasePredictor, "inference", "inference")
+        self._patch_callbacks(predictor_mod.BasePredictor)
+
+        for cls in self._predictor_classes_for_task():
+            if hasattr(cls, "postprocess"):
+                self._patch_method(cls, "postprocess", "postprocess")
+
+    def disable(self) -> None:
+        for cls, method_name, original in reversed(self._patches):
+            setattr(cls, method_name, original)
+        self._patches.clear()
+
+    def start_batch(self) -> None:
+        self._current = {f"{stage}_s": 0.0 for stage in STAGE_NAMES}
+
+    def finish_batch(self, total_s: float) -> dict[str, float]:
+        if self._current is None:
+            raise RuntimeError("Predictor stage timer batch was not started.")
+
+        accounted_s = sum(self._current[f"{stage}_s"] for stage in STAGE_NAMES if stage != "source_misc")
+        self._current["source_misc_s"] = max(0.0, total_s - accounted_s)
+        out = dict(self._current)
+        self._current = None
+        return out
+
+    def reset_records(self) -> None:
+        self._batch_records = []
+
+    def consume_records(self) -> List[dict]:
+        out = self._batch_records
+        self._batch_records = []
+        return out
+
+    def _patch_method(self, cls: type, method_name: str, stage_name: str) -> None:
+        original = getattr(cls, method_name, None)
+        if original is None:
+            return
+
+        timer = self
+
+        def wrapped(instance, *args, **kwargs):
+            if timer._current is None:
+                return original(instance, *args, **kwargs)
+
+            t0 = time.perf_counter()
+            try:
+                return original(instance, *args, **kwargs)
+            finally:
+                timer._current[f"{stage_name}_s"] += time.perf_counter() - t0
+
+        setattr(cls, method_name, wrapped)
+        self._patches.append((cls, method_name, original))
+
+    def _patch_callbacks(self, cls: type) -> None:
+        original = getattr(cls, "run_callbacks", None)
+        if original is None:
+            return
+
+        timer = self
+
+        def wrapped(instance, event: str):
+            if event == "on_predict_batch_start":
+                timer._current_total_start = time.perf_counter()
+                timer.start_batch()
+
+            result = original(instance, event)
+
+            if event == "on_predict_batch_end" and timer._current_total_start is not None and timer._current is not None:
+                total_s = time.perf_counter() - timer._current_total_start
+                record = timer.finish_batch(total_s)
+                record["batch_size"] = len(getattr(instance, "results", []) or [])
+                record["total_s"] = total_s
+                timer._batch_records.append(record)
+                timer._current_total_start = None
+
+            return result
+
+        setattr(cls, "run_callbacks", wrapped)
+        self._patches.append((cls, "run_callbacks", original))
+
+    def _predictor_classes_for_task(self) -> List[type]:
+        classes: List[type] = []
+        module_map = {
+            "detect": ("ultralytics.models.yolo.detect.predict", "DetectionPredictor"),
+            "segment": ("ultralytics.models.yolo.segment.predict", "SegmentationPredictor"),
+            "classify": ("ultralytics.models.yolo.classify.predict", "ClassificationPredictor"),
+            "pose": ("ultralytics.models.yolo.pose.predict", "PosePredictor"),
+            "obb": ("ultralytics.models.yolo.obb.predict", "OBBPredictor"),
+        }
+        target = module_map.get(self.task)
+        if target is None:
+            return classes
+
+        module_name, class_name = target
+        try:
+            module = __import__(module_name, fromlist=[class_name])
+            classes.append(getattr(module, class_name))
+        except Exception:
+            pass
+        return classes
 
 
 # ----------------------------
@@ -207,80 +341,184 @@ def sample_batches(
     return warmup_batches, timed_batches
 
 
+def flatten_batches(batches: List[List[object]]) -> List[object]:
+    return [item for batch in batches for item in batch]
+
+
+def load_image_bgr(path: str) -> np.ndarray:
+    with Image.open(path) as img:
+        rgb = np.asarray(img.convert("RGB"))
+    return np.ascontiguousarray(rgb[..., ::-1])
+
+
+def load_image_batches(path_batches: List[List[str]]) -> List[List[np.ndarray]]:
+    return [[load_image_bgr(path) for path in batch] for batch in path_batches]
+
+
+def make_tensor_batches(image_batches: List[List[np.ndarray]], imgsz: int) -> List[torch.Tensor]:
+    from ultralytics.data.augment import LetterBox
+
+    letterbox = LetterBox(new_shape=(imgsz, imgsz), auto=False, stride=32)
+    tensor_batches: List[torch.Tensor] = []
+
+    for batch in image_batches:
+        stacked = []
+        for image in batch:
+            resized = letterbox(image=image)
+            rgb = resized[..., ::-1].transpose((2, 0, 1))
+            stacked.append(np.ascontiguousarray(rgb).astype(np.float32) / 255.0)
+        tensor_batches.append(torch.from_numpy(np.stack(stacked, axis=0)))
+
+    return tensor_batches
+
+
+def prepare_sources(
+    warmup_path_batches: List[List[str]],
+    timed_path_batches: List[List[str]],
+    source_mode: str,
+    imgsz: int,
+) -> Tuple[List[object], List[object]]:
+    if source_mode == "paths":
+        return warmup_path_batches, timed_path_batches
+
+    warmup_images = load_image_batches(warmup_path_batches)
+    timed_images = load_image_batches(timed_path_batches)
+
+    if source_mode == "ndarray":
+        return warmup_images, timed_images
+    if source_mode == "tensor":
+        return make_tensor_batches(warmup_images, imgsz), make_tensor_batches(timed_images, imgsz)
+
+    raise ValueError(f"Unsupported source mode: {source_mode}")
+
+
+def count_total_images(batches: List[object]) -> int:
+    total = 0
+    for batch in batches:
+        if isinstance(batch, torch.Tensor):
+            total += int(batch.shape[0])
+        else:
+            total += len(batch)
+    return total
+
+
+class BatchedMemorySource(LoadPilAndNumpy):
+    def __init__(self, batches: List[object]):
+        self.batches = batches
+        self.count = 0
+        self.mode = "image"
+        self.bs = self._batch_size(batches[0]) if batches else 0
+        self.source_type = type(
+            "SourceType",
+            (),
+            {
+                "stream": False,
+                "screenshot": False,
+                "from_img": not bool(batches and isinstance(batches[0], torch.Tensor)),
+                "tensor": bool(batches and isinstance(batches[0], torch.Tensor)),
+            },
+        )()
+
+    def _batch_size(self, batch: object) -> int:
+        if isinstance(batch, torch.Tensor):
+            return int(batch.shape[0])
+        return len(batch)
+
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __len__(self):
+        return len(self.batches)
+
+    def __next__(self):
+        if self.count >= len(self.batches):
+            raise StopIteration
+        batch = self.batches[self.count]
+        self.count += 1
+
+        if isinstance(batch, torch.Tensor):
+            paths = [f"tensor_{self.count}_{i}.jpg" for i in range(int(batch.shape[0]))]
+            return paths, batch, [""] * int(batch.shape[0])
+
+        paths = [f"memory_{self.count}_{i}.jpg" for i in range(len(batch))]
+        return paths, batch, [""] * len(batch)
+
+
 # ----------------------------
 # Benchmark
 # ----------------------------
 def run_predict_batch(
     model: YOLO,
-    batch_paths: List[str],
+    batch_source: object,
     imgsz: int,
     conf: float,
     iou: float,
     device: str,
     half: bool,
+    batch: int,
+    stream: bool,
 ):
     return model.predict(
-        source=batch_paths,
+        source=batch_source,
         imgsz=imgsz,
         conf=conf,
         iou=iou,
         device=device,
         half=half,
         verbose=False,
-        stream=False,
+        batch=batch,
+        stream=stream,
     )
 
 
-def benchmark_predict_with_fixed_batches(
+def summarize_stage(stage_values_ms: List[float]) -> dict:
+    sorted_vals = sorted(stage_values_ms)
+    total_ms = sum(stage_values_ms)
+    return {
+        "total_ms": total_ms,
+        "mean_ms": statistics.mean(sorted_vals) if sorted_vals else float("nan"),
+        "p50_ms": percentile(sorted_vals, 50),
+        "p90_ms": percentile(sorted_vals, 90),
+        "p95_ms": percentile(sorted_vals, 95),
+    }
+
+
+def build_stage_breakdown(stage_samples_s: dict[str, List[float]], total_images: int, total_time_s: float) -> dict:
+    stages: dict[str, dict] = {}
+    total_time_ms = total_time_s * 1000.0
+
+    for stage in STAGE_NAMES:
+        values_ms = [v * 1000.0 for v in stage_samples_s[f"{stage}_s"]]
+        item = summarize_stage(values_ms)
+        item["share_pct"] = (item["total_ms"] / total_time_ms * 100.0) if total_time_ms > 0 else float("nan")
+        item["per_image_ms"] = (item["total_ms"] / total_images) if total_images > 0 else float("nan")
+        stages[stage] = item
+
+    return stages
+
+
+def build_results_from_batch_records(
     model_path: str,
-    warmup_batches: List[List[str]],
-    timed_batches: List[List[str]],
-    imgsz: int,
-    conf: float,
-    iou: float,
-    device: str,
-    half: bool,
-    task: str,
-) -> Tuple[dict, YOLO]:
-    """
-    Bench Ultralytics pipeline on fixed batches.
-    Returns metrics dict and model instance.
-    """
-    model = YOLO(model_path, task=task)
-
-    # Warmup
-    for batch_paths in warmup_batches:
-        run_predict_batch(model, batch_paths, imgsz, conf, iou, device, half)
-
-    # Timed
-    per_image_ms: List[float] = []
-    per_batch_ms: List[float] = []
-    total_images = 0
-
-    t0 = time.perf_counter()
-    for batch_paths in timed_batches:
-        start = time.perf_counter()
-        _ = run_predict_batch(model, batch_paths, imgsz, conf, iou, device, half)
-        end = time.perf_counter()
-
-        dt_s = end - start
-        dt_ms = dt_s * 1000.0
-        bsz = len(batch_paths)
-
-        total_images += bsz
-        per_batch_ms.append(dt_ms)
-        per_image_ms.append(dt_ms / max(1, bsz))
-
-    t1 = time.perf_counter()
-    total_time_s = t1 - t0
+    batch_records: List[dict],
+    total_time_s: float,
+    benchmark_mode: str,
+    source_mode: str,
+) -> dict:
+    per_batch_ms = [record["total_s"] * 1000.0 for record in batch_records]
+    per_image_ms = [record["total_s"] * 1000.0 / max(1, record["batch_size"]) for record in batch_records]
+    total_images = sum(record["batch_size"] for record in batch_records)
+    stage_samples_s = {f"{stage}_s": [record[f"{stage}_s"] for record in batch_records] for stage in STAGE_NAMES}
 
     batch_sorted = sorted(per_batch_ms)
     image_sorted = sorted(per_image_ms)
     throughput = total_images / total_time_s if total_time_s > 0 else float("inf")
 
-    results = {
+    return {
         "model_path": model_path,
-        "timed_batches": len(timed_batches),
+        "benchmark_mode": benchmark_mode,
+        "source_mode": source_mode,
+        "timed_batches": len(batch_records),
         "timed_images": total_images,
         "total_time_s": total_time_s,
         "throughput_img_s": throughput,
@@ -294,7 +532,59 @@ def benchmark_predict_with_fixed_batches(
         "p90_img_ms": percentile(image_sorted, 90),
         "p95_img_ms": percentile(image_sorted, 95),
         "p99_img_ms": percentile(image_sorted, 99),
+        "stage_breakdown": build_stage_breakdown(stage_samples_s, total_images, total_time_s),
     }
+
+
+def benchmark_predict_with_fixed_batches(
+    model_path: str,
+    warmup_batches: List[object],
+    timed_batches: List[object],
+    imgsz: int,
+    conf: float,
+    iou: float,
+    device: str,
+    half: bool,
+    task: str,
+    batch: int,
+    benchmark_mode: str,
+    source_mode: str,
+) -> Tuple[dict, YOLO]:
+    """
+    Bench Ultralytics pipeline on fixed batches.
+    Returns metrics dict and model instance.
+    """
+    model = YOLO(model_path, task=task)
+
+    with PredictorStageTimer(task) as stage_timer:
+        stage_timer.reset_records()
+        if benchmark_mode == "single_call":
+            warmup_source = flatten_batches(warmup_batches) if source_mode == "paths" else BatchedMemorySource(warmup_batches)
+            timed_source = flatten_batches(timed_batches) if source_mode == "paths" else BatchedMemorySource(timed_batches)
+            if warmup_batches:
+                warmup_iter = run_predict_batch(model, warmup_source, imgsz, conf, iou, device, half, batch=batch, stream=True)
+                for _ in warmup_iter:
+                    pass
+                stage_timer.reset_records()
+
+            t0 = time.perf_counter()
+            pred_iter = run_predict_batch(model, timed_source, imgsz, conf, iou, device, half, batch=batch, stream=True)
+            for _ in pred_iter:
+                pass
+            total_time_s = time.perf_counter() - t0
+            batch_records = stage_timer.consume_records()
+        else:
+            for batch_source in warmup_batches:
+                _ = run_predict_batch(model, batch_source, imgsz, conf, iou, device, half, batch=batch, stream=False)
+
+            stage_timer.reset_records()
+            t0 = time.perf_counter()
+            for batch_source in timed_batches:
+                _ = run_predict_batch(model, batch_source, imgsz, conf, iou, device, half, batch=batch, stream=False)
+            total_time_s = time.perf_counter() - t0
+            batch_records = stage_timer.consume_records()
+
+    results = build_results_from_batch_records(model_path, batch_records, total_time_s, benchmark_mode, source_mode)
 
     return results, model
 
@@ -302,6 +592,7 @@ def benchmark_predict_with_fixed_batches(
 def print_single_results(label: str, r: dict) -> None:
     print(f"\n=== Ultralytics ONNX Pipeline Benchmark: {label} ===")
     print(f"Model:         {r['model_path']}")
+    print(f"Benchmark:     {r['benchmark_mode']} | source={r['source_mode']}")
     print(f"Timed batches: {r['timed_batches']}")
     print(f"Timed images:  {r['timed_images']}")
     print(f"Total time:    {r['total_time_s']:.3f} s")
@@ -320,6 +611,18 @@ def print_single_results(label: str, r: dict) -> None:
     print(f"p90:  {r['p90_img_ms']:8.3f} ms")
     print(f"p95:  {r['p95_img_ms']:8.3f} ms")
     print(f"p99:  {r['p99_img_ms']:8.3f} ms")
+
+
+def print_timing_breakdown(label: str, r: dict) -> None:
+    print(f"\n--- Timing breakdown: {label} ---")
+    print("source_misc includes image loading/decoding and framework overhead outside explicit predictor stages.")
+    for stage in STAGE_NAMES:
+        item = r["stage_breakdown"][stage]
+        print(
+            f"{stage:>12}: total={item['total_ms']:9.3f} ms | share={item['share_pct']:6.2f}% | "
+            f"per_img={item['per_image_ms']:8.3f} ms | mean_batch={item['mean_ms']:8.3f} ms | "
+            f"p50={item['p50_ms']:8.3f} ms | p90={item['p90_ms']:8.3f} ms | p95={item['p95_ms']:8.3f} ms"
+        )
 
 
 def build_comparison(orig: dict, accel: dict) -> dict:
@@ -484,6 +787,8 @@ def main() -> None:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--half", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--source-mode", default="paths", choices=["paths", "ndarray", "tensor"])
+    ap.add_argument("--benchmark-mode", default="per_batch", choices=["per_batch", "single_call"])
 
     # Accuracy stage
     ap.add_argument(
@@ -505,18 +810,26 @@ def main() -> None:
     if not images:
         raise RuntimeError(f"No images found in: {args.coco_images}")
 
-    warmup_batches, timed_batches = sample_batches(
+    warmup_path_batches, timed_path_batches = sample_batches(
         images=images,
         batch=args.batch,
         warmup=args.warmup,
         iters=args.iters,
         seed=args.seed,
     )
+    warmup_batches, timed_batches = prepare_sources(
+        warmup_path_batches=warmup_path_batches,
+        timed_path_batches=timed_path_batches,
+        source_mode=args.source_mode,
+        imgsz=args.imgsz,
+    )
 
     print("Prepared shared benchmark batches:")
     print(f"  warmup batches: {len(warmup_batches)}")
     print(f"  timed batches:  {len(timed_batches)}")
-    print(f"  timed images:   {sum(len(b) for b in timed_batches)}")
+    print(f"  timed images:   {count_total_images(timed_batches)}")
+    print(f"  benchmark mode: {args.benchmark_mode}")
+    print(f"  source mode:    {args.source_mode}")
 
     # ----------------------------
     # Benchmark original
@@ -539,12 +852,16 @@ def main() -> None:
             device=args.device,
             half=args.half,
             task=args.task,
+            batch=args.batch,
+            benchmark_mode=args.benchmark_mode,
+            source_mode=args.source_mode,
         )
         orig_profile_paths = patcher_orig.end_profiling()
     finally:
         patcher_orig.disable()
 
     print_single_results("original", orig_results)
+    print_timing_breakdown("original", orig_results)
 
     # ----------------------------
     # Benchmark accelerated
@@ -567,12 +884,16 @@ def main() -> None:
             device=args.device,
             half=args.half,
             task=args.task,
+            batch=args.batch,
+            benchmark_mode=args.benchmark_mode,
+            source_mode=args.source_mode,
         )
         accel_profile_paths = patcher_accel.end_profiling()
     finally:
         patcher_accel.disable()
 
     print_single_results("accelerated", accel_results)
+    print_timing_breakdown("accelerated", accel_results)
 
     # ----------------------------
     # Comparison + save file

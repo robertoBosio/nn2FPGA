@@ -197,7 +197,7 @@ def preload_batches(dataloader: DataLoader, measure_batches: int | None = None) 
         batches.append(features.numpy().astype(np.float32))
 
     if not batches:
-        raise RuntimeError("No batches loaded. Check sample_size / dataloader.")
+        raise RuntimeError("No batches loaded. Check num_images / dataloader.")
 
     return batches
 
@@ -448,7 +448,7 @@ def run_speed(args) -> int:
 
     dataloader = coco_dataloader(
         batch_size=args.batch_size,
-        sample_size=args.sample_size,
+        sample_size=args.num_images,
         num_workers=args.num_workers,
     )
     batches = preload_batches(dataloader, measure_batches=args.measure_batches)
@@ -511,16 +511,10 @@ def parse_args():
         "--num-images",
         type=int,
         default=10,
-        help="Number of COCO images to check in correctness mode.",
+        help="Number of COCO images to use. Use -1 for all images in speed mode.",
     )
 
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for speed mode.")
-    parser.add_argument(
-        "--sample-size",
-        type=int,
-        default=10,
-        help="Number of COCO images to preload for speed mode. Use -1 for all images.",
-    )
     parser.add_argument(
         "--warmup-batches",
         type=int,
@@ -536,14 +530,14 @@ def parse_args():
     parser.add_argument("--results-file", default="performance_improvement.txt")
 
     args = parser.parse_args()
-    if args.num_images <= 0:
-        parser.error("--num-images must be > 0")
+    if args.num_images == -1:
+        if args.mode == "correctness":
+            parser.error("--num-images must be > 0 in correctness mode")
+        args.num_images = None
+    elif args.num_images <= 0:
+        parser.error("--num-images must be > 0, or -1 in speed mode")
     if args.batch_size <= 0:
         parser.error("--batch-size must be > 0")
-    if args.sample_size == -1:
-        args.sample_size = None
-    elif args.sample_size is not None and args.sample_size <= 0:
-        parser.error("--sample-size must be > 0 or -1")
     if args.warmup_batches < 0:
         parser.error("--warmup-batches must be >= 0")
     if args.measure_batches is not None and args.measure_batches <= 0:

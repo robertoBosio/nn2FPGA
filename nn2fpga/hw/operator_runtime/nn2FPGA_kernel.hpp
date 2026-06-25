@@ -220,6 +220,17 @@ private:
     for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
       const auto &pd = Spec::Inputs[i];
       const auto size = pd.buffer_size;
+      if (pd.mode != PortMode::StaticInit) {
+        const size_t required_size =
+            static_cast<size_t>(Spec::N_MAX) * bytes_per_image(pd.dtype, pd.inner_dims);
+        if (size < required_size) {
+          throw std::runtime_error(
+              "Input BO is smaller than max runtime transfer for port " +
+              std::to_string(i) + ". Required: " +
+              std::to_string(required_size) + ", BO size: " +
+              std::to_string(size));
+        }
+      }
       in_bos_.emplace_back(dev_, size, 0, 0);
       in_host_ptrs_[i] = in_bos_.back().map<void *>();
       tx_[i].emplace(mmio_.regs, pd.dma_off, in_bos_.back());
@@ -229,7 +240,14 @@ private:
     for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
       const auto &pd = Spec::Outputs[o];
       const auto size = pd.buffer_size;
-      const size_t bpi = size / Spec::N_MAX; // bytes per image
+      const size_t bpi = bytes_per_image(pd.dtype, pd.inner_dims);
+      const size_t required_size = static_cast<size_t>(Spec::N_MAX) * bpi;
+      if (size < required_size) {
+        throw std::runtime_error(
+            "Output BO is smaller than max runtime transfer for port " +
+            std::to_string(o) + ". Required: " + std::to_string(required_size) +
+            ", BO size: " + std::to_string(size));
+      }
       out_bos_.emplace_back(dev_, size, 0, 0);
       out_host_ptrs_[o] = out_bos_.back().map<void *>();
       rx_[o].emplace(mmio_.regs, pd.dma_off, dev_, out_bos_.back(), bpi,
