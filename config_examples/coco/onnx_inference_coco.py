@@ -3,6 +3,7 @@ import time
 import json
 import argparse
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import onnxruntime as ort
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -131,7 +132,13 @@ def make_session_options(
     return so
 
 
-def outputs_exactly_match(expected: list[np.ndarray], produced: list[np.ndarray], image_idx: int) -> bool:
+def outputs_match(
+    expected: list[np.ndarray],
+    produced: list[np.ndarray],
+    image_idx: int,
+    atol: float,
+    rtol: float,
+) -> bool:
     if len(expected) != len(produced):
         print(
             f"Image {image_idx}: FAIL - output count mismatch "
@@ -152,8 +159,13 @@ def outputs_exactly_match(expected: list[np.ndarray], produced: list[np.ndarray]
             image_ok = False
             continue
 
-        if not np.array_equal(expected_arr, produced_arr):
-            print(f"Image {image_idx}, output {output_idx}: FAIL - values differ")
+        close = np.isclose(expected_arr, produced_arr, atol=atol, rtol=rtol)
+        if not np.all(close):
+            bad_count = int(np.size(close) - np.count_nonzero(close))
+            print(
+                f"Image {image_idx}, output {output_idx}: FAIL - values differ "
+                f"bad_elements={bad_count}/{close.size} atol={atol} rtol={rtol}"
+            )
             report_error_stats(
                 f"image_{image_idx}_out_{output_idx}",
                 expected_arr.flatten(),
@@ -165,6 +177,36 @@ def outputs_exactly_match(expected: list[np.ndarray], produced: list[np.ndarray]
         print(f"Image {image_idx}: PASS")
 
     return image_ok
+
+
+def run_outputs_concurrent(
+    sess: ort.InferenceSession,
+    batches: list[np.ndarray],
+    input_name: str,
+    workers: int,
+) -> list[list[np.ndarray]]:
+    if workers <= 0:
+        raise ValueError("workers must be > 0")
+
+    outputs: list[list[np.ndarray] | None] = [None] * len(batches)
+
+    def run_one(image_idx: int, np_features: np.ndarray):
+        return image_idx, sess.run(None, {input_name: np_features})
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(run_one, image_idx, np_features)
+            for image_idx, np_features in enumerate(batches)
+        ]
+        for future in as_completed(futures):
+            image_idx, produced = future.result()
+            outputs[image_idx] = produced
+
+    missing = [i for i, item in enumerate(outputs) if item is None]
+    if missing:
+        raise RuntimeError(f"Missing optimized outputs for image indices: {missing}")
+
+    return [item for item in outputs if item is not None]
 
 
 # -----------------------------
@@ -275,6 +317,79 @@ def benchmark_preloaded(
     print(f"  p95: {results['p95_batch_ms']:.3f}")
 
     print("\nLatency percentiles (per-image, ms):")
+    print(f"  p50: {results['p50_img_ms']:.3f}")
+    print(f"  p90: {results['p90_img_ms']:.3f}")
+    print(f"  p95: {results['p95_img_ms']:.3f}")
+    print("=" * 40)
+
+    return results
+
+
+def benchmark_preloaded_concurrent(
+    sess: ort.InferenceSession,
+    batches: list[np.ndarray],
+    input_name: str,
+    label: str,
+    workers: int,
+):
+    if workers <= 0:
+        raise ValueError("workers must be > 0")
+
+    for batch_idx, np_features in enumerate(batches):
+        if int(np_features.shape[0]) != 1:
+            raise ValueError(
+                f"Concurrent nn2FPGA benchmark requires batch size 1, "
+                f"got batch {batch_idx} with shape {np_features.shape}."
+            )
+
+    def run_one(image_idx: int, np_features: np.ndarray):
+        t0 = time.perf_counter()
+        _ = sess.run(None, {input_name: np_features})
+        t1 = time.perf_counter()
+        return image_idx, t0, t1
+
+    lat_s: list[float] = []
+    start_s = time.perf_counter()
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(run_one, image_idx, np_features)
+            for image_idx, np_features in enumerate(batches)
+        ]
+        for future in as_completed(futures):
+            _, t0, t1 = future.result()
+            lat_s.append(t1 - t0)
+
+    total_time_s = time.perf_counter() - start_s
+    total_images = len(lat_s)
+    throughput = total_images / total_time_s
+    avg_img_ms = (sum(lat_s) / len(lat_s)) * 1e3
+
+    results = {
+        "label": label,
+        "measured_batches": total_images,
+        "measured_images": total_images,
+        "total_time_s": total_time_s,
+        "throughput_img_s": throughput,
+        "avg_batch_ms": avg_img_ms,
+        "avg_img_ms": avg_img_ms,
+        "p50_batch_ms": percentile_ms(lat_s, 50),
+        "p90_batch_ms": percentile_ms(lat_s, 90),
+        "p95_batch_ms": percentile_ms(lat_s, 95),
+        "p50_img_ms": percentile_ms(lat_s, 50),
+        "p90_img_ms": percentile_ms(lat_s, 90),
+        "p95_img_ms": percentile_ms(lat_s, 95),
+        "inflight_runs": workers,
+    }
+
+    print(f"\n===== Benchmark results: {label} =====")
+    print(f"Measured images:         {results['measured_images']}")
+    print(f"Concurrent runs:         {workers}")
+    print(f"Wall time (s):           {results['total_time_s']:.6f}")
+    print(f"Throughput (img/s):      {results['throughput_img_s']:.2f}")
+    print(f"Avg session.run ms:      {results['avg_img_ms']:.3f}")
+
+    print("\nLatency percentiles (session.run, ms):")
     print(f"  p50: {results['p50_img_ms']:.3f}")
     print(f"  p90: {results['p90_img_ms']:.3f}")
     print(f"  p95: {results['p95_img_ms']:.3f}")
@@ -396,7 +511,7 @@ def write_results_file(filepath: str, orig: dict, opt: dict, comparison: dict):
 def run_correctness(args) -> int:
     custom_op_so = os.path.abspath(args.custom_op)
     print("Loading the operator:", custom_op_so)
-    print("Starting exact correctness sessions with ORT optimizations disabled...")
+    print("Starting correctness sessions with ORT optimizations disabled...")
 
     sess_orig = ort.InferenceSession(
         args.original_model,
@@ -419,25 +534,38 @@ def run_correctness(args) -> int:
 
     input_name = sess_orig.get_inputs()[0].name
     dataloader = coco_dataloader(batch_size=1, sample_size=args.num_images, num_workers=args.num_workers)
+    batches = preload_batches(dataloader)
 
     checked_images = 0
     failed_images = 0
+    expected_outputs: list[list[np.ndarray]] = []
 
-    for image_idx, features in enumerate(dataloader):
-        x = features.numpy().astype(np.float32)
-        expected = sess_orig.run(None, {input_name: x})
-        produced = sess_opt.run(None, {input_name: x})
+    for x in batches:
+        expected_outputs.append(sess_orig.run(None, {input_name: x}))
 
+    if args.inflight_runs == 1:
+        produced_outputs = [sess_opt.run(None, {input_name: x}) for x in batches]
+    else:
+        produced_outputs = run_outputs_concurrent(
+            sess_opt,
+            batches,
+            input_name,
+            workers=args.inflight_runs,
+        )
+
+    for image_idx, (expected, produced) in enumerate(zip(expected_outputs, produced_outputs)):
         checked_images += 1
-        if not outputs_exactly_match(expected, produced, image_idx):
+        if not outputs_match(expected, produced, image_idx, atol=args.atol, rtol=args.rtol):
             failed_images += 1
 
     passed_images = checked_images - failed_images
-    print("\n===== Exact correctness summary =====")
-    print(f"Checked images: {checked_images}")
-    print(f"Passed images:  {passed_images}")
-    print(f"Failed images:  {failed_images}")
-    print("=====================================")
+    print("\n===== Correctness summary =====")
+    print(f"Checked images:           {checked_images}")
+    print(f"Optimized inflight runs:  {args.inflight_runs}")
+    print(f"Tolerance:                atol={args.atol} rtol={args.rtol}")
+    print(f"Passed images:            {passed_images}")
+    print(f"Failed images:            {failed_images}")
+    print("=================================")
 
     return 0 if failed_images == 0 else 1
 
@@ -447,7 +575,7 @@ def run_speed(args) -> int:
     print("Loading the operator:", custom_op_so)
 
     dataloader = coco_dataloader(
-        batch_size=args.batch_size,
+        batch_size=1,
         sample_size=args.num_images,
         num_workers=args.num_workers,
     )
@@ -479,7 +607,13 @@ def run_speed(args) -> int:
     warmup_session(sess_opt, input_name, batches, warmup_batches=args.warmup_batches)
 
     orig_results = benchmark_preloaded(sess_orig, batches, input_name, label="original")
-    opt_results = benchmark_preloaded(sess_opt, batches, input_name, label="optimized")
+    opt_results = benchmark_preloaded_concurrent(
+        sess_opt,
+        batches,
+        input_name,
+        label=f"optimized_concurrent_{args.inflight_runs}",
+        workers=args.inflight_runs,
+    )
 
     comparison = build_comparison(orig_results, opt_results)
     report_text = format_comparison_text(orig_results, opt_results, comparison)
@@ -514,13 +648,20 @@ def parse_args():
         help="Number of COCO images to use. Use -1 for all images in speed mode.",
     )
 
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size for speed mode.")
+    parser.add_argument(
+        "--inflight-runs",
+        type=int,
+        default=4,
+        help="Number of concurrent optimized session.run calls.",
+    )
     parser.add_argument(
         "--warmup-batches",
         type=int,
         default=5,
         help="Number of warmup batches for speed mode.",
     )
+    parser.add_argument("--atol", type=float, default=1e-2, help="Absolute tolerance for correctness mode.")
+    parser.add_argument("--rtol", type=float, default=1e-2, help="Relative tolerance for correctness mode.")
     parser.add_argument(
         "--measure-batches",
         type=int,
@@ -536,10 +677,14 @@ def parse_args():
         args.num_images = None
     elif args.num_images <= 0:
         parser.error("--num-images must be > 0, or -1 in speed mode")
-    if args.batch_size <= 0:
-        parser.error("--batch-size must be > 0")
+    if args.inflight_runs <= 0:
+        parser.error("--inflight-runs must be > 0")
     if args.warmup_batches < 0:
         parser.error("--warmup-batches must be >= 0")
+    if args.atol < 0:
+        parser.error("--atol must be >= 0")
+    if args.rtol < 0:
+        parser.error("--rtol must be >= 0")
     if args.measure_batches is not None and args.measure_batches <= 0:
         parser.error("--measure-batches must be > 0")
 

@@ -21,15 +21,11 @@ The custom op library contains generated C++ code specialized for the accelerato
 * `nn2fpga/hw/operator_runtime/xrt_mmio.hpp`: AXI-Lite mapping helpers.
 * `nn2fpga/hw/operator_runtime/nn2FPGA_allocator.hpp`: optional XRT-backed ORT allocator support.
 
-## Inference Modes
+## Inference Mode
 
-There are two implemented runtime modes for a generated model containing an `nn2fpgaPartition` node.
+The production runtime mode is the standard ONNX Runtime custom-op flow. It loads `libnn2fpga_customop.so` and executes the FPGA partition through the copy-compatible SG data path described below.
 
-The first mode is the standard Python ONNX Runtime custom-op flow. It loads `libnn2fpga_customop.so` and executes the FPGA partition through the current copy-based data path.
-
-The second mode is an allocator-enabled C++ ONNX Runtime flow. It creates the `OrtEnv` in C/C++, registers the nn2FPGA XRT-backed CPU allocator, then loads the same custom op library. In this mode, ONNX Runtime can allocate intermediate CPU tensors from XRT BO-backed memory, and the custom op can identify those pointers through the allocator lookup API.
-
-Both modes execute the same ONNX model and the same custom op. The difference is how the ONNX Runtime session is created and how ORT tensor memory is allocated.
+The runtime is designed to work with ordinary Python ONNX Runtime sessions and normal CPU tensors. Optional allocator-backed zero-copy experiments are separate from the production path in this document.
 
 ## Standard Python Session
 
@@ -44,35 +40,9 @@ so.register_custom_ops_library(os.path.abspath("libnn2fpga_customop.so"))
 session = ort.InferenceSession("model.onnx", so)
 ```
 
-In this mode, Python ONNX Runtime uses its normal CPU allocators. The custom op receives ordinary CPU tensor pointers. The runtime therefore uses the internal XRT BO staging path described in [Standard Copy-Based Inference](#standard-copy-based-inference).
+In this mode, Python ONNX Runtime uses its normal CPU allocators. The custom op receives ordinary CPU tensor pointers. The runtime therefore uses the internal XRT BO staging path described in [Inference Flow](#inference-flow).
 
-## Allocator-Enabled C++ Session
-
-The allocator-enabled flow must be created from C or C++, because the Python ONNX Runtime API does not expose registration for arbitrary user-provided `OrtAllocator` callbacks.
-
-The implemented C++ session setup is:
-
-```cpp
-const OrtApi *api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-
-OrtEnv *env = nullptr;
-api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "nn2fpga", &env);
-
-nn2fpga_register_xrt_cpu_allocator(env, api);
-
-OrtSessionOptions *options = nullptr;
-api->CreateSessionOptions(&options);
-api->AddSessionConfigEntry(options, "session.use_env_allocators", "1");
-api->DisableMemPattern(options);
-api->RegisterCustomOpsLibrary(options, "libnn2fpga_customop.so", &handle);
-
-OrtSession *session = nullptr;
-api->CreateSession(env, "model.onnx", options, &session);
-```
-
-In this mode, ONNX Runtime can allocate CPU tensors through the nn2FPGA allocator. Those tensors are CPU-accessible pointers backed by XRT BOs. The custom op can query those pointers with `nn2fpga_allocator_lookup` and recover the BO device address.
-
-The custom op advertises `CPUExecutionProvider` as its execution provider type in both modes. ONNX Runtime schedules the partition node like a CPU custom op, but the node implementation programs and drives the FPGA internally through XRT and memory-mapped DMA registers.
+The custom op advertises `CPUExecutionProvider` as its execution provider type. ONNX Runtime schedules the partition node like a CPU custom op, but the node implementation programs and drives the FPGA internally through XRT and memory-mapped DMA registers.
 
 ## Initialization Flow
 
@@ -102,253 +72,194 @@ At inference time, ONNX Runtime calls `Nn2FpgaKernelT<Spec>::Compute(...)` for t
 FpgaRunnerT<Spec>::instance().run(in_ptrs, out_ptrs, batch);
 ```
 
-`FpgaRunnerT::run(...)` is serialized by a mutex because it programs shared FPGA and DMA resources.
+The production runtime accepts only `batch == 1`. If ONNX Runtime calls the custom operator with `batch > 1`, the runtime rejects the call with an invalid-argument error. Throughput is obtained by launching multiple `session.run(...)` calls concurrently against the same ONNX Runtime session.
 
-## Standard Copy-Based Inference
-
-The current production data path is copy-based. This is the compatibility path and remains the fallback even when allocator diagnostics are enabled.
-
-For each dynamic input:
-
-1. Copy from the ORT input tensor into an internal XRT input BO.
-2. Sync the input BO to the device.
-3. Start the MM2S DMA transfer from that BO.
-
-For each dynamic output:
-
-1. Start the S2MM DMA transfer into an internal XRT output BO.
-2. Wait for S2MM completion.
-3. Sync the output BO from the device.
-4. Copy from the internal output BO into the ORT output tensor.
-
-Conceptually:
+The runtime is copy-compatible with normal Python ONNX Runtime tensors:
 
 ```text
 ORT input tensor
   -> memcpy
-  -> internal input XRT BO
-  -> MM2S DMA
+  -> per-slot input XRT BO
+  -> MM2S SG DMA descriptor
   -> FPGA accelerator
-  -> S2MM DMA
-  -> internal output XRT BO
+  -> S2MM SG DMA descriptor
+  -> per-slot output XRT BO
   -> memcpy
   -> ORT output tensor
 ```
 
-This path works with normal Python ONNX Runtime usage and does not require a custom allocator.
+Each concurrent call gets a private request slot containing dynamic input BOs, dynamic output BOs, mapped host pointers, and descriptor handles. `Spec::N_MAX` is used as the number of request slots and SG descriptors per dynamic stream, not as an accepted ONNX batch size.
 
-## Allocator-Backed Tensor Diagnostics
+## SG Runtime Scheduler
 
-The allocator-enabled C++ session changes how ORT can allocate tensors. The runtime operator uses allocator-backed partition inputs directly as MM2S DMA sources and keeps the copy-based output path.
+Dynamic input streams and output streams use AXI DMA scatter-gather rings managed by `AxiDmaSgRing` in `xrt_dma.h`. Static inputs remain simple one-shot MM2S transfers.
 
-The implemented allocator behavior is:
+The scheduler preserves accelerator ordering with two sequence counters:
 
-1. The C++ runner registers `nn2fpga_register_xrt_cpu_allocator(...)` on the `OrtEnv`.
-2. The session enables environment allocators with `session.use_env_allocators=1`.
-3. ORT allocates eligible CPU tensors through the nn2FPGA allocator.
-4. The allocator creates an XRT BO, maps it to CPU memory, returns the mapped pointer to ORT, and records the pointer range and device address.
-5. The custom op uses `dlsym(RTLD_DEFAULT, "nn2fpga_allocator_lookup")` to discover the optional lookup function at runtime.
-6. During `Compute(...)`, the custom op logs whether each real partition input and output pointer is allocator-backed when `NN2FPGA_ZERO_COPY_LOG=1` is set.
-7. Allocator-backed inputs are synced to device and passed directly to MM2S by device address.
-8. Outputs still use the internal S2MM output BO and are copied back to the ORT output tensor.
+1. `next_submit_sequence_`: permits request descriptors to be submitted in acquisition order.
+2. `next_complete_sequence_`: permits output copy-back and descriptor reclamation in the same order.
 
-Conceptually, the implemented allocator-enabled diagnostic flow is:
+For each request sequence, submission is ordered as:
+
+1. Copy dynamic input tensors into the slot input BOs.
+2. Sync input BOs to device.
+3. Enqueue all output S2MM descriptors.
+4. Enqueue all dynamic input MM2S descriptors.
+5. Wait for output descriptors to complete.
+6. In sequence order, sync output BOs from device and copy into ORT output tensors.
+7. Reclaim input and output descriptors.
+8. Release the request slot.
+
+Output descriptors must be queued before input descriptors for the same sequence. This ensures the output DMA is ready before the accelerator can produce data.
+
+Descriptor allocation is strict circular producer order, not first-free order. This keeps the DMA-visible descriptor chain contiguous:
 
 ```text
-allocator-enabled C++ ORT session
-  -> registers nn2FPGA XRT allocator
-  -> loads libnn2fpga_customop.so
-  -> ORT tensor may be backed by XRT BO
-  -> nn2fpgaPartition receives normal CPU pointer
-  -> allocator lookup reports registered=1 and device_addr=0x...
-  -> input MM2S reads directly from allocator BO device_addr
-  -> output S2MM still writes internal BO and copies back
+BD0 -> BD1 -> BD2 -> ... -> BD(N-1) -> BD0
 ```
 
-This mode removes the partition input staging copy when allocator lookup succeeds. If lookup or sync fails, the runtime falls back to the standard input copy path.
+A descriptor may be software-free but still unsafe to reuse if it is behind the DMA current descriptor and would create a hole in the ring. The producer-order rule prevents this failure mode.
 
-See [Zero-Copy Investigation](zero_copy_investigation.md) for measured YOLOv5nu results and replication notes for the archived `zero-copy-investigation-2026-05` branch.
+When a ring becomes empty after descriptor reclamation, the runtime resets that DMA channel and marks it not started. This handles the single-inflight gap case where a later request arrives after the DMA has advanced beyond the previous tail descriptor.
+
+If an SG DMA error or timeout occurs, the runtime resets and releases all SG rings before releasing the slot. This avoids leaking descriptor capacity after the first fault.
 
 ## Static Inputs
 
 Some input ports are marked as `PortMode::StaticInit`. These ports are not exposed as dynamic ORT inputs.
 
-During initialization, the runtime reads static values from the accelerator package `input_map`, copies them into the corresponding internal XRT BO, syncs the BO to the device, and performs the required DMA upload once.
+During initialization, the runtime reads static values from the accelerator package `input_map`, copies them into the corresponding internal XRT BO, syncs the BO to the device, and performs the required DMA upload once through `Mm2sSimple`.
 
-Static inputs are skipped during normal `Compute(...)` calls.
+Static input DMAs are intentionally not configured for SG. They are skipped during normal `Compute(...)` calls.
 
-## DMA Helpers
+## DMA Configuration
 
-The runtime currently uses two DMA helper classes from `xrt_dma.h`.
+The generated Vivado design configures DMAs by port role:
 
-`Mm2sSimple` handles memory-to-stream input transfers. It owns a source XRT BO reference and programs the MM2S source address and transfer length.
+* Dynamic input DMAs: MM2S SG enabled.
+* Output DMAs: S2MM SG enabled.
+* Static input DMAs: simple MM2S, SG disabled.
 
-`S2mmSG` handles stream-to-memory output transfers using AXI DMA scatter-gather descriptors. Each descriptor writes one batch element into the output BO. The descriptor BO is synced before starting the transfer and synced back while checking completion.
+For SG DMAs, the generated TCL disables AXI DMA status/control streams:
 
-Internal accelerator buffers used by HLS `m_axi` pointer ports are allocated as XRT BOs and their device addresses are written into the control register window.
+```tcl
+CONFIG.C_SG_INCLUDE_STSCNTRL_STRM {0}
+```
 
-## Allocator Lookup API
+This is required for the generated S2MM SG output path used by the custom operator.
 
-nn2FPGA also includes an optional XRT-backed ONNX Runtime CPU allocator. The allocator returns CPU-accessible pointers to ORT, but each allocation is backed by an XRT BO and has a valid FPGA device address.
+Internal accelerator buffers used by HLS `m_axi` pointer ports are allocated as XRT BOs and their device addresses are written into the control register window during initialization.
 
-The allocator records metadata for each allocation:
+## Debug Tracing
+
+Runtime tracing is disabled by default. Enable it only when diagnosing scheduler or DMA behavior:
+
+```bash
+export NN2FPGA_TRACE=1
+export NN2FPGA_TRACE_DMA=1
+export NN2FPGA_TRACE_CTRL=1
+```
+
+`NN2FPGA_TRACE` prints high-level request, submit, wait, complete, reclaim, and slot events. `NN2FPGA_TRACE_DMA` prints DMA descriptor and status snapshots. `NN2FPGA_TRACE_CTRL` prints control register snapshots on selected timeout/error paths.
+
+Useful SG error information includes descriptor index, sequence, DMA status, current descriptor, tail descriptor, descriptor status, and actual byte count.
+
+## Correctness Testing
+
+Correctness must be checked on raw ONNX outputs, not only through video or throughput tests. Video NMS can hide or amplify tensor corruption.
+
+For YOLO COCO validation, use the generated benchmark with ORT optimizations disabled in correctness mode:
+
+```bash
+python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 1
+```
+
+Then repeat with concurrent calls:
+
+```bash
+python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 2
+
+python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 4
+```
+
+The tolerance is intentionally loose enough to ignore benign CPU/original versus FPGA numeric drift while still catching runtime corruption. If failures are only a few elements around `atol=10`, retest with a slightly larger tolerance before treating them as descriptor corruption. Large max errors or many bad elements indicate a runtime issue.
+
+For throughput, use speed mode:
+
+```bash
+python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode speed \
+  --model nn2FPGA_yolov5nu.onnx \
+  --inflight-runs 6
+```
+
+Speed mode measures concurrent `session.run(...)` calls on preprocessed tensors. It does not include video decode, YOLO preprocessing, NMS, rendering, or encoding.
+
+## Video Benchmarking
+
+The accelerated video benchmark should not use multiple independent Ultralytics `model.predict()` sessions for the FPGA model. The validated path is:
 
 ```text
-host pointer range -> allocation size, XRT BO, device address
+OpenCV frame
+  -> Ultralytics-compatible preprocess
+  -> shared ORT InferenceSession.run(...)
+  -> Ultralytics NMS/postprocess
+  -> Ultralytics Results object
+  -> render/encode
 ```
 
-The runtime operator can discover this allocator at runtime with:
+This matches the COCO correctness concurrency model: one shared ONNX Runtime session with multiple concurrent `session.run(...)` calls.
 
-```cpp
-dlsym(RTLD_DEFAULT, "nn2fpga_allocator_lookup")
-```
+The video benchmark reports the explicit preprocess, ORT run, and postprocess block as accelerated `inference_s`. This is expected to be slower than COCO speed-mode `session.run(...)` latency because COCO speed mode measures only the ONNX Runtime call on already-preprocessed tensors.
 
-This is intentionally a runtime lookup, not a mandatory link-time dependency. If the allocator runtime is not present, the custom op continues to use the copy-based path.
-
-Set the following environment variable to log whether real partition tensors are allocator-backed:
+For live-threaded video tests:
 
 ```bash
-export NN2FPGA_ZERO_COPY_LOG=1
+python3 ../build_yolov10n_2906/video_demo_benchmark.py \
+  --video normalized.mp4 \
+  --model-orig ../build_yolov5nu_0207/original_model_qcdq.onnx \
+  --model-accel ../build_yolov5nu_0207/nn2FPGA_yolov5nu.onnx \
+  --imgsz 640 \
+  --batch 1 \
+  --warmup-batches 0 \
+  --measure-batches 200 \
+  --custom-op ../build_yolov5nu_0207/libnn2fpga_customop.so \
+  --mode realistic \
+  --live-threaded \
+  --live-threaded-hold-inference-frames \
+  --save-video \
+  --output-video yolov5nu_accel_live_threaded.mp4 \
+  --half \
+  --inflight-runs 6
 ```
 
-Allocator allocation/free logging is separate and disabled by default. Enable it only when debugging allocator behavior:
-
-```bash
-export NN2FPGA_ALLOCATOR_LOG=1
-```
-
-Detailed allocator size histograms are disabled by default. Enable them with:
-
-```bash
-export NN2FPGA_ALLOCATOR_STATS=1
-```
-
-The allocator can also keep freed XRT BOs in an exact-size process-local pool instead of destroying them immediately:
-
-```bash
-export NN2FPGA_ALLOCATOR_POOL=1
-```
-
-The generic C++ runner prints only setup, final output metadata, and average latency by default. Enable per-run logs with:
-
-```bash
-export NN2FPGA_RUNNER_VERBOSE=1
-```
-
-Set the following environment variable to force the input copy path even when allocator lookup succeeds:
-
-```bash
-export NN2FPGA_DISABLE_ZERO_COPY=1
-```
-
-Example output when an input or output tensor is backed by the nn2FPGA allocator:
-
-```text
-[nn2fpga zero-copy] input 0 ptr=0xffff93339000 registered=1 alloc_size=3072 bytes=3072 device_addr=0x77ec4000
-[nn2fpga zero-copy] output 0 ptr=0xffff93338000 registered=1 alloc_size=3072 bytes=3072 device_addr=0x77595000
-```
-
-Example output without allocator registration:
-
-```text
-[nn2fpga zero-copy] input 0 ptr=0xffff93339000 registered=0 alloc_size=0 bytes=3072 device_addr=0x0
-```
-
-For inputs, allocator-backed pointers use the direct MM2S path. For outputs, these logs are still diagnostics only; output DMA still uses the internal BO and copy-back path described in [Standard Copy-Based Inference](#standard-copy-based-inference).
-
-## Testing
-
-To test the standard Python flow, run the generated model through the usual Python ONNX Runtime path and enable diagnostics:
-
-```bash
-export NN2FPGA_ZERO_COPY_LOG=1
-python3 inference.py
-```
-
-Expected behavior is correct inference. If diagnostics are printed, pointers should normally report `registered=0` because the Python process did not register the nn2FPGA allocator.
-
-To test allocator-backed tensors, build and use the generic allocator-enabled C++ runner:
-
-```bash
-./tools/build_allocator_test.sh
-export NN2FPGA_ZERO_COPY_LOG=1
-./artifacts/allocator_test/aarch64/run_ort_with_allocator model.onnx libnn2fpga_customop.so 1
-```
-
-The same runner can also execute without allocator registration, which is useful to separate normal C++ ONNX Runtime overhead from allocator overhead:
-
-```bash
-./run_ort_with_allocator --no-allocator model.onnx libnn2fpga_customop.so 20
-```
-
-Add `--profile` to emit an ONNX Runtime profiling trace:
-
-```bash
-./run_ort_with_allocator --profile model.onnx libnn2fpga_customop.so 20
-./run_ort_with_allocator --no-allocator --profile model.onnx libnn2fpga_customop.so 20
-```
-
-The runner implements this setup:
-
-1. Create an `OrtEnv`.
-2. Register `nn2fpga_register_xrt_cpu_allocator(...)` on that environment.
-3. Enable environment allocators for the session.
-4. Register `libnn2fpga_customop.so`.
-5. Allocate model inputs through the nn2FPGA allocator.
-6. Run the generated ONNX model.
-
-Expected diagnostics in allocator mode are `registered=1` and nonzero `device_addr` values for tensors allocated by ONNX Runtime through the nn2FPGA allocator.
-
-For an input-copy versus input-zero-copy A/B comparison, use the same allocator-enabled runner and toggle only `NN2FPGA_DISABLE_ZERO_COPY`:
-
-```bash
-export LD_LIBRARY_PATH=$PWD:$LD_LIBRARY_PATH
-unset NN2FPGA_ZERO_COPY_LOG
-unset NN2FPGA_ALLOCATOR_LOG
-unset NN2FPGA_RUNNER_VERBOSE
-
-NN2FPGA_DISABLE_ZERO_COPY=1 \
-  ./run_ort_with_allocator nn2FPGA_resnet8.onnx ./libnn2fpga_customop.so 20
-
-unset NN2FPGA_DISABLE_ZERO_COPY
-./run_ort_with_allocator nn2FPGA_resnet8.onnx ./libnn2fpga_customop.so 20
-```
-
-The first run should report `input 0 path=copy`. The second run should report `input 0 path=zero-copy` when the partition input is allocator-backed.
-
-When investigating allocator overhead, compare these three modes:
-
-```bash
-./run_ort_with_allocator --no-allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
-
-NN2FPGA_DISABLE_ZERO_COPY=1 \
-  ./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
-
-unset NN2FPGA_DISABLE_ZERO_COPY
-./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
-```
-
-The first mode measures C++ ONNX Runtime without the nn2FPGA allocator. The second mode measures allocator overhead while preserving the input copy path. The third mode measures allocator overhead plus input direct DMA.
-
-To test whether allocator overhead is dominated by repeated XRT BO allocation/free, repeat the allocator modes with pooling enabled:
-
-```bash
-export NN2FPGA_ALLOCATOR_POOL=1
-export NN2FPGA_ALLOCATOR_STATS=1
-
-NN2FPGA_DISABLE_ZERO_COPY=1 \
-  ./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
-
-unset NN2FPGA_DISABLE_ZERO_COPY
-./run_ort_with_allocator nn2FPGA_yolov5nu.onnx ./libnn2fpga_customop.so 20
-```
-
-If pooling removes most of the allocator slowdown, repeated `xrt::bo` construction/destruction is the main issue. If pooling does not help, CPU execution on XRT-mapped memory or cache synchronization is likely the dominant cost.
+Use COCO correctness tests to validate tensors first. Use video tests to validate end-to-end demo behavior and CPU-side preprocessing/postprocessing overhead.
 
 ## Limitations
 
-The current Python ONNX Runtime API cannot register arbitrary custom C allocator callbacks. Allocator-enabled execution therefore requires an NN2FPGA-owned runtime/session wrapper or another C/C++ integration layer that owns the `OrtEnv` and registers the allocator before session creation.
+The custom operator runtime currently supports only `batch == 1` per ONNX Runtime call.
 
-The current production custom op remains copy-compatible. Allocator lookup is used for input-side direct DMA when available, but output DMA does not yet target ORT tensor device addresses.
+The production Python path remains copy-based at the ORT tensor boundary. Dynamic input and output transfers between per-slot BOs and the accelerator use SG DMA, but ORT tensors are still copied into and out of those BOs.
 
-Direct output DMA to allocator-backed ORT tensors requires additional scatter-gather descriptor retargeting work in `S2mmSG`.
+Allocator-backed zero-copy experiments are not the production path described here. Direct output DMA into ORT-owned tensors would require a separate allocator/session integration and additional safety work.
+
+Global fatal-error propagation is still minimal. The runtime resets SG rings after local DMA exceptions, but a more robust design should store the first fatal error, notify all scheduler condition variables, and make all waiters fail promptly.

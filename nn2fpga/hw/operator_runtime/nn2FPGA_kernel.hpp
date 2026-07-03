@@ -1,6 +1,13 @@
 #pragma once
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -8,7 +15,7 @@
 #include <vector>
 
 #include "base64.h"
-#include "xrt_dma.h"    // uses Mm2sSimple, S2mmSG
+#include "xrt_dma.h"    // uses Mm2sSimple, S2mmSimple
 #include "xrt_mmio.hpp" // map_axil_window()
 #include "xrt_ps.h"     // set_pl_from_iopll(), ZynqPllIndex
 #include "xrt_pynq.h"   // program_with_pynq_cli_or_throw()
@@ -87,7 +94,7 @@ public:
     });
   }
 
-  // Runs the nn2FPGA kernel on a batch of inputs, producing outputs in host memory.
+  // Runs the nn2FPGA kernel for one image, producing outputs in host memory.
   void run(const std::vector<const void *> &in_ptrs,
            const std::vector<void *> &out_ptrs, size_t batch) {
 
@@ -100,60 +107,58 @@ public:
     if (out_ptrs.size() != Spec::Outputs.size()) {
       throw std::invalid_argument("wrong #outputs");
     }
-    if (batch == 0 || batch > static_cast<size_t>(Spec::N_MAX)) {
-      ORT_CXX_API_THROW("Invalid batch (0 or > N_MAX).", ORT_INVALID_ARGUMENT);
+    if (batch != 1) {
+      ORT_CXX_API_THROW("nn2FPGA operator runtime currently supports batch == 1 only.",
+                        ORT_INVALID_ARGUMENT);
     }
 
-    std::lock_guard<std::mutex> lock(mtx_);
+    const auto lease = acquire_slot();
+    RequestSlot &slot = slots_[lease.slot_index];
 
-    // Copy + sync inputs
-    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
-      const auto &pd = Spec::Inputs[i];
-      if (pd.mode == PortMode::StaticInit)
-        continue; // already uploaded
-      size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
-      std::memcpy(in_host_ptrs_[i], in_ptrs[i], bytes);
-      in_bos_[i].sync(XCL_BO_SYNC_BO_TO_DEVICE, bytes, 0);
-    }
+    try {
+      // Copy + sync this request's dynamic inputs into its private slot BOs.
+      for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+        const auto &pd = Spec::Inputs[i];
+        if (pd.mode == PortMode::StaticInit)
+          continue;
+        const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+        std::memcpy(slot.in_host_ptrs[i], in_ptrs[i], bytes);
+        slot.in_bos[i]->sync(XCL_BO_SYNC_BO_TO_DEVICE, bytes, 0);
+      }
 
-    // Prepare and start S2MM for each output
-    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
-      rx_[o]->transfer(static_cast<int>(batch));
-    }
+      trace_event("run_start", lease.sequence, lease.slot_index);
+      submit_sg_request(lease.sequence, lease.slot_index, slot);
+      wait_sg_outputs(lease.sequence, lease.slot_index, slot);
 
-    // Start MM2S for each input
-    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
-      const auto &pd = Spec::Inputs[i];
-      if (pd.mode == PortMode::StaticInit)
-        continue; // already uploaded
-      size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
-      tx_[i]->transfer(bytes, 0);
-    }
-
-    // Wait inputs to complete
-    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
-      const auto &pd = Spec::Inputs[i];
-      if (pd.mode == PortMode::StaticInit)
-        continue; // already uploaded
-      if (!tx_[i]->wait_done(200))
-        throw std::runtime_error("MM2S timeout on input port " + std::to_string(i));
-    }
-    // Wait outputs to complete
-    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
-      if (!rx_[o]->wait_done(200, static_cast<int>(batch)))
-        throw std::runtime_error("S2MM timeout on output port " + std::to_string(o));
+      complete_sg_request(lease.sequence, lease.slot_index, slot, out_ptrs);
+    } catch (...) {
+      trace_event("run_exception", lease.sequence, lease.slot_index);
+      reset_sg_after_error(slot);
+      release_slot(lease.slot_index);
+      throw;
     }
 
-    // Sync back + copy to host
-    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
-      const auto &pd = Spec::Outputs[o];
-      size_t bytes = batch * bytes_per_image(pd.dtype, pd.inner_dims);
-      out_bos_[o].sync(XCL_BO_SYNC_BO_FROM_DEVICE, bytes, 0);
-      std::memcpy(out_ptrs[o], out_host_ptrs_[o], bytes);
-    }
+    trace_event("run_done", lease.sequence, lease.slot_index);
+    release_slot(lease.slot_index);
   }
 
 private:
+  struct RequestSlot {
+    bool in_use = false;
+    uint64_t sequence = 0;
+    std::vector<std::optional<xrt::bo>> in_bos;
+    std::vector<std::optional<xrt::bo>> out_bos;
+    std::vector<void *> in_host_ptrs;
+    std::vector<void *> out_host_ptrs;
+    std::vector<std::optional<AxiDmaSgRing::Handle>> input_descs;
+    std::vector<std::optional<AxiDmaSgRing::Handle>> output_descs;
+  };
+
+  struct SlotLease {
+    size_t slot_index;
+    uint64_t sequence;
+  };
+
   FpgaRunnerT() : dev_(0) {}
   ~FpgaRunnerT() = default;
   
@@ -199,60 +204,51 @@ private:
   }
 
   void build_ports() {
-    in_bos_.clear();
-    out_bos_.clear();
+    static_in_bos_.clear();
     buffer_bos_.clear();
-    in_host_ptrs_.assign(Spec::Inputs.size(), nullptr);
-    out_host_ptrs_.assign(Spec::Outputs.size(), nullptr);
+    static_in_host_ptrs_.assign(Spec::Inputs.size(), nullptr);
     buffer_host_ptrs_.assign(Spec::Buffers.size(), nullptr);
-    tx_.clear();
-    rx_.clear();
-    in_bos_.reserve(Spec::Inputs.size());
-    out_bos_.reserve(Spec::Outputs.size());
+    static_tx_.clear();
+    input_rings_.clear();
+    output_rings_.clear();
+    slots_.clear();
+    static_in_bos_.resize(Spec::Inputs.size());
+    static_tx_.resize(Spec::Inputs.size());
+    input_rings_.resize(Spec::Inputs.size());
+    output_rings_.resize(Spec::Outputs.size());
     buffer_bos_.reserve(Spec::Buffers.size());
-    in_host_ptrs_.resize(Spec::Inputs.size());
-    out_host_ptrs_.resize(Spec::Outputs.size());
     buffer_host_ptrs_.resize(Spec::Buffers.size());
-    tx_.resize(Spec::Inputs.size());
-    rx_.resize(Spec::Outputs.size());
+    const size_t slot_count = std::max<size_t>(1, static_cast<size_t>(Spec::N_MAX));
 
-    // Inputs: buffers + MM2S
+    // Static inputs: one-time BOs + MM2S upload path.
     for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
       const auto &pd = Spec::Inputs[i];
-      const auto size = pd.buffer_size;
-      if (pd.mode != PortMode::StaticInit) {
-        const size_t required_size =
-            static_cast<size_t>(Spec::N_MAX) * bytes_per_image(pd.dtype, pd.inner_dims);
-        if (size < required_size) {
-          throw std::runtime_error(
-              "Input BO is smaller than max runtime transfer for port " +
-              std::to_string(i) + ". Required: " +
-              std::to_string(required_size) + ", BO size: " +
-              std::to_string(size));
-        }
-      }
-      in_bos_.emplace_back(dev_, size, 0, 0);
-      in_host_ptrs_[i] = in_bos_.back().map<void *>();
-      tx_[i].emplace(mmio_.regs, pd.dma_off, in_bos_.back());
+      if (pd.mode != PortMode::StaticInit)
+        continue;
+      static_in_bos_[i].emplace(dev_, pd.buffer_size, 0, 0);
+      static_in_host_ptrs_[i] = static_in_bos_[i]->template map<void *>();
+      static_tx_[i].emplace(mmio_.regs, pd.dma_off, *static_in_bos_[i]);
     }
 
-    // Outputs: buffers + S2MM SG
+    // Dynamic stream DMAs use SG rings. Static inputs remain simple one-shot
+    // MM2S uploads because they are programmed once during initialization.
+    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+      const auto &pd = Spec::Inputs[i];
+      if (pd.mode == PortMode::StaticInit)
+        continue;
+      input_rings_[i] = std::make_unique<AxiDmaSgRing>(
+          mmio_.regs, pd.dma_off, dev_, AxiDmaDirection::Mm2s, slot_count,
+          "input" + std::to_string(i));
+    }
+
     for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
       const auto &pd = Spec::Outputs[o];
-      const auto size = pd.buffer_size;
-      const size_t bpi = bytes_per_image(pd.dtype, pd.inner_dims);
-      const size_t required_size = static_cast<size_t>(Spec::N_MAX) * bpi;
-      if (size < required_size) {
-        throw std::runtime_error(
-            "Output BO is smaller than max runtime transfer for port " +
-            std::to_string(o) + ". Required: " + std::to_string(required_size) +
-            ", BO size: " + std::to_string(size));
-      }
-      out_bos_.emplace_back(dev_, size, 0, 0);
-      out_host_ptrs_[o] = out_bos_.back().map<void *>();
-      rx_[o].emplace(mmio_.regs, pd.dma_off, dev_, out_bos_.back(), bpi,
-                     Spec::N_MAX);
+      output_rings_[o] = std::make_unique<AxiDmaSgRing>(
+          mmio_.regs, pd.dma_off, dev_, AxiDmaDirection::S2mm, slot_count,
+          "output" + std::to_string(o));
     }
+
+    build_request_slots();
 
     // Internal DDR-backed buffers used by HLS m_axi pointer ports.
     for (size_t b = 0; b < Spec::Buffers.size(); ++b) {
@@ -265,6 +261,260 @@ private:
       const uint64_t addr = buffer_bos_.back().address();
       write_u64(mmio_.regs, Spec::ControlAxiOffset + bd.read_axi_off, addr);
       write_u64(mmio_.regs, Spec::ControlAxiOffset + bd.write_axi_off, addr);
+    }
+  }
+
+  void build_request_slots() {
+    const size_t slot_count = std::max<size_t>(1, static_cast<size_t>(Spec::N_MAX));
+    slots_.reserve(slot_count);
+
+    for (size_t s = 0; s < slot_count; ++s) {
+      slots_.emplace_back();
+      auto &slot = slots_.back();
+      slot.in_bos.resize(Spec::Inputs.size());
+      slot.out_bos.resize(Spec::Outputs.size());
+      slot.in_host_ptrs.assign(Spec::Inputs.size(), nullptr);
+      slot.out_host_ptrs.assign(Spec::Outputs.size(), nullptr);
+      slot.input_descs.resize(Spec::Inputs.size());
+      slot.output_descs.resize(Spec::Outputs.size());
+
+      for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+        const auto &pd = Spec::Inputs[i];
+        if (pd.mode == PortMode::StaticInit)
+          continue;
+        const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+        slot.in_bos[i].emplace(dev_, bytes, 0, 0);
+        slot.in_host_ptrs[i] = slot.in_bos[i]->template map<void *>();
+        trace_bo("slot_input_bo", s, i, slot.in_bos[i]->address(), bytes);
+      }
+
+      for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+        const auto &pd = Spec::Outputs[o];
+        const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+        slot.out_bos[o].emplace(dev_, bytes, 0, 0);
+        slot.out_host_ptrs[o] = slot.out_bos[o]->template map<void *>();
+        trace_bo("slot_output_bo", s, o, slot.out_bos[o]->address(), bytes);
+      }
+    }
+  }
+
+  SlotLease acquire_slot() {
+    std::unique_lock<std::mutex> lock(slot_mtx_);
+    slot_cv_.wait(lock, [&]() {
+      for (const auto &slot : slots_) {
+        if (!slot.in_use)
+          return true;
+      }
+      return false;
+    });
+
+    for (size_t i = 0; i < slots_.size(); ++i) {
+      if (!slots_[i].in_use) {
+        const uint64_t sequence = next_sequence_.fetch_add(1);
+        slots_[i].in_use = true;
+        slots_[i].sequence = sequence;
+        trace_event("slot_acquired", sequence, i);
+        return SlotLease{i, sequence};
+      }
+    }
+
+    throw std::runtime_error("No free nn2FPGA request slot after wait.");
+  }
+
+  void release_slot(size_t slot_index) {
+    {
+      std::lock_guard<std::mutex> lock(slot_mtx_);
+      trace_event("slot_release", slots_[slot_index].sequence, slot_index);
+      slots_[slot_index].in_use = false;
+    }
+    slot_cv_.notify_one();
+  }
+
+  void submit_sg_request(uint64_t sequence, size_t slot_index, RequestSlot &slot) {
+    std::unique_lock<std::mutex> lock(submit_mtx_);
+    trace_event("sg_submit_wait_enter", sequence, slot_index);
+    submit_cv_.wait(lock, [&]() { return next_submit_sequence_.load() == sequence; });
+    trace_event("sg_submit_wait_done", sequence, slot_index);
+
+    // Critical invariant: every output destination for this sequence is queued
+    // before the input descriptor can let the accelerator produce that output.
+    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+      const auto &pd = Spec::Outputs[o];
+      const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+      trace_event("sg_output_enqueue", sequence, slot_index, static_cast<int>(o));
+      slot.output_descs[o] = output_rings_[o]->enqueue(sequence, *slot.out_bos[o], bytes);
+      trace_dma("sg_output_enqueue", sequence, slot_index, static_cast<int>(o),
+                output_rings_[o]->debug_status(&*slot.output_descs[o]));
+    }
+
+    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+      const auto &pd = Spec::Inputs[i];
+      if (pd.mode == PortMode::StaticInit)
+        continue;
+      const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+      trace_event("sg_input_enqueue", sequence, slot_index, static_cast<int>(i));
+      slot.input_descs[i] = input_rings_[i]->enqueue(sequence, *slot.in_bos[i], bytes);
+      trace_dma("sg_input_enqueue", sequence, slot_index, static_cast<int>(i),
+                input_rings_[i]->debug_status(&*slot.input_descs[i]));
+    }
+
+    next_submit_sequence_.fetch_add(1);
+    trace_event("sg_submit_sequence_advance", sequence, slot_index);
+    lock.unlock();
+    submit_cv_.notify_all();
+  }
+
+  void wait_sg_outputs(uint64_t sequence, size_t slot_index, RequestSlot &slot) {
+    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+      trace_event("sg_output_wait_start", sequence, slot_index, static_cast<int>(o));
+      if (!slot.output_descs[o].has_value())
+        throw std::runtime_error("Missing SG output descriptor for output port " + std::to_string(o));
+      if (!output_rings_[o]->wait_done(*slot.output_descs[o], 2000)) {
+        trace_event("sg_output_timeout", sequence, slot_index, static_cast<int>(o));
+        trace_dma("sg_output_timeout", sequence, slot_index, static_cast<int>(o),
+                  output_rings_[o]->debug_status(&*slot.output_descs[o]));
+        trace_ctrl_regs("sg_output_timeout", sequence, slot_index);
+        throw std::runtime_error("S2MM SG timeout on output port " + std::to_string(o));
+      }
+      trace_event("sg_output_wait_done", sequence, slot_index, static_cast<int>(o));
+    }
+  }
+
+  void complete_sg_request(uint64_t sequence, size_t slot_index, RequestSlot &slot,
+                           const std::vector<void *> &out_ptrs) {
+    std::unique_lock<std::mutex> lock(completion_mtx_);
+    trace_event("sg_complete_wait_enter", sequence, slot_index);
+    completion_cv_.wait(lock, [&]() { return next_complete_sequence_.load() == sequence; });
+    trace_event("sg_complete_wait_done", sequence, slot_index);
+
+    // Copy and reclaim in sequence order. The AXI DMA walks a circular BD ring;
+    // reusing descriptors out of order can break the tail/next chain even when
+    // later ORT worker threads observe their descriptors as complete first.
+    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+      const auto &pd = Spec::Outputs[o];
+      const size_t bytes = bytes_per_image(pd.dtype, pd.inner_dims);
+      slot.out_bos[o]->sync(XCL_BO_SYNC_BO_FROM_DEVICE, bytes, 0);
+      std::memcpy(out_ptrs[o], slot.out_host_ptrs[o], bytes);
+    }
+
+    reclaim_sg_descriptors(sequence, slot_index, slot);
+    next_complete_sequence_.fetch_add(1);
+    trace_event("sg_complete_sequence_advance", sequence, slot_index);
+    lock.unlock();
+    completion_cv_.notify_all();
+  }
+
+  void reclaim_sg_descriptors(uint64_t sequence, size_t slot_index, RequestSlot &slot) {
+    for (size_t i = 0; i < Spec::Inputs.size(); ++i) {
+      const auto &pd = Spec::Inputs[i];
+      if (pd.mode == PortMode::StaticInit || !slot.input_descs[i].has_value())
+        continue;
+      trace_event("sg_input_reclaim", sequence, slot_index, static_cast<int>(i));
+      if (!input_rings_[i]->wait_done(*slot.input_descs[i], 2000)) {
+        trace_dma("sg_input_reclaim_timeout", sequence, slot_index, static_cast<int>(i),
+                  input_rings_[i]->debug_status(&*slot.input_descs[i]));
+        throw std::runtime_error("MM2S SG timeout on input port " + std::to_string(i));
+      }
+      input_rings_[i]->reclaim(*slot.input_descs[i]);
+      slot.input_descs[i].reset();
+    }
+
+    for (size_t o = 0; o < Spec::Outputs.size(); ++o) {
+      if (!slot.output_descs[o].has_value())
+        continue;
+      trace_event("sg_output_reclaim", sequence, slot_index, static_cast<int>(o));
+      output_rings_[o]->reclaim(*slot.output_descs[o]);
+      slot.output_descs[o].reset();
+    }
+  }
+
+  void reset_sg_after_error(RequestSlot &slot) {
+    for (auto &ring : input_rings_) {
+      if (ring)
+        ring->reset_and_release_all();
+    }
+    for (auto &ring : output_rings_) {
+      if (ring)
+        ring->reset_and_release_all();
+    }
+    for (auto &desc : slot.input_descs)
+      desc.reset();
+    for (auto &desc : slot.output_descs)
+      desc.reset();
+  }
+
+  static bool env_flag(const char *name) {
+    const char *value = std::getenv(name);
+    return value != nullptr && value[0] != '\0' && std::string(value) != "0";
+  }
+
+  static bool trace_enabled() {
+    static const bool enabled = env_flag("NN2FPGA_TRACE");
+    return enabled;
+  }
+
+  static bool trace_dma_enabled() {
+    static const bool enabled = env_flag("NN2FPGA_TRACE_DMA");
+    return enabled;
+  }
+
+  static bool trace_ctrl_enabled() {
+    static const bool enabled = env_flag("NN2FPGA_TRACE_CTRL");
+    return enabled;
+  }
+
+  void trace_event(const char *event, uint64_t sequence, size_t slot_index,
+                   int port = -1) const {
+    if (!trace_enabled())
+      return;
+
+    using namespace std::chrono;
+    const auto now = steady_clock::now().time_since_epoch();
+    const auto us = duration_cast<microseconds>(now).count();
+    const uint64_t next_submit = next_submit_sequence_.load();
+    const uint64_t next_complete = next_complete_sequence_.load();
+
+    std::fprintf(stderr,
+                 "[nn2fpga trace] t_us=%lld event=%s seq=%llu slot=%zu port=%d "
+                 "next_submit=%llu next_complete=%llu\n",
+                 static_cast<long long>(us), event,
+                 static_cast<unsigned long long>(sequence), slot_index, port,
+                 static_cast<unsigned long long>(next_submit),
+                 static_cast<unsigned long long>(next_complete));
+  }
+
+  void trace_dma(const char *event, uint64_t sequence, size_t slot_index,
+                 int port, const std::string &status) const {
+    if (!trace_dma_enabled())
+      return;
+    std::fprintf(stderr,
+                 "[nn2fpga dma] event=%s seq=%llu slot=%zu port=%d %s\n",
+                 event, static_cast<unsigned long long>(sequence), slot_index,
+                 port, status.c_str());
+  }
+
+  void trace_bo(const char *event, size_t slot_index, size_t port,
+                uint64_t address, size_t bytes) const {
+    if (!trace_enabled())
+      return;
+    std::fprintf(stderr,
+                 "[nn2fpga trace] event=%s slot=%zu port=%zu addr=0x%016llx bytes=%zu\n",
+                 event, slot_index, port,
+                 static_cast<unsigned long long>(address), bytes);
+  }
+
+  void trace_ctrl_regs(const char *event, uint64_t sequence,
+                       size_t slot_index) const {
+    if (!trace_ctrl_enabled())
+      return;
+    std::fprintf(stderr,
+                 "[nn2fpga ctrl] event=%s seq=%llu slot=%zu base=0x%lx\n",
+                 event, static_cast<unsigned long long>(sequence), slot_index,
+                 static_cast<unsigned long>(Spec::ControlAxiOffset));
+    for (off_t off = 0; off < 0x40; off += 4) {
+      std::fprintf(stderr, "[nn2fpga ctrl] off=0x%02lx value=0x%08x\n",
+                   static_cast<unsigned long>(off),
+                   rd32(mmio_.regs, Spec::ControlAxiOffset + off));
     }
   }
 
@@ -300,11 +550,11 @@ private:
                                  " bytes.");
       }
 
-      std::memcpy(in_host_ptrs_[i], raw.data(), raw.size());
-      in_bos_[i].sync(XCL_BO_SYNC_BO_TO_DEVICE, size, 0);
+      std::memcpy(static_in_host_ptrs_[i], raw.data(), raw.size());
+      static_in_bos_[i]->sync(XCL_BO_SYNC_BO_TO_DEVICE, size, 0);
 
-      tx_[i]->transfer(size, 0);
-      if (!tx_[i]->wait_done(200)) {
+      static_tx_[i]->transfer(size, 0);
+      if (!static_tx_[i]->wait_done(400)) {
         throw std::runtime_error("MM2S timeout during static upload on port " +
                                  std::to_string(i) + " with name " +
                                  entry.at("new_name").get<std::string>());
@@ -314,17 +564,28 @@ private:
 
   xrt::device dev_;
   Mmio mmio_;
-  std::mutex mtx_;
 
-  std::vector<xrt::bo> in_bos_;
-  std::vector<xrt::bo> out_bos_;
+  std::vector<std::optional<xrt::bo>> static_in_bos_;
   std::vector<xrt::bo> buffer_bos_;
-  std::vector<void *> in_host_ptrs_;
-  std::vector<void *> out_host_ptrs_;
+  std::vector<void *> static_in_host_ptrs_;
   std::vector<void *> buffer_host_ptrs_;
 
-  std::vector<std::optional<Mm2sSimple>> tx_;
-  std::vector<std::optional<S2mmSG>> rx_;
+  std::vector<std::optional<Mm2sSimple>> static_tx_;
+  std::vector<std::unique_ptr<AxiDmaSgRing>> input_rings_;
+  std::vector<std::unique_ptr<AxiDmaSgRing>> output_rings_;
+  std::vector<RequestSlot> slots_;
+
+  std::mutex slot_mtx_;
+  std::condition_variable slot_cv_;
+  std::atomic<uint64_t> next_sequence_{0};
+
+  std::mutex submit_mtx_;
+  std::condition_variable submit_cv_;
+  std::atomic<uint64_t> next_submit_sequence_{0};
+
+  std::mutex completion_mtx_;
+  std::condition_variable completion_cv_;
+  std::atomic<uint64_t> next_complete_sequence_{0};
 
   std::once_flag init_once_;
   bool initialized_ = false;

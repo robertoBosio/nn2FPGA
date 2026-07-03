@@ -3,10 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <optional>
+#include <cstdio>
+#include <vector>
 #include <xrt/xrt_bo.h>
 #include <xrt/xrt_device.h>
 
@@ -49,6 +52,11 @@ static constexpr uint32_t DMASR_SG_ERROR_MASK =
     DMASR_SG_INTERR | DMASR_SG_SLVERR | DMASR_SG_DECERR;
 
 static constexpr size_t AXI_DMA_MAX_BD_LENGTH = 0x3FFFFFFu;
+static constexpr uint32_t AXI_DMA_BD_COMPLETE = (1u << 31);
+static constexpr uint32_t AXI_DMA_BD_ERROR_MASK = 0x30000000u;
+static constexpr uint32_t AXI_DMA_BD_SOF = (1u << 27);
+static constexpr uint32_t AXI_DMA_BD_EOF = (1u << 26);
+static constexpr uint32_t AXI_DMA_BD_LEN_MASK = 0x03FFFFFFu;
 
 static inline void wr32(volatile uint32_t *b, off_t off, uint32_t v) {
   b[off / 4] = v;
@@ -71,6 +79,239 @@ struct __attribute__((packed, aligned(64))) AxiDmaBd {
   uint32_t status;         // [7]  HW writes completion/EOP etc.
   uint32_t app0, app1, app2, app3, app4;
   uint32_t rsv13, rsv14, rsv15;
+};
+
+enum class AxiDmaDirection : uint8_t { Mm2s, S2mm };
+
+class AxiDmaSgRing {
+public:
+  struct Handle {
+    size_t idx = 0;
+    uint64_t sequence = 0;
+    size_t nbytes = 0;
+  };
+
+  AxiDmaSgRing(volatile uint32_t *regs_base, off_t dma_off,
+               const xrt::device &dev, AxiDmaDirection direction, size_t depth,
+               const std::string &name, unsigned bank = 0)
+      : regs_(regs_base + (dma_off / 4)), direction_(direction), depth_(depth),
+        name_(name), bd_bo_(dev, depth * sizeof(AxiDmaBd), 0, bank) {
+    if (depth_ == 0)
+      throw std::runtime_error(name_ + ": SG ring depth must be greater than 0.");
+    bd_ = bd_bo_.map<AxiDmaBd *>();
+    build_descriptors_();
+    reset_();
+  }
+
+  AxiDmaSgRing() = delete;
+  AxiDmaSgRing(const AxiDmaSgRing &) = delete;
+  AxiDmaSgRing &operator=(const AxiDmaSgRing &) = delete;
+
+  Handle enqueue(uint64_t sequence, const xrt::bo &bo, size_t nbytes) {
+    if (nbytes == 0)
+      throw std::runtime_error(name_ + ": SG transfer length must be greater than 0.");
+    if (nbytes > AXI_DMA_BD_LEN_MASK)
+      throw std::runtime_error(name_ + ": SG transfer length exceeds AXI DMA BD length field.");
+    if (nbytes > bo.size())
+      throw std::runtime_error(name_ + ": SG transfer length exceeds BO size.");
+
+    std::lock_guard<std::mutex> lock(mtx_);
+    const size_t idx = next_producer_descriptor_();
+    free_[idx] = false;
+    producer_idx_ = (producer_idx_ + 1) % depth_;
+
+    const uint64_t addr = bo.address();
+    bd_[idx].buf_l = static_cast<uint32_t>(addr & 0xFFFFFFFFull);
+    bd_[idx].buf_h = static_cast<uint32_t>(addr >> 32);
+    bd_[idx].rsv4 = bd_[idx].rsv5 = 0;
+    bd_[idx].ctrl_len = static_cast<uint32_t>(nbytes) | AXI_DMA_BD_SOF | AXI_DMA_BD_EOF;
+    bd_[idx].status = 0;
+    bd_[idx].app0 = bd_[idx].app1 = bd_[idx].app2 = bd_[idx].app3 = bd_[idx].app4 = 0;
+    bd_[idx].rsv13 = bd_[idx].rsv14 = bd_[idx].rsv15 = 0;
+    bd_bo_.sync(XCL_BO_SYNC_BO_TO_DEVICE, sizeof(AxiDmaBd), idx * sizeof(AxiDmaBd));
+
+    if (!started_)
+      start_locked_(idx);
+
+    const uint64_t tail = bd_bo_.address() + idx * sizeof(AxiDmaBd);
+    wr32(regs_, taildesc_off_(), static_cast<uint32_t>(tail & 0xFFFFFFFFull));
+    wr32(regs_, taildesc_msb_off_(), static_cast<uint32_t>(tail >> 32));
+    ++queued_count_;
+    return Handle{idx, sequence, nbytes};
+  }
+
+  bool wait_done(const Handle &handle, int timeout_ms) {
+    using namespace std::chrono;
+    auto deadline = steady_clock::now() + milliseconds(timeout_ms);
+    for (;;) {
+      {
+        std::lock_guard<std::mutex> lock(mtx_);
+        check_error_locked_();
+        bd_bo_.sync(XCL_BO_SYNC_BO_FROM_DEVICE, sizeof(AxiDmaBd),
+                    handle.idx * sizeof(AxiDmaBd));
+        const uint32_t status = bd_[handle.idx].status;
+        if (status & AXI_DMA_BD_ERROR_MASK) {
+          throw std::runtime_error(name_ + ": SG descriptor error. status=0x" +
+                                   hex32_(status));
+        }
+        if (status & AXI_DMA_BD_COMPLETE) {
+          const uint32_t actual = status & AXI_DMA_BD_LEN_MASK;
+          if (actual != handle.nbytes) {
+            throw std::runtime_error(name_ + ": SG descriptor byte count mismatch. actual=" +
+                                     std::to_string(actual) + " expected=" +
+                                     std::to_string(handle.nbytes));
+          }
+          return true;
+        }
+      }
+      if (steady_clock::now() >= deadline)
+        return false;
+      sleep_us(5);
+    }
+  }
+
+  void reclaim(const Handle &handle) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    bd_[handle.idx].status = 0;
+    bd_bo_.sync(XCL_BO_SYNC_BO_TO_DEVICE, sizeof(AxiDmaBd),
+                handle.idx * sizeof(AxiDmaBd));
+    free_[handle.idx] = true;
+    if (queued_count_ == 0)
+      throw std::runtime_error(name_ + ": SG descriptor reclaim underflow.");
+    --queued_count_;
+    if (queued_count_ == 0)
+      reset_();
+  }
+
+  void reset_and_release_all() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    reset_();
+    for (size_t i = 0; i < depth_; ++i) {
+      bd_[i].status = 0;
+      free_[i] = true;
+    }
+    bd_bo_.sync(XCL_BO_SYNC_BO_TO_DEVICE, depth_ * sizeof(AxiDmaBd), 0);
+    queued_count_ = 0;
+    producer_idx_ = 0;
+  }
+
+  std::string debug_status(const Handle *handle = nullptr) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    char buf[512];
+    const uint32_t dmacr = rd32(regs_, dmacr_off_());
+    const uint32_t dmasr = rd32(regs_, dmasr_off_());
+    const uint32_t cur = rd32(regs_, curdesc_off_());
+    const uint32_t cur_msb = rd32(regs_, curdesc_msb_off_());
+    const uint32_t tail = rd32(regs_, taildesc_off_());
+    const uint32_t tail_msb = rd32(regs_, taildesc_msb_off_());
+    if (handle != nullptr) {
+      const uint32_t ctrl = bd_[handle->idx].ctrl_len;
+      const uint32_t status = bd_[handle->idx].status;
+      std::snprintf(buf, sizeof(buf),
+                    "%s SG dmacr=0x%08x dmasr=0x%08x cur=0x%08x%08x tail=0x%08x%08x idx=%zu ctrl=0x%08x status=0x%08x",
+                    name_.c_str(), dmacr, dmasr, cur_msb, cur, tail_msb, tail,
+                    handle->idx, ctrl, status);
+    } else {
+      std::snprintf(buf, sizeof(buf),
+                    "%s SG dmacr=0x%08x dmasr=0x%08x cur=0x%08x%08x tail=0x%08x%08x",
+                    name_.c_str(), dmacr, dmasr, cur_msb, cur, tail_msb, tail);
+    }
+    return std::string(buf);
+  }
+
+private:
+  static std::string hex32_(uint32_t value) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%08x", value);
+    return std::string(buf);
+  }
+
+  off_t dmacr_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x00 : 0x30; }
+  off_t dmasr_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x04 : 0x34; }
+  off_t curdesc_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x08 : 0x38; }
+  off_t curdesc_msb_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x0C : 0x3C; }
+  off_t taildesc_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x10 : 0x40; }
+  off_t taildesc_msb_off_() const { return direction_ == AxiDmaDirection::Mm2s ? 0x14 : 0x44; }
+
+  void build_descriptors_() {
+    const uint64_t base = bd_bo_.address();
+    free_.assign(depth_, true);
+    for (size_t i = 0; i < depth_; ++i) {
+      const uint64_t next = base + ((i + 1) % depth_) * sizeof(AxiDmaBd);
+      bd_[i].next_l = static_cast<uint32_t>(next & 0xFFFFFFFFull);
+      bd_[i].next_h = static_cast<uint32_t>(next >> 32);
+      bd_[i].buf_l = bd_[i].buf_h = 0;
+      bd_[i].rsv4 = bd_[i].rsv5 = 0;
+      bd_[i].ctrl_len = 0;
+      bd_[i].status = 0;
+      bd_[i].app0 = bd_[i].app1 = bd_[i].app2 = bd_[i].app3 = bd_[i].app4 = 0;
+      bd_[i].rsv13 = bd_[i].rsv14 = bd_[i].rsv15 = 0;
+    }
+    bd_bo_.sync(XCL_BO_SYNC_BO_TO_DEVICE, depth_ * sizeof(AxiDmaBd), 0);
+  }
+
+  void reset_() {
+    wr32(regs_, dmacr_off_(), DMACR_RESET);
+    bool reset_done = false;
+    for (int i = 0; i < 100000; ++i) {
+      if ((rd32(regs_, dmacr_off_()) & DMACR_RESET) == 0) {
+        reset_done = true;
+        break;
+      }
+      sleep_us(1);
+    }
+    if (!reset_done) {
+      throw std::runtime_error(name_ + ": SG DMA reset did not complete. dmacr=0x" +
+                               hex32_(rd32(regs_, dmacr_off_())) + " dmasr=0x" +
+                               hex32_(rd32(regs_, dmasr_off_())));
+    }
+    wr32(regs_, dmasr_off_(), 0xFFFFFFFFu);
+    wr32(regs_, dmacr_off_(), 0);
+    wr32(regs_, dmasr_off_(), 0xFFFFFFFFu);
+    started_ = false;
+  }
+
+  size_t next_producer_descriptor_() const {
+    if (free_[producer_idx_])
+      return producer_idx_;
+    throw std::runtime_error(name_ + ": no free SG descriptors.");
+  }
+
+  void start_locked_(size_t idx) {
+    const uint64_t addr = bd_bo_.address() + idx * sizeof(AxiDmaBd);
+    wr32(regs_, curdesc_off_(), static_cast<uint32_t>(addr & 0xFFFFFFFFull));
+    wr32(regs_, curdesc_msb_off_(), static_cast<uint32_t>(addr >> 32));
+    wr32(regs_, dmacr_off_(), (rd32(regs_, dmacr_off_()) & ~DMACR_RESET) | DMACR_RS);
+    for (int i = 0; i < 100000; ++i) {
+      check_error_locked_();
+      if ((rd32(regs_, dmasr_off_()) & DMASR_HALTED) == 0) {
+        started_ = true;
+        return;
+      }
+      sleep_us(1);
+    }
+    throw std::runtime_error(name_ + ": SG DMA stayed halted after start. status=0x" +
+                             hex32_(rd32(regs_, dmasr_off_())));
+  }
+
+  void check_error_locked_() const {
+    const uint32_t sr = rd32(regs_, dmasr_off_());
+    if (sr & (DMASR_ERROR_MASK | DMASR_SG_ERROR_MASK)) {
+      throw std::runtime_error(name_ + ": SG DMA error. status=0x" + hex32_(sr));
+    }
+  }
+
+  volatile uint32_t *regs_;
+  AxiDmaDirection direction_;
+  size_t depth_;
+  std::string name_;
+  xrt::bo bd_bo_;
+  AxiDmaBd *bd_ = nullptr;
+  std::vector<bool> free_;
+  size_t producer_idx_ = 0;
+  size_t queued_count_ = 0;
+  bool started_ = false;
+  mutable std::mutex mtx_;
 };
 
 class Mm2sSimple {
@@ -141,6 +382,19 @@ public:
     return true;
   }
 
+  std::string debug_status() const {
+    char buf[256];
+    const uint32_t dmacr = rd32(regs_, MM2S_DMACR);
+    const uint32_t dmasr = rd32(regs_, MM2S_DMASR);
+    const uint32_t sa = rd32(regs_, MM2S_SA);
+    const uint32_t sa_msb = rd32(regs_, MM2S_SA_MSB);
+    const uint32_t len = rd32(regs_, MM2S_LEN);
+    std::snprintf(buf, sizeof(buf),
+                  "MM2S dmacr=0x%08x dmasr=0x%08x sa=0x%08x%08x len=%u",
+                  dmacr, dmasr, sa_msb, sa, len);
+    return std::string(buf);
+  }
+
 private:
   void reset_and_halt_() {
     wr32(regs_, MM2S_DMASR, 0xFFFFFFFFu);
@@ -152,6 +406,80 @@ private:
 
   volatile uint32_t *regs_;
   xrt::bo src_;
+};
+
+class S2mmSimple {
+public:
+  S2mmSimple(volatile uint32_t *regs_base, off_t s2mm_off, const xrt::bo &dst)
+      : regs_(regs_base + (s2mm_off / 4)), dst_(dst) {
+    reset_and_halt_();
+  }
+
+  S2mmSimple() : regs_(nullptr), dst_() {}
+
+  void transfer(size_t nbytes, size_t start = 0) {
+    if (!nbytes)
+      throw std::runtime_error("S2MM transfer length must be greater than 0.");
+    if (start + nbytes > dst_.size())
+      throw std::runtime_error("S2MM transfer range is out of bounds.");
+
+    reset_and_halt_();
+
+    uint64_t da = dst_.address() + start;
+    wr32(regs_, S2MM_DA, static_cast<uint32_t>(da & 0xFFFFFFFFull));
+    wr32(regs_, S2MM_DA_MSB, static_cast<uint32_t>(da >> 32));
+
+    wr32(regs_, S2MM_DMACR,
+         (rd32(regs_, S2MM_DMACR) & ~DMACR_RESET) | DMACR_RS);
+
+    wr32(regs_, S2MM_LEN, static_cast<uint32_t>(nbytes));
+  }
+
+  bool wait_done(int timeout_ms) {
+    using namespace std::chrono;
+    auto deadline = steady_clock::now() + milliseconds(timeout_ms);
+
+    for (;;) {
+      uint32_t sr = rd32(regs_, S2MM_DMASR);
+
+      if (sr & DMASR_ERROR_MASK) {
+        throw std::runtime_error("S2MM DMA error. DMASR: 0x" + std::to_string(sr));
+      }
+      if ((sr & DMASR_IDLE) || (sr & DMASR_IOCIRQ)) {
+        break;
+      }
+      if (steady_clock::now() >= deadline) {
+        return false;
+      }
+      sleep_us(5);
+    }
+    return true;
+  }
+
+  std::string debug_status() const {
+    char buf[256];
+    const uint32_t dmacr = rd32(regs_, S2MM_DMACR);
+    const uint32_t dmasr = rd32(regs_, S2MM_DMASR);
+    const uint32_t da = rd32(regs_, S2MM_DA);
+    const uint32_t da_msb = rd32(regs_, S2MM_DA_MSB);
+    const uint32_t len = rd32(regs_, S2MM_LEN);
+    std::snprintf(buf, sizeof(buf),
+                  "S2MM dmacr=0x%08x dmasr=0x%08x da=0x%08x%08x len=%u",
+                  dmacr, dmasr, da_msb, da, len);
+    return std::string(buf);
+  }
+
+private:
+  void reset_and_halt_() {
+    wr32(regs_, S2MM_DMASR, 0xFFFFFFFFu);
+    wr32(regs_, S2MM_DMACR, DMACR_RESET);
+    sleep_us(5);
+    wr32(regs_, S2MM_DMACR, 0);
+    wr32(regs_, S2MM_DMASR, 0xFFFFFFFFu);
+  }
+
+  volatile uint32_t *regs_;
+  xrt::bo dst_;
 };
 
 class S2mmSG {
