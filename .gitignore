@@ -27,3 +27,6 @@ site/
 
 # Local configuration files
 .run.local.sh
+
+# Opencode
+AGENTS.md

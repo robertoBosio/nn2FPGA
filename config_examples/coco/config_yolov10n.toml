@@ -12,9 +12,10 @@ frequency = 200
 OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
+OptimizeFifo = true
 Simulate = true
 Deploy = true
 
 [options]
 silvia_packing = true
-dsp_limit = 1000
+dsp_limit = 700
