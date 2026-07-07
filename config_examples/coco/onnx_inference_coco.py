@@ -3,7 +3,10 @@ import time
 import json
 import argparse
 import sys
+import csv
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import numpy as np
 import onnxruntime as ort
 from torch.utils.data import Dataset, DataLoader, Subset
@@ -130,6 +133,207 @@ def make_session_options(
     so.graph_optimization_level = graph_optimization_level
     so.enable_profiling = enable_profiling
     return so
+
+
+# -----------------------------
+# Power monitoring
+# -----------------------------
+RAILNAME_MAP = {
+    "VCCPSINTFP": "u76",
+    "VCCINTLP": "u77",
+    "VCCPSAUX": "u78",
+    "VCCPSPLL": "u87",
+    "MGTRAVCC": "u85",
+    "MGTRAVTT": "u86",
+    "VCCPSDDR": "u93",
+    "VCCOPS": "u88",
+    "VCCOPS3": "u15",
+    "VCCPSDDRPLL": "u92",
+    "VCCINT": "u79",
+    "VCCBRAM": "u81",
+    "VCCAUX": "u80",
+    "VCC1V2": "u84",
+    "VCC3V3": "u16",
+    "VADJ_FMC": "u65",
+    "MGTAVCC": "u74",
+    "MGTAVTT": "u75",
+}
+
+
+@dataclass
+class INARail:
+    rail: str
+    current_path: str
+    voltage_path: str
+
+
+class ZCU102PowerMonitor:
+    def __init__(self):
+        self.rails = self._discover_rails()
+
+    def _discover_rails(self) -> list[INARail]:
+        rails: list[INARail] = []
+        directory = "/sys/class/hwmon"
+
+        if not os.path.isdir(directory):
+            raise RuntimeError(f"{directory} does not exist")
+
+        for entry in os.listdir(directory):
+            if entry.startswith("."):
+                continue
+
+            base = os.path.join(directory, entry)
+            name_file = os.path.join(base, "name")
+            if not os.path.isfile(name_file):
+                continue
+
+            try:
+                with open(name_file, "r", encoding="utf-8") as f:
+                    sensor_name = f.read().strip()
+            except OSError:
+                continue
+
+            if not sensor_name.startswith("ina"):
+                continue
+
+            matched_rail = None
+            for rail, chip_name in RAILNAME_MAP.items():
+                if chip_name in sensor_name:
+                    matched_rail = rail
+                    break
+
+            if matched_rail is None:
+                continue
+
+            current_path = os.path.join(base, "curr1_input")
+            voltage_path = os.path.join(base, "in2_input")
+
+            if os.path.isfile(current_path) and os.path.isfile(voltage_path):
+                rails.append(
+                    INARail(
+                        rail=matched_rail,
+                        current_path=current_path,
+                        voltage_path=voltage_path,
+                    )
+                )
+
+        if not rails:
+            raise RuntimeError("No ZCU102 INA rails found under /sys/class/hwmon")
+
+        rails.sort(key=lambda x: x.rail)
+        return rails
+
+    @staticmethod
+    def _read_float(path: str) -> float:
+        with open(path, "r", encoding="utf-8") as f:
+            return float(f.read().strip())
+
+    def read_total_power_w(self) -> float:
+        total_w = 0.0
+        for rail in self.rails:
+            curr_ma = self._read_float(rail.current_path)
+            volt_mv = self._read_float(rail.voltage_path)
+            total_w += (curr_ma * volt_mv) / 1_000_000.0
+        return total_w
+
+    def read_rail_powers_w(self) -> dict[str, float]:
+        out = {}
+        for rail in self.rails:
+            curr_ma = self._read_float(rail.current_path)
+            volt_mv = self._read_float(rail.voltage_path)
+            out[rail.rail] = (curr_ma * volt_mv) / 1_000_000.0
+        return out
+
+
+class PowerRecorder:
+    def __init__(self, monitor: ZCU102PowerMonitor, sample_period_s: float = 0.01):
+        self.monitor = monitor
+        self.sample_period_s = sample_period_s
+        self.samples: list[dict] = []
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _run(self):
+        next_t = time.perf_counter()
+        while not self._stop_event.is_set():
+            ts_perf_ns = time.perf_counter_ns()
+
+            try:
+                total_power_w = self.monitor.read_total_power_w()
+                rail_powers = self.monitor.read_rail_powers_w()
+            except Exception as e:
+                self.samples.append({"timestamp_perf_ns": ts_perf_ns, "error": repr(e)})
+            else:
+                row = {
+                    "timestamp_perf_ns": ts_perf_ns,
+                    "total_power_w": total_power_w,
+                }
+                row.update({f"rail_{k}_w": v for k, v in rail_powers.items()})
+                self.samples.append(row)
+
+            next_t += self.sample_period_s
+            sleep_s = next_t - time.perf_counter()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            else:
+                next_t = time.perf_counter()
+
+    def start(self):
+        if self._thread is not None:
+            raise RuntimeError("PowerRecorder already started")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        if self._thread is None:
+            return
+        self._stop_event.set()
+        self._thread.join()
+        self._thread = None
+
+    def write_csv(self, filepath: str):
+        if not self.samples:
+            raise RuntimeError("No power samples recorded")
+
+        fieldnames = sorted({k for row in self.samples for k in row.keys()})
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self.samples)
+
+    def to_trace_events(self, timeline_origin_ns: int) -> list[dict]:
+        events = []
+        counter_keys: set[str] = set()
+        for sample in self.samples:
+            if "error" in sample:
+                continue
+            if "total_power_w" in sample:
+                counter_keys.add("total_power_w")
+            for key in sample:
+                if key.startswith("rail_") and key.endswith("_w"):
+                    counter_keys.add(key)
+
+        key_to_pid = {key: 7000 + i for i, key in enumerate(sorted(counter_keys))}
+        for sample in self.samples:
+            if "error" in sample:
+                continue
+            ts_us = (sample["timestamp_perf_ns"] - timeline_origin_ns) / 1e3
+            for key, pid in key_to_pid.items():
+                val = sample.get(key)
+                if val is not None:
+                    events.append(
+                        {
+                            "name": key,
+                            "cat": "power",
+                            "ph": "C",
+                            "ts": ts_us,
+                            "pid": pid,
+                            "tid": 1,
+                            "args": {"W": val},
+                        }
+                    )
+        return events
 
 
 def outputs_match(
@@ -263,20 +467,39 @@ def benchmark_preloaded(
     batches: list[np.ndarray],
     input_name: str,
     label: str,
+    run_records: list[dict] | None = None,
 ):
     batch_lat_s: list[float] = []
     img_lat_s: list[float] = []
     total_images = 0
     total_time_s = 0.0
 
-    for np_features in batches:
+    for batch_idx, np_features in enumerate(batches):
         bs = int(np_features.shape[0])
 
-        t0 = time.perf_counter()
-        _ = sess.run(None, {input_name: np_features})
-        t1 = time.perf_counter()
+        if run_records is None:
+            t0 = time.perf_counter()
+            _ = sess.run(None, {input_name: np_features})
+            t1 = time.perf_counter()
+            dt = t1 - t0
+        else:
+            start_perf_ns = time.perf_counter_ns()
+            _ = sess.run(None, {input_name: np_features})
+            end_perf_ns = time.perf_counter_ns()
+            dt = (end_perf_ns - start_perf_ns) / 1e9
 
-        dt = t1 - t0
+            run_records.append(
+                {
+                    "label": label,
+                    "batch_idx": batch_idx,
+                    "batch_size": bs,
+                    "run_tag": f"{label}_batch_{batch_idx}",
+                    "start_perf_ns": start_perf_ns,
+                    "end_perf_ns": end_perf_ns,
+                    "duration_ms": dt * 1e3,
+                }
+            )
+
         batch_lat_s.append(dt)
         img_lat_s.append(dt / bs)
 
@@ -331,6 +554,7 @@ def benchmark_preloaded_concurrent(
     input_name: str,
     label: str,
     workers: int,
+    run_records: list[dict] | None = None,
 ):
     if workers <= 0:
         raise ValueError("workers must be > 0")
@@ -343,10 +567,16 @@ def benchmark_preloaded_concurrent(
             )
 
     def run_one(image_idx: int, np_features: np.ndarray):
-        t0 = time.perf_counter()
+        if run_records is None:
+            t0 = time.perf_counter()
+            _ = sess.run(None, {input_name: np_features})
+            t1 = time.perf_counter()
+            return image_idx, t0, t1
+
+        start_perf_ns = time.perf_counter_ns()
         _ = sess.run(None, {input_name: np_features})
-        t1 = time.perf_counter()
-        return image_idx, t0, t1
+        end_perf_ns = time.perf_counter_ns()
+        return image_idx, start_perf_ns, end_perf_ns
 
     lat_s: list[float] = []
     start_s = time.perf_counter()
@@ -357,8 +587,23 @@ def benchmark_preloaded_concurrent(
             for image_idx, np_features in enumerate(batches)
         ]
         for future in as_completed(futures):
-            _, t0, t1 = future.result()
-            lat_s.append(t1 - t0)
+            image_idx, start_time, end_time = future.result()
+            if run_records is None:
+                dt = end_time - start_time
+            else:
+                dt = (end_time - start_time) / 1e9
+                run_records.append(
+                    {
+                        "label": label,
+                        "batch_idx": image_idx,
+                        "batch_size": 1,
+                        "run_tag": f"{label}_image_{image_idx}",
+                        "start_perf_ns": start_time,
+                        "end_perf_ns": end_time,
+                        "duration_ms": dt * 1e3,
+                    }
+                )
+            lat_s.append(dt)
 
     total_time_s = time.perf_counter() - start_s
     total_images = len(lat_s)
@@ -505,6 +750,146 @@ def write_results_file(filepath: str, orig: dict, opt: dict, comparison: dict):
         f.write("\n")
 
 
+def write_json(filepath: str, obj):
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
+
+
+def _load_ort_events(profile_file: str) -> list[dict]:
+    with open(profile_file, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    if isinstance(raw, list):
+        return raw
+    return raw.get("traceEvents", [])
+
+
+def _find_first_session_run_us(events: list[dict], names: set[str]) -> float | None:
+    for event in events:
+        if event.get("name") in names and "ts" in event:
+            return float(event["ts"])
+    return None
+
+
+def _ort_events_to_trace(
+    events: list[dict],
+    sync_ort_us: float,
+    sync_perf_ns: int,
+    timeline_origin_ns: int,
+    pid_offset: int,
+) -> list[dict]:
+    sync_wall_us = (sync_perf_ns - timeline_origin_ns) / 1e3
+    ort_offset_us = sync_wall_us - sync_ort_us
+
+    out = []
+    for event in events:
+        item = dict(event)
+        if "ts" in item:
+            item["ts"] = float(item["ts"]) + ort_offset_us
+        if "pid" in item:
+            item["pid"] = item["pid"] + pid_offset
+        if "tid" in item:
+            item["tid"] = item["tid"] + pid_offset
+        out.append(item)
+    return out
+
+
+def _run_records_to_trace(run_records: list[dict], timeline_origin_ns: int, pid: int = 8000) -> list[dict]:
+    events = []
+    label_to_tid = {}
+    next_tid = 1
+
+    for record in run_records:
+        label = record["label"]
+        if label not in label_to_tid:
+            label_to_tid[label] = next_tid
+            next_tid += 1
+
+        events.append(
+            {
+                "name": record["run_tag"],
+                "cat": "benchmark",
+                "ph": "X",
+                "ts": (record["start_perf_ns"] - timeline_origin_ns) / 1e3,
+                "dur": (record["end_perf_ns"] - record["start_perf_ns"]) / 1e3,
+                "pid": pid,
+                "tid": label_to_tid[label],
+                "args": {
+                    "batch_idx": record["batch_idx"],
+                    "batch_size": record["batch_size"],
+                    "duration_ms": record["duration_ms"],
+                },
+            }
+        )
+
+    return events
+
+
+def build_merged_trace(
+    profile_file_orig: str,
+    profile_file_opt: str,
+    sync_perf_ns_orig: int,
+    sync_perf_ns_opt: int,
+    run_records: list[dict],
+    power_recorder: PowerRecorder,
+    timeline_origin_ns: int,
+    output_file: str,
+) -> str:
+    sync_event_names = {"model_run", "SequentialExecutor::Execute", "session.run"}
+
+    orig_events = [event for event in _load_ort_events(profile_file_orig) if "ts" in event]
+    opt_events = [event for event in _load_ort_events(profile_file_opt) if "ts" in event]
+
+    sync_ort_us_orig = _find_first_session_run_us(orig_events, sync_event_names)
+    if sync_ort_us_orig is None:
+        sync_ort_us_orig = min(float(event["ts"]) for event in orig_events)
+
+    sync_ort_us_opt = _find_first_session_run_us(opt_events, sync_event_names)
+    if sync_ort_us_opt is None:
+        sync_ort_us_opt = min(float(event["ts"]) for event in opt_events)
+
+    merged: list[dict] = []
+    merged.extend(
+        _ort_events_to_trace(
+            orig_events,
+            sync_ort_us=sync_ort_us_orig,
+            sync_perf_ns=sync_perf_ns_orig,
+            timeline_origin_ns=timeline_origin_ns,
+            pid_offset=5000,
+        )
+    )
+    merged.extend(
+        _ort_events_to_trace(
+            opt_events,
+            sync_ort_us=sync_ort_us_opt,
+            sync_perf_ns=sync_perf_ns_opt,
+            timeline_origin_ns=timeline_origin_ns,
+            pid_offset=6000,
+        )
+    )
+    merged.extend(power_recorder.to_trace_events(timeline_origin_ns))
+    merged.extend(_run_records_to_trace(run_records, timeline_origin_ns))
+
+    for label, perf_ns in [("sync_orig", sync_perf_ns_orig), ("sync_opt", sync_perf_ns_opt)]:
+        merged.append(
+            {
+                "name": label,
+                "cat": "anchor",
+                "ph": "i",
+                "s": "g",
+                "ts": (perf_ns - timeline_origin_ns) / 1e3,
+                "pid": 9000,
+                "tid": 1,
+                "args": {},
+            }
+        )
+
+    merged.sort(key=lambda event: event.get("ts", 0.0))
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump({"traceEvents": merged}, f)
+
+    return output_file
+
+
 # -----------------------------
 # Modes / CLI
 # -----------------------------
@@ -581,6 +966,9 @@ def run_speed(args) -> int:
     )
     batches = preload_batches(dataloader, measure_batches=args.measure_batches)
 
+    if args.power_record:
+        return run_speed_with_power(args, custom_op_so, batches)
+
     print("Starting optimized benchmark sessions...")
     sess_orig = ort.InferenceSession(
         args.original_model,
@@ -631,6 +1019,129 @@ def run_speed(args) -> int:
     return 0
 
 
+def run_speed_with_power(args, custom_op_so: str, batches: list[np.ndarray]) -> int:
+    print("Running warmup (unprofiled sessions)...")
+    sess_orig_warmup = ort.InferenceSession(
+        args.original_model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=False,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+    sess_opt_warmup = ort.InferenceSession(
+        args.model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=False,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+
+    input_name = sess_orig_warmup.get_inputs()[0].name
+    warmup_session(sess_orig_warmup, input_name, batches, warmup_batches=args.warmup_batches)
+    warmup_session(sess_opt_warmup, input_name, batches, warmup_batches=args.warmup_batches)
+    del sess_orig_warmup, sess_opt_warmup
+
+    print("Starting profiled benchmark sessions...")
+    sess_orig = ort.InferenceSession(
+        args.original_model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=True,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+    sess_opt = ort.InferenceSession(
+        args.model,
+        sess_options=make_session_options(
+            custom_op_so,
+            enable_profiling=True,
+            graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_ALL,
+        ),
+        providers=["CPUExecutionProvider"],
+    )
+
+    power_monitor = ZCU102PowerMonitor()
+    power_recorder = PowerRecorder(power_monitor, sample_period_s=args.power_sample_period)
+    inference_runs: list[dict] = []
+    timeline_origin_ns = time.perf_counter_ns()
+    profile_file_orig: str | None = None
+    profile_file_opt: str | None = None
+
+    print("Starting power recording and benchmark...")
+    power_recorder.start()
+    try:
+        sync_perf_ns_orig = time.perf_counter_ns()
+        sess_orig.run(None, {input_name: batches[0]})
+        orig_results = benchmark_preloaded(
+            sess_orig,
+            batches,
+            input_name,
+            label="original",
+            run_records=inference_runs,
+        )
+
+        sync_perf_ns_opt = time.perf_counter_ns()
+        sess_opt.run(None, {input_name: batches[0]})
+        opt_results = benchmark_preloaded_concurrent(
+            sess_opt,
+            batches,
+            input_name,
+            label=f"optimized_concurrent_{args.inflight_runs}",
+            workers=args.inflight_runs,
+            run_records=inference_runs,
+        )
+    finally:
+        power_recorder.stop()
+        print("Power recording stopped.")
+
+        try:
+            profile_file_orig = sess_orig.end_profiling()
+            print(f"Original profiling trace written to: {profile_file_orig}")
+        except Exception as e:
+            print(f"Warning: end_profiling (orig) failed: {e}")
+
+        try:
+            profile_file_opt = sess_opt.end_profiling()
+            print(f"Optimized profiling trace written to: {profile_file_opt}")
+        except Exception as e:
+            print(f"Warning: end_profiling (opt) failed: {e}")
+
+    comparison = build_comparison(orig_results, opt_results)
+    report_text = format_comparison_text(orig_results, opt_results, comparison)
+    print("\n" + report_text + "\n")
+
+    write_results_file(args.results_file, orig_results, opt_results, comparison)
+    print(f"Performance report written to: {os.path.abspath(args.results_file)}")
+
+    power_recorder.write_csv(args.power_file)
+    print(f"Power samples written to: {os.path.abspath(args.power_file)}")
+
+    write_json(args.runs_file, inference_runs)
+    print(f"Inference runs written to: {os.path.abspath(args.runs_file)}")
+
+    if profile_file_orig and profile_file_opt:
+        build_merged_trace(
+            profile_file_orig=profile_file_orig,
+            profile_file_opt=profile_file_opt,
+            sync_perf_ns_orig=sync_perf_ns_orig,
+            sync_perf_ns_opt=sync_perf_ns_opt,
+            run_records=inference_runs,
+            power_recorder=power_recorder,
+            timeline_origin_ns=timeline_origin_ns,
+            output_file=args.merged_trace_file,
+        )
+        print(f"Merged Perfetto trace written to: {os.path.abspath(args.merged_trace_file)}")
+    else:
+        print("Warning: one or both profile files missing; merged trace not written.")
+
+    return 0
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Run exact COCO correctness checks or optimized ONNX throughput benchmarks."
@@ -669,8 +1180,24 @@ def parse_args():
         help="Number of preloaded batches to benchmark in speed mode.",
     )
     parser.add_argument("--results-file", default="performance_improvement.txt")
+    parser.add_argument(
+        "--power-record",
+        action="store_true",
+        help="Record ZCU102 power samples during speed mode and emit a merged Perfetto trace.",
+    )
+    parser.add_argument(
+        "--power-sample-period",
+        type=float,
+        default=0.01,
+        help="Power sampling period in seconds when --power-record is enabled.",
+    )
+    parser.add_argument("--power-file", default="power_samples.csv")
+    parser.add_argument("--runs-file", default="inference_runs.json")
+    parser.add_argument("--merged-trace-file", default="merged_trace.json")
 
     args = parser.parse_args()
+    if args.power_record and args.mode != "speed":
+        parser.error("--power-record is only supported in speed mode")
     if args.num_images == -1:
         if args.mode == "correctness":
             parser.error("--num-images must be > 0 in correctness mode")
@@ -687,6 +1214,8 @@ def parse_args():
         parser.error("--rtol must be >= 0")
     if args.measure_batches is not None and args.measure_batches <= 0:
         parser.error("--measure-batches must be > 0")
+    if args.power_sample_period <= 0:
+        parser.error("--power-sample-period must be > 0")
 
     return args
 

@@ -13,6 +13,7 @@ OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = false
 Simulate = true
+GenerateBitstream = true
 Deploy = false
 
 [options]

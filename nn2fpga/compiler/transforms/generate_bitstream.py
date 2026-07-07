@@ -489,6 +489,7 @@ def vivado_tcl_script(
     lines.append(f'wait_on_run synth_1')
 
     # Launch implementation
+    lines.append(f'set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]')
     lines.append(f'launch_runs impl_1 -to_step write_bitstream -jobs 8')
     lines.append(f'wait_on_run impl_1')
 

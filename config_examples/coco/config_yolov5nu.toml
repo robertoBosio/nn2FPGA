@@ -1,6 +1,6 @@
 [project]
 top_name = "yolov5nu"
-onnx_path = "/workspace/NN2FPGA/models/onnx/yolov5nu_a8w8b32_po2_softmax.onnx"
+onnx_path = "/workspace/NN2FPGA/models/onnx/yolov5nu_a8w8b32_po2.onnx"
 project_root = "/workspace/NN2FPGA/work/yolov5nu"
 hls_version = 2025.1
 
@@ -13,9 +13,10 @@ OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
 OptimizeFifo = true
-Simulate = true
+Simulate = false
+GenerateBitstream = true
 Deploy = true
 
 [options]
 silvia_packing = true
-dsp_limit = 700
+dsp_limit = 1200

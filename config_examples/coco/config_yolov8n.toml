@@ -1,7 +1,7 @@
 [project]
 top_name = "yolov8n"
 onnx_path = "/workspace/NN2FPGA/models/onnx/yolov8n_a8w8b32_po2.onnx"
-project_root = "/workspace/NN2FPGA/work/yolov8n_nofinalconcat"
+project_root = "/workspace/NN2FPGA/work/yolov8n"
 hls_version = 2025.1
 
 [platform]
@@ -13,6 +13,7 @@ OptimizeBitwidth = true
 AddStreamingParams = true
 ComputeFifoDepth = true
 Simulate = true
+GenerateBitstream = true
 Deploy = true
 
 [options]

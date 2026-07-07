@@ -203,7 +203,13 @@ def fake_compile(monkeypatch):
     monkeypatch.setattr(compile_module, "transformation", fake_transforms)
 
 
-def build_config(tmp_path, onnx_path, store_intermediate=False):
+def build_config(
+    tmp_path,
+    onnx_path,
+    store_intermediate=False,
+    generate_bitstream=False,
+    deploy=False,
+):
     prj_root = tmp_path / "project"
     prj_root.mkdir()
     return {
@@ -224,7 +230,8 @@ def build_config(tmp_path, onnx_path, store_intermediate=False):
             "OptimizeFifo": True,
             "GenerateLightningSim": False,
             "Simulate": True,
-            "Deploy": False,
+            "GenerateBitstream": generate_bitstream,
+            "Deploy": deploy,
         },
     }
 
@@ -275,3 +282,32 @@ def test_compile_saves_mid_pipeline_artifacts_when_enabled(tmp_path, fake_compil
 
     saved_original = FakeModel.registry[str(prj_root / "original_model_for_sim.onnx")]
     assert saved_original.metadata["silvia_packing"] == "true"
+
+
+def test_compile_can_generate_bitstream_without_deploy(tmp_path, fake_compile):
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_text("fake", encoding="utf-8")
+    config = build_config(tmp_path, str(onnx_path), generate_bitstream=True, deploy=False)
+
+    compile_module.nn2fpga_compile(config)
+
+    prj_root = Path(config["prj_root"])
+    assert (prj_root / "bitstream_generated.onnx").exists()
+    assert any(event[1] == "GenerateBitstream" for event in FakeModel.events)
+    assert not any(event[1] == "GenerateDriver" for event in FakeModel.events)
+
+
+def test_compile_can_deploy_from_existing_bitstream_model(tmp_path, fake_compile):
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_text("fake", encoding="utf-8")
+    config = build_config(tmp_path, str(onnx_path), generate_bitstream=False, deploy=True)
+    prj_root = Path(config["prj_root"])
+    bitstream_model_path = prj_root / "bitstream_generated.onnx"
+    FakeModel("bitstream_model").save(bitstream_model_path)
+    FakeModel.events.clear()
+
+    compile_module.nn2fpga_compile(config)
+
+    assert str(bitstream_model_path) in FakeModelWrapper.loaded_paths
+    assert not any(event[1] == "GenerateBitstream" for event in FakeModel.events)
+    assert ("bitstream_model", "GenerateDriver") in FakeModel.events
