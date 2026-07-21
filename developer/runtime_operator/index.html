@@ -1,0 +1,797 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Runtime Operator - nn2FPGA</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#runtime-operator" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="nn2FPGA" class="md-header__button md-logo" aria-label="nn2FPGA" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            nn2FPGA
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Runtime Operator
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/robertoBosio/nn2FPGA" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    robertoBosio/nn2FPGA
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="nn2FPGA" class="md-nav__button md-logo" aria-label="nn2FPGA" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    nn2FPGA
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/robertoBosio/nn2FPGA" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    robertoBosio/nn2FPGA
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler Core
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler Core
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../compiler/core/accelerator_package/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AcceleratorPackage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#generated-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generated Artifacts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inference-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference Mode
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#standard-python-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Standard Python Session
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#initialization-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initialization Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inference-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sg-runtime-scheduler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SG Runtime Scheduler
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#static-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Static Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dma-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DMA Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#debug-tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Debug Tracing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#correctness-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correctness Testing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#video-benchmarking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Video Benchmarking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="runtime-operator">Runtime Operator</h1>
+<p>The nn2FPGA runtime operator is the ONNX Runtime custom operator that executes a generated FPGA accelerator from an ONNX model.</p>
+<p>During compilation, nn2FPGA replaces an FPGA-supported subgraph with a custom ONNX node, named <code>nn2fpgaPartition</code>. The generated ONNX model remains executable by ONNX Runtime, but the partition node is implemented by the external shared library <code>libnn2fpga_customop.so</code>.</p>
+<h2 id="generated-artifacts">Generated Artifacts</h2>
+<p>A deployment build normally contains:</p>
+<ul>
+<li><code>model.onnx</code>: ONNX model containing the <code>nn2fpgaPartition</code> custom node.</li>
+<li><code>libnn2fpga_customop.so</code>: ONNX Runtime custom op library implementing the partition node.</li>
+<li><code>pynq_program.py</code>: helper used by the runtime to program the FPGA bitstream.</li>
+<li>Embedded accelerator package: JSON stored as a custom op attribute, including the bitstream, HWH metadata, port metadata, static inputs, and runtime configuration.</li>
+</ul>
+<p>The custom op library contains generated C++ code specialized for the accelerator specification. The central runtime files are:</p>
+<ul>
+<li><code>nn2fpga/hw/operator_runtime/nn2FPGA_kernel.hpp</code>: ONNX Runtime custom op and FPGA runner.</li>
+<li><code>nn2fpga/hw/operator_runtime/nn2FPGA_spec.hpp</code>: generated accelerator specification types.</li>
+<li><code>nn2fpga/hw/operator_runtime/xrt_dma.h</code>: AXI DMA helper classes.</li>
+<li><code>nn2fpga/hw/operator_runtime/xrt_mmio.hpp</code>: AXI-Lite mapping helpers.</li>
+<li><code>nn2fpga/hw/operator_runtime/nn2FPGA_allocator.hpp</code>: optional XRT-backed ORT allocator support.</li>
+</ul>
+<h2 id="inference-mode">Inference Mode</h2>
+<p>The production runtime mode is the standard ONNX Runtime custom-op flow. It loads <code>libnn2fpga_customop.so</code> and executes the FPGA partition through the copy-compatible SG data path described below.</p>
+<p>The runtime is designed to work with ordinary Python ONNX Runtime sessions and normal CPU tensors. Optional allocator-backed zero-copy experiments are separate from the production path in this document.</p>
+<h2 id="standard-python-session">Standard Python Session</h2>
+<p>The standard Python flow registers only the custom op library:</p>
+<pre><code class="language-python">import os
+import onnxruntime as ort
+
+so = ort.SessionOptions()
+so.register_custom_ops_library(os.path.abspath(&quot;libnn2fpga_customop.so&quot;))
+session = ort.InferenceSession(&quot;model.onnx&quot;, so)
+</code></pre>
+<p>In this mode, Python ONNX Runtime uses its normal CPU allocators. The custom op receives ordinary CPU tensor pointers. The runtime therefore uses the internal XRT BO staging path described in <a href="#inference-flow">Inference Flow</a>.</p>
+<p>The custom op advertises <code>CPUExecutionProvider</code> as its execution provider type. ONNX Runtime schedules the partition node like a CPU custom op, but the node implementation programs and drives the FPGA internally through XRT and memory-mapped DMA registers.</p>
+<h2 id="initialization-flow">Initialization Flow</h2>
+<p>The runtime performs FPGA initialization once per process through <code>FpgaRunnerT&lt;Spec&gt;::ensure_loaded(...)</code>.</p>
+<p>At session creation time, the custom op kernel constructor receives the <code>accelerator_package</code> attribute from the ONNX node. The runtime then:</p>
+<ol>
+<li>Parses the accelerator package JSON.</li>
+<li>Decodes the embedded bitstream and HWH data.</li>
+<li>Writes them to the local <code>Overlay/</code> directory.</li>
+<li>Programs the FPGA through <code>pynq_program.py</code>.</li>
+<li>Maps the AXI-Lite control window.</li>
+<li>Sets the FPGA clock.</li>
+<li>Allocates XRT BOs for dynamic inputs, dynamic outputs, and internal buffers.</li>
+<li>Builds DMA helper objects for each stream port.</li>
+<li>Uploads static inputs, such as weights or constants, if they are present in the package.</li>
+</ol>
+<p>Initialization is guarded by <code>std::call_once</code>, so multiple ONNX Runtime kernel instances share the same loaded FPGA runner within the process.</p>
+<h2 id="inference-flow">Inference Flow</h2>
+<p>At inference time, ONNX Runtime calls <code>Nn2FpgaKernelT&lt;Spec&gt;::Compute(...)</code> for the partition node.</p>
+<p><code>Compute(...)</code> validates the ORT tensor types and shapes against the generated <code>Spec</code>, extracts input tensor pointers, creates output tensors, and calls:</p>
+<pre><code class="language-cpp">FpgaRunnerT&lt;Spec&gt;::instance().run(in_ptrs, out_ptrs, batch);
+</code></pre>
+<p>The production runtime accepts only <code>batch == 1</code>. If ONNX Runtime calls the custom operator with <code>batch &gt; 1</code>, the runtime rejects the call with an invalid-argument error. Throughput is obtained by launching multiple <code>session.run(...)</code> calls concurrently against the same ONNX Runtime session.</p>
+<p>The runtime is copy-compatible with normal Python ONNX Runtime tensors:</p>
+<pre><code class="language-text">ORT input tensor
+  -&gt; memcpy
+  -&gt; per-slot input XRT BO
+  -&gt; MM2S SG DMA descriptor
+  -&gt; FPGA accelerator
+  -&gt; S2MM SG DMA descriptor
+  -&gt; per-slot output XRT BO
+  -&gt; memcpy
+  -&gt; ORT output tensor
+</code></pre>
+<p>Each concurrent call gets a private request slot containing dynamic input BOs, dynamic output BOs, mapped host pointers, and descriptor handles. <code>Spec::N_MAX</code> is used as the number of request slots and SG descriptors per dynamic stream, not as an accepted ONNX batch size.</p>
+<h2 id="sg-runtime-scheduler">SG Runtime Scheduler</h2>
+<p>Dynamic input streams and output streams use AXI DMA scatter-gather rings managed by <code>AxiDmaSgRing</code> in <code>xrt_dma.h</code>. Static inputs remain simple one-shot MM2S transfers.</p>
+<p>The scheduler preserves accelerator ordering with two sequence counters:</p>
+<ol>
+<li><code>next_submit_sequence_</code>: permits request descriptors to be submitted in acquisition order.</li>
+<li><code>next_complete_sequence_</code>: permits output copy-back and descriptor reclamation in the same order.</li>
+</ol>
+<p>For each request sequence, submission is ordered as:</p>
+<ol>
+<li>Copy dynamic input tensors into the slot input BOs.</li>
+<li>Sync input BOs to device.</li>
+<li>Enqueue all output S2MM descriptors.</li>
+<li>Enqueue all dynamic input MM2S descriptors.</li>
+<li>Wait for output descriptors to complete.</li>
+<li>In sequence order, sync output BOs from device and copy into ORT output tensors.</li>
+<li>Reclaim input and output descriptors.</li>
+<li>Release the request slot.</li>
+</ol>
+<p>Output descriptors must be queued before input descriptors for the same sequence. This ensures the output DMA is ready before the accelerator can produce data.</p>
+<p>Descriptor allocation is strict circular producer order, not first-free order. This keeps the DMA-visible descriptor chain contiguous:</p>
+<pre><code class="language-text">BD0 -&gt; BD1 -&gt; BD2 -&gt; ... -&gt; BD(N-1) -&gt; BD0
+</code></pre>
+<p>A descriptor may be software-free but still unsafe to reuse if it is behind the DMA current descriptor and would create a hole in the ring. The producer-order rule prevents this failure mode.</p>
+<p>When a ring becomes empty after descriptor reclamation, the runtime resets that DMA channel and marks it not started. This handles the single-inflight gap case where a later request arrives after the DMA has advanced beyond the previous tail descriptor.</p>
+<p>If an SG DMA error or timeout occurs, the runtime resets and releases all SG rings before releasing the slot. This avoids leaking descriptor capacity after the first fault.</p>
+<h2 id="static-inputs">Static Inputs</h2>
+<p>Some input ports are marked as <code>PortMode::StaticInit</code>. These ports are not exposed as dynamic ORT inputs.</p>
+<p>During initialization, the runtime reads static values from the accelerator package <code>input_map</code>, copies them into the corresponding internal XRT BO, syncs the BO to the device, and performs the required DMA upload once through <code>Mm2sSimple</code>.</p>
+<p>Static input DMAs are intentionally not configured for SG. They are skipped during normal <code>Compute(...)</code> calls.</p>
+<h2 id="dma-configuration">DMA Configuration</h2>
+<p>The generated Vivado design configures DMAs by port role:</p>
+<ul>
+<li>Dynamic input DMAs: MM2S SG enabled.</li>
+<li>Output DMAs: S2MM SG enabled.</li>
+<li>Static input DMAs: simple MM2S, SG disabled.</li>
+</ul>
+<p>For SG DMAs, the generated TCL disables AXI DMA status/control streams:</p>
+<pre><code class="language-tcl">CONFIG.C_SG_INCLUDE_STSCNTRL_STRM {0}
+</code></pre>
+<p>This is required for the generated S2MM SG output path used by the custom operator.</p>
+<p>Internal accelerator buffers used by HLS <code>m_axi</code> pointer ports are allocated as XRT BOs and their device addresses are written into the control register window during initialization.</p>
+<h2 id="debug-tracing">Debug Tracing</h2>
+<p>Runtime tracing is disabled by default. Enable it only when diagnosing scheduler or DMA behavior:</p>
+<pre><code class="language-bash">export NN2FPGA_TRACE=1
+export NN2FPGA_TRACE_DMA=1
+export NN2FPGA_TRACE_CTRL=1
+</code></pre>
+<p><code>NN2FPGA_TRACE</code> prints high-level request, submit, wait, complete, reclaim, and slot events. <code>NN2FPGA_TRACE_DMA</code> prints DMA descriptor and status snapshots. <code>NN2FPGA_TRACE_CTRL</code> prints control register snapshots on selected timeout/error paths.</p>
+<p>Useful SG error information includes descriptor index, sequence, DMA status, current descriptor, tail descriptor, descriptor status, and actual byte count.</p>
+<h2 id="correctness-testing">Correctness Testing</h2>
+<p>Correctness must be checked on raw ONNX outputs, not only through video or throughput tests. Video NMS can hide or amplify tensor corruption.</p>
+<p>For YOLO COCO validation, use the generated benchmark with ORT optimizations disabled in correctness mode:</p>
+<pre><code class="language-bash">python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 1
+</code></pre>
+<p>Then repeat with concurrent calls:</p>
+<pre><code class="language-bash">python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 2
+
+python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode correctness \
+  --model nn2FPGA_yolov5nu.onnx \
+  --atol 10 \
+  --rtol 0 \
+  --inflight-runs 4
+</code></pre>
+<p>The tolerance is intentionally loose enough to ignore benign CPU/original versus FPGA numeric drift while still catching runtime corruption. If failures are only a few elements around <code>atol=10</code>, retest with a slightly larger tolerance before treating them as descriptor corruption. Large max errors or many bad elements indicate a runtime issue.</p>
+<p>For throughput, use speed mode:</p>
+<pre><code class="language-bash">python3 ../onnx_inference_coco.py \
+  --num-images 30 \
+  --mode speed \
+  --model nn2FPGA_yolov5nu.onnx \
+  --inflight-runs 6
+</code></pre>
+<p>Speed mode measures concurrent <code>session.run(...)</code> calls on preprocessed tensors. It does not include video decode, YOLO preprocessing, NMS, rendering, or encoding.</p>
+<h2 id="video-benchmarking">Video Benchmarking</h2>
+<p>The accelerated video benchmark should not use multiple independent Ultralytics <code>model.predict()</code> sessions for the FPGA model. The validated path is:</p>
+<pre><code class="language-text">OpenCV frame
+  -&gt; Ultralytics-compatible preprocess
+  -&gt; shared ORT InferenceSession.run(...)
+  -&gt; Ultralytics NMS/postprocess
+  -&gt; Ultralytics Results object
+  -&gt; render/encode
+</code></pre>
+<p>This matches the COCO correctness concurrency model: one shared ONNX Runtime session with multiple concurrent <code>session.run(...)</code> calls.</p>
+<p>The video benchmark reports the explicit preprocess, ORT run, and postprocess block as accelerated <code>inference_s</code>. This is expected to be slower than COCO speed-mode <code>session.run(...)</code> latency because COCO speed mode measures only the ONNX Runtime call on already-preprocessed tensors.</p>
+<p>For live-threaded video tests:</p>
+<pre><code class="language-bash">python3 ../build_yolov10n_2906/video_demo_benchmark.py \
+  --video normalized.mp4 \
+  --model-orig ../build_yolov5nu_0207/original_model_qcdq.onnx \
+  --model-accel ../build_yolov5nu_0207/nn2FPGA_yolov5nu.onnx \
+  --imgsz 640 \
+  --batch 1 \
+  --warmup-batches 0 \
+  --measure-batches 200 \
+  --custom-op ../build_yolov5nu_0207/libnn2fpga_customop.so \
+  --mode realistic \
+  --live-threaded \
+  --live-threaded-hold-inference-frames \
+  --save-video \
+  --output-video yolov5nu_accel_live_threaded.mp4 \
+  --half \
+  --inflight-runs 6
+</code></pre>
+<p>Use COCO correctness tests to validate tensors first. Use video tests to validate end-to-end demo behavior and CPU-side preprocessing/postprocessing overhead.</p>
+<h2 id="limitations">Limitations</h2>
+<p>The custom operator runtime currently supports only <code>batch == 1</code> per ONNX Runtime call.</p>
+<p>The production Python path remains copy-based at the ORT tensor boundary. Dynamic input and output transfers between per-slot BOs and the accelerator use SG DMA, but ORT tensors are still copied into and out of those BOs.</p>
+<p>Allocator-backed zero-copy experiments are not the production path described here. Direct output DMA into ORT-owned tensors would require a separate allocator/session integration and additional safety work.</p>
+<p>Global fatal-error propagation is still minimal. The runtime resets SG rings after local DMA exceptions, but a more robust design should store the first fatal error, notify all scheduler condition variables, and make all waiters fail promptly.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

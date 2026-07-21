@@ -1,0 +1,1837 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../../../..">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AcceleratorPackage - nn2FPGA</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#acceleratorpackage" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../.." title="nn2FPGA" class="md-header__button md-logo" aria-label="nn2FPGA" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            nn2FPGA
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AcceleratorPackage
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/robertoBosio/nn2FPGA" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    robertoBosio/nn2FPGA
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../.." title="nn2FPGA" class="md-nav__button md-logo" aria-label="nn2FPGA" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    nn2FPGA
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/robertoBosio/nn2FPGA" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    robertoBosio/nn2FPGA
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compiler Core
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Compiler Core
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AcceleratorPackage
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AcceleratorPackage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-location" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source location
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#encoded-hardware-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encoded Hardware Artifacts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Encoded Hardware Artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hls_code_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hls_code_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitstream_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bitstream_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hwh_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hwh_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tensor-interface-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor Interface Metadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tensor Interface Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#input-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#buffer-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffer Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        input_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        output_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#buffer_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        buffer_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-target-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build and Target Metadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Build and Target Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#work_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        work_dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#board_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        board_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#top_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        top_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frequency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hls_version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hls_version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#buffer-metadata-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffer Metadata Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#serialization-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Serialization API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Serialization API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#to_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_json()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from_jsonjson_str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_json(json_str)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base64-helper-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base64 Helper API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Base64 Helper API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set_hls_codecode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_hls_code(code)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_hls_code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_hls_code()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_bitstreampath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_bitstream(path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_bitstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_bitstream()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_hwhpath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_hwh(path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_hwh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_hwh()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Serialization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#axi-lite-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AXI-Lite Offsets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#possible-improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Possible Improvements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-location" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source location
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#encoded-hardware-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encoded Hardware Artifacts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Encoded Hardware Artifacts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hls_code_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hls_code_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bitstream_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bitstream_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hwh_b64" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hwh_b64
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tensor-interface-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tensor Interface Metadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tensor Interface Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#input-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#buffer-map-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffer Map Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        input_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#output_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        output_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#buffer_map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        buffer_map
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-target-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build and Target Metadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Build and Target Metadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#work_dir" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        work_dir
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#board_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        board_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#top_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        top_name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frequency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hls_version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hls_version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#buffer-metadata-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Buffer Metadata Lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#serialization-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Serialization API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Serialization API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#to_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_json()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from_jsonjson_str" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        from_json(json_str)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base64-helper-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base64 Helper API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Base64 Helper API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#set_hls_codecode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_hls_code(code)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_hls_code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_hls_code()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_bitstreampath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_bitstream(path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_bitstream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_bitstream()
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_hwhpath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_hwh(path)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get_hwh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_hwh()
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serialization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Serialization
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#axi-lite-offsets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AXI-Lite Offsets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#possible-improvements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Possible Improvements
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="acceleratorpackage">AcceleratorPackage</h1>
+<h2 id="overview">Overview</h2>
+<p><code>AcceleratorPackage</code> is a dataclass that encapsulates all artifacts and metadata required to represent an FPGA accelerator in a portable and serializable form.</p>
+<p>It serves as a unified container for:</p>
+<ul>
+<li>Generated HLS source code</li>
+<li>Compiled FPGA bitstream</li>
+<li>Hardware handoff description (<code>.hwh</code>)</li>
+<li>Input/output tensor name mappings</li>
+<li>DDR-backed buffer metadata</li>
+<li>Build and platform configuration</li>
+</ul>
+<p>This enables the accelerator to be serialized (e.g., to JSON), stored, transferred, and reconstructed across different stages of the compilation and deployment pipeline.</p>
+<hr />
+<h2 id="source-location">Source location</h2>
+<pre><code class="language-python">nn2fpga/compiler/core/acceleratorpackage.py
+</code></pre>
+<hr />
+<h2 id="purpose">Purpose</h2>
+<p>The class is designed to:</p>
+<ul>
+<li>Aggregate all accelerator-related artifacts into a single object</li>
+<li>Provide serialization/deserialization support</li>
+<li>Encode binary and text assets safely using base64</li>
+<li>Preserve metadata required for simulation and deployment</li>
+</ul>
+<hr />
+<h2 id="data-fields">Data Fields</h2>
+<h3 id="encoded-hardware-artifacts">Encoded Hardware Artifacts</h3>
+<h4 id="hls_code_b64"><code>hls_code_b64</code></h4>
+<p>Base64-encoded generated HLS source code. The value is text encoded as base64 so it can be stored safely in JSON.</p>
+<ul>
+<li>Use <code>set_hls_code()</code> to store plain text</li>
+<li>Use <code>get_hls_code()</code> to retrieve decoded text</li>
+<li>Populated when the compiler emits the HLS top-level source</li>
+</ul>
+<h4 id="bitstream_b64"><code>bitstream_b64</code></h4>
+<p>Base64-encoded FPGA <code>.bit</code> file. The value is binary data encoded as base64.</p>
+<ul>
+<li>Use <code>set_bitstream()</code> to load from a file</li>
+<li>Use <code>get_bitstream()</code> to retrieve raw binary data</li>
+<li>Populated after Vivado bitstream generation succeeds</li>
+</ul>
+<h4 id="hwh_b64"><code>hwh_b64</code></h4>
+<p>Base64-encoded Vivado hardware handoff (<code>.hwh</code>) content. The value is text encoded as base64.</p>
+<ul>
+<li>Use <code>set_hwh()</code> to load from a file</li>
+<li>Use <code>get_hwh()</code> to retrieve decoded text</li>
+<li>Populated after Vivado generates the block design handoff file</li>
+</ul>
+<hr />
+<h3 id="tensor-interface-metadata">Tensor Interface Metadata</h3>
+<h4 id="input-map-schema">Input Map Schema</h4>
+<p>Input tensors are described with the following structure:</p>
+<pre><code class="language-python">input_map = {
+    &quot;&lt;onnx_input_name&gt;&quot;: {
+        &quot;name&quot;: &quot;&lt;original_or_internal_name&gt;&quot;,
+        &quot;new_name&quot;: &quot;&lt;dma_and_stream_name&gt;&quot;,
+        &quot;index&quot;: 0,
+        &quot;shape&quot;: [1, 3, 224, 224],
+        &quot;layout&quot;: None,
+        &quot;quant&quot;: &quot;Q[8,0,1.0,0,0,ROUND]&quot;,
+        &quot;value&quot;: None,
+        &quot;axi_offset&quot;: 0x1000,
+    }
+}
+</code></pre>
+<h4 id="output-map-schema">Output Map Schema</h4>
+<p>Output tensors follow the same convention:</p>
+<pre><code class="language-python">output_map = {
+    &quot;&lt;onnx_output_name&gt;&quot;: {
+        &quot;name&quot;: &quot;&lt;original_or_internal_name&gt;&quot;,
+        &quot;new_name&quot;: &quot;&lt;dma_and_stream_name&gt;&quot;,
+        &quot;index&quot;: 0,
+        &quot;shape&quot;: [1, 1000],
+        &quot;layout&quot;: None,
+        &quot;quant&quot;: &quot;Q[8,0,1.0,0,0,ROUND]&quot;,
+        &quot;value&quot;: None,
+        &quot;axi_offset&quot;: 0x2000,
+    }
+}
+</code></pre>
+<h4 id="buffer-map-schema">Buffer Map Schema</h4>
+<p>DDR-backed buffers are described with the following structure:</p>
+<pre><code class="language-python">buffer_map = {
+    &quot;&lt;buffer_name&gt;&quot;: {
+        &quot;hls_type&quot;: &quot;ap_uint&lt;128&gt;&quot;,
+        &quot;depth&quot;: &quot;1024&quot;,
+        &quot;size_bytes&quot;: 16384,
+        &quot;read_axi_offset&quot;: 0x10,
+        &quot;write_axi_offset&quot;: 0x1C,
+        &quot;axi_offset&quot;: 0x10,
+    }
+}
+</code></pre>
+<h4 id="input_map"><code>input_map</code></h4>
+<p>Dictionary describing input tensors. Since names of the inputs may change during the flow, it is necessary to maintain a mapping between the wrapper model and the nn2FPGA one.</p>
+<p>Common fields are:</p>
+<ul>
+<li><code>name</code>: Original or intermediate tensor name retained for traceability.</li>
+<li><code>new_name</code>: Internal accelerator name used for generated streams, DMA instances, and driver references.</li>
+<li><code>index</code>: Input order in the original ONNX interface.</li>
+<li><code>shape</code>: Tensor shape, including batch dimension when present.</li>
+<li><code>layout</code>: Tensor layout metadata.</li>
+<li><code>quant</code>: Data type in TensorQuant format.</li>
+<li><code>value</code>: Static input value for parameters, or <code>None</code> for runtime inputs.</li>
+<li><code>axi_offset</code>: Vivado AXI-Lite window offset of the input DMA control interface.</li>
+</ul>
+<p>For runtime inputs, generated drivers allocate a DMA input buffer and program the DMA mapped at <code>axi_offset</code>. For static inputs, the same metadata identifies initialization data that can be loaded before normal inference.</p>
+<h4 id="output_map"><code>output_map</code></h4>
+<p>Dictionary describing output tensors.</p>
+<p>The structure mirrors <code>input_map</code>, but each entry describes an output DMA interface. <code>axi_offset</code> is the Vivado AXI-Lite window offset of the output DMA control interface.</p>
+<h4 id="buffer_map"><code>buffer_map</code></h4>
+<p>Dictionary describing internal tensors that are materialized in external DDR instead of remaining entirely in on-chip streams.</p>
+<p>Each entry is keyed by the buffer name and includes metadata required by HLS, bitstream generation, simulation, and generated drivers.</p>
+<p>One logical DDR buffer is exposed to HLS as two pointer arguments:</p>
+<ul>
+<li><code>&lt;buffer_name&gt;_read</code></li>
+<li><code>&lt;buffer_name&gt;_write</code></li>
+</ul>
+<p>The generated HLS ports use AXI master interfaces to access DDR. Their pointer registers are exposed through the single HLS <code>s_axi_control</code> AXI-Lite interface.</p>
+<p>Common fields are:</p>
+<ul>
+<li><code>hls_type</code>: C++/HLS type string used by the generated pointer arguments.</li>
+<li><code>depth</code>: Number of HLS elements in the buffer, currently stored as a string in generated metadata.</li>
+<li><code>size_bytes</code>: Integer buffer size in bytes, used by generated PYNQ tests to allocate byte-addressed memory.</li>
+<li><code>read_axi_offset</code>: Integer byte offset of <code>&lt;buffer_name&gt;_read</code> in the HLS <code>s_axi_control</code> register map.</li>
+<li><code>write_axi_offset</code>: Integer byte offset of <code>&lt;buffer_name&gt;_write</code> in the HLS <code>s_axi_control</code> register map.</li>
+<li><code>axi_offset</code>: Compatibility alias for <code>read_axi_offset</code>; new code should prefer <code>read_axi_offset</code> and <code>write_axi_offset</code>.</li>
+</ul>
+<p><code>read_axi_offset</code> and <code>write_axi_offset</code> are relative register offsets inside the HLS IP <code>s_axi_control</code> register map. They are not Vivado address-window offsets and they are not physical addresses. Vivado assigns one AXI-Lite address window to the whole HLS <code>s_axi_control</code> interface. In PYNQ, writes such as <code>ol.&lt;top_name&gt;_0.write(offset, value)</code> use these relative offsets because PYNQ already maps the IP base address.</p>
+<p>The read and write pointer offsets are recovered after Vitis HLS export from the generated Linux driver header:</p>
+<pre><code class="language-text">&lt;hls_output_dir&gt;/impl/ip/drivers/&lt;top_name&gt;_v1_0/src/x&lt;top_name&gt;_hw.h
+</code></pre>
+<p>For example, Vitis HLS may emit:</p>
+<pre><code class="language-c">#define XRESNET8_CONTROL_ADDR_BUFFER_0_READ_DATA  0x10
+#define XRESNET8_CONTROL_ADDR_BUFFER_0_WRITE_DATA 0x1c
+</code></pre>
+<p><code>GenerateBitstream</code> parses these macros and stores the values in <code>read_axi_offset</code> and <code>write_axi_offset</code>. Offset recovery fails if either register offset is missing, because generating a driver with guessed pointer offsets would be unsafe.</p>
+<h3 id="build-and-target-metadata">Build and Target Metadata</h3>
+<p>Build and target metadata is serialized with the package so later transforms and deployment tools do not need to rely only on transient model metadata.</p>
+<pre><code class="language-python">work_dir = &quot;work/resnet8&quot;
+board_name = &quot;KRIA&quot;
+top_name = &quot;resnet8&quot;
+frequency = &quot;200&quot;
+hls_version = &quot;2025.1&quot;
+simulation = &quot;csim&quot;
+</code></pre>
+<h4 id="work_dir"><code>work_dir</code></h4>
+<p>Working directory associated with the accelerator build. Generated HLS, Vivado, and deployment artifacts are placed under this tree.</p>
+<h4 id="board_name"><code>board_name</code></h4>
+<p>Target FPGA board identifier used to recover board-specific part names, board part names, and AXI interface widths.</p>
+<h4 id="top_name"><code>top_name</code></h4>
+<p>Name of the HLS top function and generated accelerator IP.</p>
+<h4 id="frequency"><code>frequency</code></h4>
+<p>Target accelerator clock frequency in MHz.</p>
+<h4 id="hls_version"><code>hls_version</code></h4>
+<p>Version of the HLS tool used to select the correct Vitis HLS invocation and output directory layout.</p>
+<h4 id="simulation"><code>simulation</code></h4>
+<p>Simulation mode/type, for example <code>csim</code> or <code>cosim</code>.</p>
+<hr />
+<h2 id="buffer-metadata-lifecycle">Buffer Metadata Lifecycle</h2>
+<ol>
+<li><code>OptimizeFifo</code> selects streams to move to DDR and creates <code>buffer_map</code> entries with <code>hls_type</code>, <code>depth</code>, and <code>size_bytes</code>.</li>
+<li>HLS code generation emits <code>&lt;buffer_name&gt;_read</code> and <code>&lt;buffer_name&gt;_write</code> pointer arguments plus AXI master pragmas.</li>
+<li>Vitis HLS export generates the Linux driver header containing the <code>s_axi_control</code> register map.</li>
+<li><code>GenerateBitstream</code> parses the header and updates <code>buffer_map</code> with <code>read_axi_offset</code>, <code>write_axi_offset</code>, and <code>axi_offset</code>.</li>
+<li>Driver generation uses the recovered offsets to program DDR buffer addresses.</li>
+</ol>
+<hr />
+<h2 id="required-fields">Required Fields</h2>
+<p>The class defines a set of required fields:</p>
+<pre><code class="language-python">REQUIRED_FIELDS = {
+    &quot;hls_code_b64&quot;,
+    &quot;bitstream_b64&quot;,
+    &quot;hwh_b64&quot;,
+    &quot;input_map&quot;,
+    &quot;output_map&quot;,
+    &quot;buffer_map&quot;,
+    &quot;work_dir&quot;,
+    &quot;board_name&quot;,
+    &quot;top_name&quot;,
+    &quot;frequency&quot;,
+    &quot;hls_version&quot;,
+    &quot;simulation&quot;,
+}
+</code></pre>
+<p>When loading from JSON, all fields must be present.</p>
+<p>Required means that the JSON key must exist for reconstruction. Some fields may be empty during earlier compiler stages. For example, <code>bitstream_b64</code> and <code>hwh_b64</code> are expected to be empty before bitstream generation.</p>
+<p>Missing fields result in:</p>
+<pre><code class="language-python">ValueError
+</code></pre>
+<hr />
+<h2 id="serialization-api">Serialization API</h2>
+<h3 id="to_json"><code>to_json()</code></h3>
+<p>Serializes the dataclass fields into a JSON string. The method writes the current field values as-is; it does not validate nested map schemas.</p>
+<p>Used for:</p>
+<ul>
+<li>Saving accelerator packages</li>
+<li>Transferring between components</li>
+</ul>
+<hr />
+<h3 id="from_jsonjson_str"><code>from_json(json_str)</code></h3>
+<p>Reconstructs an <code>AcceleratorPackage</code> from JSON. The method validates required top-level field presence, but it does not validate inner map schemas or field types.</p>
+<p>Steps:</p>
+<ol>
+<li>Parse JSON</li>
+<li>Validate required fields</li>
+<li>Instantiate object</li>
+</ol>
+<p>Raises:</p>
+<ul>
+<li><code>ValueError</code> if required fields are missing</li>
+</ul>
+<hr />
+<h2 id="base64-helper-api">Base64 Helper API</h2>
+<h3 id="set_hls_codecode"><code>set_hls_code(code)</code></h3>
+<p>Encodes plain-text HLS code into base64.</p>
+<h3 id="get_hls_code"><code>get_hls_code()</code></h3>
+<p>Returns decoded HLS code as a string.</p>
+<hr />
+<h3 id="set_bitstreampath"><code>set_bitstream(path)</code></h3>
+<p>Reads a binary <code>.bit</code> file and encodes it into base64.</p>
+<h3 id="get_bitstream"><code>get_bitstream()</code></h3>
+<p>Returns decoded bitstream as <code>bytes</code>.</p>
+<hr />
+<h3 id="set_hwhpath"><code>set_hwh(path)</code></h3>
+<p>Reads a <code>.hwh</code> file and encodes it into base64.</p>
+<h3 id="get_hwh"><code>get_hwh()</code></h3>
+<p>Returns decoded <code>.hwh</code> content as text.</p>
+<hr />
+<h2 id="example">Example</h2>
+<pre><code class="language-python">from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
+
+# Buffer offsets are recovered from the Vitis HLS generated x&lt;top_name&gt;_hw.h header.
+pkg = AcceleratorPackage(
+    input_map={
+        &quot;in0&quot;: {
+            &quot;name&quot;: &quot;input_0&quot;,
+            &quot;new_name&quot;: &quot;global_in&quot;,
+            &quot;index&quot;: 0,
+            &quot;shape&quot;: [1, 3, 224, 224],
+            &quot;layout&quot;: None,
+            &quot;quant&quot;: &quot;Q[8,0,1.0,0,0,ROUND]&quot;,
+            &quot;value&quot;: None,
+            &quot;axi_offset&quot;: 0x1000,
+        }
+    },
+    output_map={
+        &quot;out0&quot;: {
+            &quot;name&quot;: &quot;output_0&quot;,
+            &quot;new_name&quot;: &quot;global_out&quot;,
+            &quot;index&quot;: 0,
+            &quot;shape&quot;: [1, 1000],
+            &quot;layout&quot;: None,
+            &quot;quant&quot;: &quot;Q[8,0,1.0,0,0,ROUND]&quot;,
+            &quot;value&quot;: None,
+            &quot;axi_offset&quot;: 0x2000,
+        }
+    },
+    buffer_map={
+        &quot;buffer_0&quot;: {
+            &quot;hls_type&quot;: &quot;ap_uint&lt;128&gt;&quot;,
+            &quot;depth&quot;: &quot;1024&quot;,
+            &quot;size_bytes&quot;: 16384,
+            &quot;read_axi_offset&quot;: 0x10,
+            &quot;write_axi_offset&quot;: 0x1C,
+            &quot;axi_offset&quot;: 0x10,
+        }
+    },
+    work_dir=&quot;work/resnet50&quot;,
+    board_name=&quot;KRIA&quot;,
+    top_name=&quot;resnet8&quot;,
+    frequency=&quot;200&quot;,
+    hls_version=&quot;2025.1&quot;,
+    simulation=&quot;csim&quot;,
+)
+
+json_blob = pkg.to_json()
+</code></pre>
+<hr />
+<h2 id="notes">Notes</h2>
+<h3 id="serialization">Serialization</h3>
+<ul>
+<li>All artifacts are encoded in base64 to ensure safe JSON serialization</li>
+<li><code>set_bitstream()</code> handles binary data, while others operate on text</li>
+<li><code>from_json()</code> validates presence of fields but does not enforce schema on maps</li>
+</ul>
+<h3 id="axi-lite-offsets">AXI-Lite Offsets</h3>
+<ul>
+<li>Input and output <code>axi_offset</code> values identify Vivado AXI-Lite windows for DMA control interfaces</li>
+<li><code>read_axi_offset</code> and <code>write_axi_offset</code> are offsets relative to the HLS <code>s_axi_control</code> register map</li>
+<li>Generated drivers should not assume a fixed distance between read and write pointer registers</li>
+</ul>
+<h3 id="compatibility">Compatibility</h3>
+<ul>
+<li><code>axi_offset</code> is preserved for compatibility but should not be used by new code when both explicit offsets are available</li>
+</ul>
+<hr />
+<h2 id="limitations">Limitations</h2>
+<ul>
+<li><code>input_map</code>, <code>output_map</code>, and <code>buffer_map</code> are loosely typed (<code>Dict[str, Any]</code>)</li>
+<li>Field types are not enforced by the dataclass</li>
+<li>Documented map schemas are not enforced at construction time</li>
+<li>Offset recovery depends on Vitis HLS generating the expected driver header</li>
+<li>No validation of tensor metadata structure</li>
+<li>No size checks for embedded binary data</li>
+<li>No compression of large artifacts</li>
+</ul>
+<hr />
+<h2 id="possible-improvements">Possible Improvements</h2>
+<ul>
+<li>Introduce structured dataclasses for input, output, and buffer metadata</li>
+<li>Add schema validation for <code>input_map</code>, <code>output_map</code>, and <code>buffer_map</code></li>
+<li>Add explicit metadata versioning for serialized packages</li>
+<li>Support compression before base64 encoding</li>
+<li>Add helpers to export decoded artifacts to disk</li>
+<li>Add helpers for buffer lookup and AXI-Lite offset validation</li>
+<li>Add validation for field values (not just presence)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": [], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
