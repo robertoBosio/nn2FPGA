@@ -12,6 +12,7 @@ from nn2fpga.compiler.core.tensor_type import is_constant_input_node
 from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Optional
+from fractions import Fraction
 import logging
 logger = logging.getLogger(__name__)
 
@@ -733,11 +734,21 @@ class ConcatQuantSameParamsAxis(Pattern):
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Concat expects >=2 inputs"])
 
-        if (
-            not check_attribute(anchor_node, "axis", 1, reasons)
-            and not check_attribute(anchor_node, "axis", 2, reasons)
-            and not check_attribute(anchor_node, "axis", 3, reasons)
-        ):
+        axis_attr = get_by_name(anchor_node.attribute, "axis")
+        if axis_attr is None:
+            reasons.append("Attribute axis not found")
+            return Match(False, self.name, covered, reasons)
+
+        input_shape = model.get_tensor_shape(anchor_node.input[0])
+        if input_shape is None:
+            reasons.append("Concat input shape unknown")
+            return Match(False, self.name, covered, reasons)
+
+        axis = axis_attr.i
+        if axis < 0:
+            axis += len(input_shape)
+        if axis not in (1, 2, 3):
+            reasons.append(f"Concat axis must resolve to 1, 2, or 3, got {axis_attr.i}")
             return Match(False, self.name, covered, reasons)
 
         reasons = []  # reset reasons for quant checks
@@ -875,6 +886,53 @@ class HardSigmoidQuant(QuantizedActivationPattern):
 class LeakyReluQuant(QuantizedActivationPattern):
     anchor_op = "LeakyRelu"
     name = "LeakyRelu(Quant(x))"
+
+class LeakyReluQuantOrFusable(Pattern):
+    """
+    Mirrors the current Relu logic:
+      - Either: LeakyRelu input is produced by activation Quant/IntQuant satisfying check_act_quant
+      - Or: LeakyRelu input producer is in [Conv, Gemm, Add] (assumed fusable)
+    """
+    name = "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    anchor_op = "LeakyRelu"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 1:
+            return Match(False, self.name, covered, ["Missing input"])
+
+        prod = model.find_producer(anchor_node.input[0])
+        if prod is None:
+            reasons.append("LeakyRelu input has no producer")
+            return Match(False, self.name, covered, reasons)
+
+        # Case 1: quantized input
+        if prod.op_type in ("Quant", "IntQuant"):
+            if not check_act_quant(model, prod, reasons):
+                return Match(False, self.name, covered, reasons)
+            covered.update({anchor_node.name, prod.name})
+            return Match(True, self.name, covered, reasons)
+
+        # Case 2: fusable into preceding op (requires Po2 alpha denominator)
+        if prod.op_type in ("Conv", "Gemm", "Add"):
+            alpha_attr = get_by_name(anchor_node.attribute, "alpha")
+            if alpha_attr is None:
+                reasons.append("Missing alpha attribute")
+                return Match(False, self.name, covered, reasons)
+            alpha_frac = Fraction(alpha_attr.f).limit_denominator()
+            if alpha_frac.denominator <= 0 or not (alpha_frac.denominator > 0 and float(np.log2(alpha_frac.denominator)).is_integer()):
+                reasons.append(
+                    f"LeakyReLU alpha denominator {alpha_frac.denominator} is not a power of two; "
+                    f"fused LeakyReLU requires a power-of-two alpha denominator"
+                )
+                return Match(False, self.name, covered, reasons)
+            covered.update({anchor_node.name})
+            return Match(True, self.name, covered, reasons)
+
+        reasons.append("LeakyRelu must be quantized or fusable into Conv/Gemm/Add")
+        return Match(False, self.name, covered, reasons)
 
 class SigmoidQuant(QuantizedActivationPattern):
     anchor_op = "Sigmoid"
@@ -1581,7 +1639,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Flatten": [FlattenFCOnly()],
     "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "HardSigmoid": [HardSigmoidQuant()],
-    "LeakyRelu": [LeakyReluQuant()],
+    "LeakyRelu": [LeakyReluQuantOrFusable()],
     "Relu": [ReluQuantOrFusable()],
     "Sigmoid": [SigmoidQuant()],
     "Softmax": [YoloHeadSoftmax()],

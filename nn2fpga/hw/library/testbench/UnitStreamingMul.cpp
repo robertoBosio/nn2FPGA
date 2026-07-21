@@ -19,8 +19,8 @@ void wrap_run(hls::stream<TInputWordA> i_data0[test_config::DIM1_UNROLL],
               hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
   StreamingMul<TInputWordA, test_config::TInputA, TInputWordB,
                test_config::TInputB, TOutputWord, test_config::TOutput,
-               test_config::TMul, test_config::Activation,
-               test_config::Quantizer, test_config::DIM0, test_config::DIM1,
+               test_config::TMul, test_config::OutputTransform,
+               test_config::DIM0, test_config::DIM1,
                test_config::DIM2, test_config::DIM1_UNROLL,
                test_config::DIM2_UNROLL>
       add;
@@ -119,8 +119,8 @@ bool test_step() {
   hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL];
   StreamingMul<TInputWordA, test_config::TInputA, TInputWordB,
                test_config::TInputB, TOutputWord, test_config::TOutput,
-               test_config::TMul, test_config::Activation,
-               test_config::Quantizer, test_config::DIM0,
+               test_config::TMul, test_config::OutputTransform,
+               test_config::DIM0,
                test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
                test_config::DIM2_UNROLL>
       add;

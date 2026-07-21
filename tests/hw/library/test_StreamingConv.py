@@ -224,8 +224,7 @@ class TestStreamingConv(BaseHLSTest):
         )
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH'] - 1}> TPartialAcc;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> Quantizer;")
-        cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> OutputTransform;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",

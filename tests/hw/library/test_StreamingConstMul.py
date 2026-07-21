@@ -167,8 +167,7 @@ class TestStreamingConstMul(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['MUL_DATAWIDTH']}> TMul;")
         typedef_suffix = "u" if config_dict.get("OUTPUT_IS_UNSIGNED", False) else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> Quantizer;")
-        cwr.add_line("typedef DequantQuantEqual<TMul> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> OutputTransform;")
         for key, value in config_dict.items():
             if key in ["A_SCALE", "CONST_SCALE", "Y_SCALE"]:
                 cwr.add_line(f"const float {key} = {value}f;")
@@ -181,7 +180,6 @@ class TestStreamingConstMul(BaseHLSTest):
                         cwr.add_line(f"const TInputB constant = {value};")
                     else:
                         cwr.add_line(f"const int {key} = {value};")
-        # cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensorA",

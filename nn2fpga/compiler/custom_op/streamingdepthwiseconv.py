@@ -248,7 +248,9 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             # Custom attributes for zero point folding into bias
             "asym_folding": ("i", False, 0),  # 0: no folding, 1: fold zeropt into bias
             # Custom attribute for activation function
-            "activation": ("s", False, "NoOp"),  # NoOp, ReLU
+            "activation": ("s", False, "NoOp"),  # NoOp, ReLU, LeakyReLU
+            "activation_alpha_num": ("i", False, 1),
+            "activation_alpha_den": ("i", False, 1),
             # Custom attribute for internal/external parameters (weights, biases) storage
             "param_storage": ("s", True, "INTERNAL"),  # INTERNAL, EXTERNAL
         }
@@ -419,22 +421,6 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
 
         return f"{acc_quant.get_hls_data_type()}"
 
-    def __get_activation(
-        self, input_quant, weights_quant, bias_quant, weights_shape
-    ) -> str:
-        """Returns the activation functor for the StreamingDepthwiseConv operation."""
-
-        activation = self.get_nodeattr("activation")
-
-        if activation == "NoOp":
-            return f"DequantQuantEqual<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
-        elif activation == "ReLU":
-            return f"ReLU<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
-        else:
-            raise ValueError(
-                f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
-            )
-
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
@@ -464,7 +450,27 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {output_quant.get_hls_data_type()}>"
+            accumulator = self.__get_accumulator(
+                input_quant, weights_quant, bias_quant, weights_shape
+            )
+            output_type = output_quant.get_hls_data_type()
+            activation = self.get_nodeattr("activation")
+            if activation == "NoOp":
+                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}>"
+            if activation == "ReLU":
+                return f"ReLUQuantPo2<{shift}, {accumulator}, {output_type}>"
+            if activation == "LeakyReLU":
+                alpha_num = self.get_nodeattr("activation_alpha_num")
+                alpha_den = self.get_nodeattr("activation_alpha_den")
+                if self.__is_power_of_two(alpha_den):
+                    alpha_den_shift = int(np.log2(alpha_den))
+                    return f"LeakyReLUQuantPo2<{shift}, {alpha_num}, {alpha_den_shift}, {accumulator}, {output_type}>"
+                raise ValueError(
+                    "Fused LeakyReLU currently requires a power-of-two alpha denominator."
+                )
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
+            )
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingDepthwiseConv.  "
@@ -551,12 +557,6 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                     "TPartialSum",
                 ),
                 (
-                    self.__get_activation(
-                        input_type, weights_quant, bias_quant, weights_shape
-                    ),
-                    "Activation",
-                ),
-                (
                     self.__get_quantizer(
                         input_type,
                         weights_quant,
@@ -564,7 +564,7 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                         output_type,
                         weights_shape,
                     ),
-                    "Quantizer",
+                    "OutputTransform",
                 ),
                 (output_shape[-1], "OUT_CH"),
                 (input_shape[-1], "IN_CH"),
@@ -984,7 +984,12 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             * point.width_unroll
         )
 
-        return MACs // mac_per_dsp
+        conv_dsp = MACs // mac_per_dsp
+        act_dsp = 0
+        if self.get_nodeattr("activation") == "LeakyReLU":
+            act_dsp = point.out_channel_unroll * point.width_unroll
+
+        return conv_dsp + act_dsp
 
     def get_dse_points(
         self, model: ModelWrapper

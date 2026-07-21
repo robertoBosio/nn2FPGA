@@ -1,4 +1,6 @@
 #pragma once
+#include "StreamingLeakyReLU.hpp"
+#include "StreamingReLU.hpp"
 #include "hls_stream.h"
 #include "ap_int.h"
 #include "utils/CSDFG_utils.hpp"
@@ -19,8 +21,7 @@
  * @tparam TOutput         Data type for individual output elements.
  * @tparam TSum            Data type for accumulator considered the bias.
  * @tparam TPartialSum     Data type for partial sum accumulator.
- * @tparam Quantizer       Quantizer functor type for output quantization.
- * @tparam Activation      Activation functor type for output activation.
+ * @tparam OutputTransform Functor type for fused activation and quantization.
  * @tparam OUT_CH          Number of output channels.
  * @tparam IN_CH           Number of input channels.
  * @tparam OUT_HEIGHT      Output feature map height.
@@ -64,7 +65,7 @@
 template <typename TInputWord, typename TInput, typename TWeightWord,
           typename TWeight, typename TBiasWord, typename TBias,
           typename TOutputWord, typename TOutput, typename TSum,
-          typename TPartialSum, typename Activation, typename Quantizer,
+          typename TPartialSum, typename OutputTransform,
           size_t OUT_CH, size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH,
           size_t GROUP, size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W,
           size_t IN_CH_PAR, size_t OUT_CH_PAR, size_t W_PAR>
@@ -462,10 +463,7 @@ private:
                             size_t i_och) {
 #pragma HLS inline
 
-    // Quantizer instance.
-    Quantizer quantizer;
-    // Activation instance.
-    Activation activation;
+    OutputTransform output_transform;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.
@@ -542,8 +540,7 @@ private:
         // finalize the output.
         if (i_ich == IN_CH - IN_CH_PAR) {
           TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
-          wide_acc = activation(wide_acc);
-          TOutput output_value = quantizer(wide_acc);
+          TOutput output_value = output_transform(wide_acc);
           output_data[i_och_par] = output_value;
 
           // If we are at the last output channel of the block, write the output
@@ -565,10 +562,7 @@ private:
                             size_t i_och) {
 #pragma HLS inline
 
-    // Quantizer instance.
-    Quantizer quantizer;
-    // Activation instance.
-    Activation activation;
+    OutputTransform output_transform;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.
@@ -644,8 +638,7 @@ private:
         // finalize the output.
         if (i_ich == IN_CH - IN_CH_PAR) {
           TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_och_par];
-          wide_acc = activation(wide_acc);
-          TOutput output_value = quantizer(wide_acc);
+          TOutput output_value = output_transform(wide_acc);
           output_data[i_och_par] = output_value;
 
           // If we are at the last output channel of the block, write the output

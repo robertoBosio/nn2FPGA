@@ -375,6 +375,79 @@ def _build_binary_quant_pattern_model(
     )
 
 
+def _build_leakyrelu_quant_pattern_model():
+    input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4, 1, 1])
+    output_tensor = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4, 1, 1])
+
+    quant_inits, quant_node = _build_quant_node(
+        "input",
+        "quantized_input",
+        0.1,
+        0,
+        8,
+        "input_quant",
+    )
+    leakyrelu_node = helper.make_node(
+        "LeakyRelu",
+        inputs=["quantized_input"],
+        outputs=["output"],
+        name="leakyrelu_node",
+        alpha=0.1015625,
+    )
+
+    return ModelWrapper(
+        qonnx_make_model(
+            helper.make_graph(
+                [quant_node, leakyrelu_node],
+                name="leakyrelu_quant_pattern_graph",
+                inputs=[input_tensor],
+                outputs=[output_tensor],
+                initializer=quant_inits,
+            ),
+            producer_name="test_producer",
+        )
+    )
+
+
+def _build_leakyrelu_fusable_pattern_model(producer_op_type: str):
+    input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4, 1, 1])
+    output_tensor = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4, 1, 1])
+    producer_inputs = ["input"]
+    input_tensors = [input_tensor]
+
+    if producer_op_type in ("Conv", "Gemm", "Add"):
+        producer_inputs.append("producer_input_1")
+        input_tensors.append(
+            helper.make_tensor_value_info("producer_input_1", TensorProto.FLOAT, [1, 4, 1, 1])
+        )
+
+    producer_node = helper.make_node(
+        producer_op_type,
+        inputs=producer_inputs,
+        outputs=["producer_output"],
+        name=f"{producer_op_type.lower()}_node",
+    )
+    leakyrelu_node = helper.make_node(
+        "LeakyRelu",
+        inputs=["producer_output"],
+        outputs=["output"],
+        name="leakyrelu_node",
+        alpha=0.1015625,
+    )
+
+    return ModelWrapper(
+        qonnx_make_model(
+            helper.make_graph(
+                [producer_node, leakyrelu_node],
+                name=f"leakyrelu_{producer_op_type.lower()}_pattern_graph",
+                inputs=input_tensors,
+                outputs=[output_tensor],
+            ),
+            producer_name="test_producer",
+        )
+    )
+
+
 def test_slice_pattern_matches_full_tiling_with_equal_output_quant_params():
     model = _build_slice_pattern_model(
         slice_specs=[
@@ -503,6 +576,28 @@ def test_concat_pattern_matches_supported_axis_with_equal_quant_params():
     assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
 
 
+def test_concat_pattern_matches_negative_last_axis():
+    model = _build_concat_pattern_model(axis=-1, quant_params=[(0.1, 0, 8), (0.1, 0, 8)])
+    anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Concat(Quant(...)) same params"
+    assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
+
+
+def test_concat_pattern_matches_negative_height_axis():
+    model = _build_concat_pattern_model(axis=-2, quant_params=[(0.1, 0, 8), (0.1, 0, 8)])
+    anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Concat(Quant(...)) same params"
+    assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
+
+
 def test_concat_pattern_rejects_different_quant_params():
     model = _build_concat_pattern_model(axis=1, quant_params=[(0.1, 0, 8), (0.2, 0, 8)])
     anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
@@ -520,7 +615,17 @@ def test_concat_pattern_rejects_unsupported_axis():
     match = match_supported_patterns(model, anchor_node)
 
     assert match.ok is False
-    assert any("Attribute axis has unexpected value 0" in reason for reason in match.reasons)
+    assert any("Concat axis must resolve to 1, 2, or 3" in reason for reason in match.reasons)
+
+
+def test_concat_pattern_rejects_negative_batch_axis():
+    model = _build_concat_pattern_model(axis=-4, quant_params=[(0.1, 0, 8), (0.1, 0, 8)])
+    anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is False
+    assert any("Concat axis must resolve to 1, 2, or 3" in reason for reason in match.reasons)
 
 
 def test_resize_pattern_matches_nearest_asymmetric_with_initializer_scales():
@@ -636,3 +741,57 @@ def test_mul_pattern_rejects_non_quantized_input():
 
     assert match.ok is False
     assert any("Both Mul inputs must come from activation Quant/IntQuant" in reason for reason in match.reasons)
+
+
+def test_leakyrelu_pattern_matches_quantized_input():
+    model = _build_leakyrelu_quant_pattern_model()
+    anchor_node = next(node for node in model.graph.node if node.name == "leakyrelu_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    assert {"leakyrelu_node", "input_quant"}.issubset(match.covered)
+
+
+def test_leakyrelu_pattern_matches_fusable_conv_input():
+    model = _build_leakyrelu_fusable_pattern_model("Conv")
+    anchor_node = next(node for node in model.graph.node if node.name == "leakyrelu_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    assert match.covered == {"leakyrelu_node"}
+
+
+def test_leakyrelu_pattern_matches_fusable_gemm_input():
+    model = _build_leakyrelu_fusable_pattern_model("Gemm")
+    anchor_node = next(node for node in model.graph.node if node.name == "leakyrelu_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    assert match.covered == {"leakyrelu_node"}
+
+
+def test_leakyrelu_pattern_matches_fusable_add_input():
+    model = _build_leakyrelu_fusable_pattern_model("Add")
+    anchor_node = next(node for node in model.graph.node if node.name == "leakyrelu_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    assert match.covered == {"leakyrelu_node"}
+
+
+def test_leakyrelu_pattern_rejects_non_quantized_non_fusable_input():
+    model = _build_leakyrelu_fusable_pattern_model("Identity")
+    anchor_node = next(node for node in model.graph.node if node.name == "leakyrelu_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is False
+    assert any("LeakyRelu must be quantized or fusable into Conv/Gemm/Add" in reason for reason in match.reasons)

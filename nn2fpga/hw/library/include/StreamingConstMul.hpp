@@ -1,4 +1,5 @@
 #pragma once
+#include "StreamingReLU.hpp"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
@@ -6,8 +7,8 @@
 
 template <typename TInputWordA, typename TInputA, typename TInputB,
           typename TOutputWord, typename TOutput, typename TMul,
-          typename Activation, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t W_PAR, size_t CH_PAR>
+          typename OutputTransform, size_t IN_HEIGHT, size_t IN_WIDTH,
+          size_t IN_CH, size_t W_PAR, size_t CH_PAR>
 class StreamingConstMul {
 
 private:
@@ -119,8 +120,7 @@ private:
 #pragma HLS inline
     TInputWordA s_inputA_struct;
     TOutputWord s_output_struct;
-    Quantizer quantizer;
-    Activation activation;
+    OutputTransform output_transform;
 
     for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
       // Read the input data structure from the input streams.
@@ -132,11 +132,7 @@ private:
 
         // Perform the multiplication.
         TMul s_mul = s_inputA_data * constant_input;
-        // Apply activation function.
-        s_mul = activation(s_mul);
-
-        // Quantize the sum.
-        TOutput s_output_data = quantizer(s_mul);
+        TOutput s_output_data = output_transform(s_mul);
 
         // Store the quantized data in the output structure.
         s_output_struct[i_ch_par] = s_output_data;

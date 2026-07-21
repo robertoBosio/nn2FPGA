@@ -1,4 +1,6 @@
 #pragma once
+#include "StreamingLeakyReLU.hpp"
+#include "StreamingReLU.hpp"
 #include "hls_stream.h"
 #include "ap_int.h"
 #include "utils/CSDFG_utils.hpp"
@@ -19,8 +21,7 @@
  * @tparam TOutput         Data type for individual output elements.
  * @tparam TSum            Data type for accumulator considered the bias.
  * @tparam TPartialSum     Data type for partial sum accumulator.
- * @tparam Activation      Activation functor type for output activation.
- * @tparam Quantizer       Quantizer functor type for output quantization.
+ * @tparam OutputTransform Functor type for fused activation and quantization.
  * @tparam OUT_CH          Number of output channels.
  * @tparam IN_CH           Number of input channels.
  * @tparam OUT_HEIGHT      Output feature map height.
@@ -59,7 +60,7 @@
 template <typename TInputWord, typename TInput, typename TWeightWord,
           typename TWeight, typename TBiasWord, typename TBias,
           typename TOutputWord, typename TOutput, typename TSum,
-          typename TPartialSum, typename Activation, typename Quantizer,
+          typename TPartialSum, typename OutputTransform,
           size_t OUT_CH, size_t IN_CH, size_t OUT_HEIGHT, size_t OUT_WIDTH,
           size_t FH, size_t FW, size_t STRIDE_H, size_t STRIDE_W, size_t CH_PAR,
           size_t W_PAR>
@@ -314,8 +315,7 @@ private:
                             hls::stream<TOutputWord> o_data[W_PAR]) {
 #pragma HLS inline
 
-    Quantizer quantizer;
-    Activation activation;
+    OutputTransform output_transform;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.
@@ -378,8 +378,7 @@ private:
 
         // Finalize the output.
         TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
-        wide_acc = activation(wide_acc);
-        TOutput output_value = quantizer(wide_acc);
+        TOutput output_value = output_transform(wide_acc);
         output_data[i_ch_par] = output_value;
 
         // Write the output data only after the computation of all
@@ -397,8 +396,7 @@ private:
                             hls::stream<TOutputWord> o_data[W_PAR]) {
 #pragma HLS inline
 
-    Quantizer quantizer;
-    Activation activation;
+    OutputTransform output_transform;
     // Output structure to hold the results.
     TOutputWord output_data;
     // Weight structure to hold the weights.
@@ -463,8 +461,7 @@ private:
         // Finalize the output.
         size_t acc_index = i_w_par * CH_PAR + i_ch_par;
         TSum wide_acc = acc_buff_par[acc_index] + bias_data[i_ch_par];
-        wide_acc = activation(wide_acc);
-        TOutput output_value = quantizer(wide_acc);
+        TOutput output_value = output_transform(wide_acc);
         output_data[i_ch_par] = output_value;
 
         // Write the output data only after the computation of all
