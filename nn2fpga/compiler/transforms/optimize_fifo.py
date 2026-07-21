@@ -26,7 +26,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 MIN_FIFO_BITS =  100 * 1024 # 100 Kb is a heuristic threshold 
-MAX_DDR_FIFOS = 12
+MAX_DDR_FIFOS = 8
 MAX_AXIWORD_BITS = 128
 DEFAULT_DDR_BURST_LENGTH = 4
 
@@ -48,14 +48,14 @@ class FifoCandidate:
 def choose_axiword_bits(dtype_bitwidth: int, dim2_unroll: int) -> int:
     lane_bits = dtype_bitwidth * dim2_unroll
     if lane_bits <= 0:
-        raise ValueError("lane_bits must be positive")
+        raise ValueError(f"Invalid lane_bits: {lane_bits}")
 
     axiword_bits = (MAX_AXIWORD_BITS // lane_bits) * lane_bits
     if axiword_bits == 0:
-        raise ValueError(
-            f"Cannot choose AXI word width <= {MAX_AXIWORD_BITS} for "
-            f"dtype_bitwidth={dtype_bitwidth}, dim2_unroll={dim2_unroll}"
+        logger.warning(
+            f"lane_bits ({lane_bits}) exceeds MAX_AXIWORD_BITS ({MAX_AXIWORD_BITS}), cannot choose a valid AXI word width. Defaulting to 0."
         )
+        return 0
     return axiword_bits
 
 def compute_baseline_bandwidth_requirements(model: ModelWrapper) -> float:
@@ -178,6 +178,9 @@ class OptimizeFifo(Transformation):
                 continue
 
             if memory_bits < MIN_FIFO_BITS:
+                continue
+        
+            if choose_axiword_bits(dtype.bitwidth, dim2_unroll) == 0:
                 continue
 
             candidates.append(

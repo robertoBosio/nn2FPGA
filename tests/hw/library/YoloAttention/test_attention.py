@@ -662,8 +662,8 @@ class TestQKMatMul(BaseHLSTest):
 
         cwr.add_line("using SplitQuantizer = DequantQuantEqual<TSplit>;")
         cwr.add_line(f"using QKQuantizer = DequantQuantPo2<{shift_qk}, TAccQK, TQK>;")
-        cwr.add_line("using MulActivation = DequantQuantEqual<TMul>;")
         cwr.add_line(f"using MulQuantizer = DequantQuantPo2<{shift_mul}, TMul, TQKScaled>;")
+        cwr.add_line("using MulOutputTransform = MulQuantizer;")
         cwr.add_line(f"using SoftmaxQuantizer = DequantQuantPo2<{shift_softmax}, TDivSoftmax, TSoftmax>;")
         cwr.add_line(f"using VPQuantizer = DequantQuantPo2<{shift_vp}, TAccVP, TYOutput>;")
 

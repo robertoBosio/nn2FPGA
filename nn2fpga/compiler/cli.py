@@ -39,6 +39,7 @@ def load_config(config_path: str) -> dict:
             "OptimizeFifo": True,
             "GenerateLightningSim": False,
             "Simulate": True,
+            "GenerateBitstream": True,
             "Deploy": True,
         })  
 

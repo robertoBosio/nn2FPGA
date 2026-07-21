@@ -194,9 +194,7 @@ class TestStreamingMul(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['MUL_DATAWIDTH']}> TMul;")
         typedef_suffix = "u" if config_dict.get("OUTPUT_IS_UNSIGNED", False) else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> Quantizer;")
-        cwr.add_line("typedef DequantQuantEqual<TMul> Activation;")
-        # cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> OutputTransform;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensorA",

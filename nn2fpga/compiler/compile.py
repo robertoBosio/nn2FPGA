@@ -85,7 +85,9 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
     return model, model
 
 
-def _apply_frontend_transforms(model: ModelWrapper, prj_root: str, steps: dict) -> ModelWrapper:
+def _apply_frontend_transforms(
+    model: ModelWrapper, prj_root: str, steps: dict
+) -> ModelWrapper:
     model = model.transform(transformation.SplitConcat())
     model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
@@ -130,7 +132,9 @@ def _generate_lightningsim_artifacts(
     lightning_source_model = copy.deepcopy(model)
     lightning_source_model = lightning_source_model.transform(GiveUniqueNodeNames())
     lightning_source_model = lightning_source_model.transform(GiveReadableTensorNames())
-    lightning_source_model = lightning_source_model.transform(transformation.InferLayouts())
+    lightning_source_model = lightning_source_model.transform(
+        transformation.InferLayouts()
+    )
     _save_intermediate(
         lightning_source_model,
         store_intermediate,
@@ -154,9 +158,13 @@ def _generate_lightningsim_artifacts(
     )
 
 
-def _finalize_nn2fpga_model(model: ModelWrapper, prj_root: str, steps: dict) -> ModelWrapper:
+def _finalize_nn2fpga_model(
+    model: ModelWrapper, prj_root: str, steps: dict
+) -> ModelWrapper:
     if steps.get("AddStreamingParams", True):
-        model = model.transform(transformation.AddStreamingParams(nn2fpga_root=prj_root))
+        model = model.transform(
+            transformation.AddStreamingParams(nn2fpga_root=prj_root)
+        )
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(transformation.InferLayouts())
@@ -209,9 +217,8 @@ def _run_simulation_check(
     test_transformation_equivalence(qcdq_original_model, model)
 
 
-def _deploy_bitstream_and_driver(
+def _generate_bitstream(
     model: ModelWrapper,
-    original_model: ModelWrapper,
     prj_root: str,
 ) -> ModelWrapper:
     model = model.transform(
@@ -223,11 +230,30 @@ def _deploy_bitstream_and_driver(
         )
     )
     model.save(_artifact_path(prj_root, "bitstream_generated.onnx"))
-    model = ModelWrapper(_artifact_path(prj_root, "bitstream_generated.onnx"))
-    model = model.transform(
+    return ModelWrapper(_artifact_path(prj_root, "bitstream_generated.onnx"))
+
+
+def _load_bitstream_generated_model(
+    prj_root: str, logger: logging.Logger
+) -> ModelWrapper:
+    bitstream_model_path = _artifact_path(prj_root, "bitstream_generated.onnx")
+    if not os.path.exists(bitstream_model_path):
+        logger.error("Bitstream model file '%s' does not exist.", bitstream_model_path)
+        raise FileNotFoundError(
+            f"Bitstream model file '{bitstream_model_path}' does not exist. "
+            "Enable GenerateBitstream or provide a previously generated bitstream model."
+        )
+    return ModelWrapper(bitstream_model_path)
+
+
+def _deploy_driver(
+    model: ModelWrapper,
+    original_model: ModelWrapper,
+    prj_root: str,
+) -> ModelWrapper:
+    return model.transform(
         transformation.GenerateDriver(work_dir=prj_root, original_model=original_model)
     )
-    return model
 
 
 def nn2fpga_compile(config_dict: dict):
@@ -254,7 +280,9 @@ def nn2fpga_compile(config_dict: dict):
     compile_config["prj_root"] = prj_root
     compile_config["onnx_path"] = onnx_path
 
-    with _compile_logging_context(_artifact_path(prj_root, "nn2FPGA_compile.log")) as logger:
+    with _compile_logging_context(
+        _artifact_path(prj_root, "nn2FPGA_compile.log")
+    ) as logger:
         original_model, model = _load_and_prepare_model(compile_config)
         nn2fpga_model = _apply_frontend_transforms(model, prj_root, steps)
         nn2fpga_model = _apply_backend_transforms(nn2fpga_model, prj_root)
@@ -297,5 +325,11 @@ def nn2fpga_compile(config_dict: dict):
                 store_intermediate,
             )
 
+        generated_bitstream = steps.get("GenerateBitstream", True)
+        if generated_bitstream:
+            model = _generate_bitstream(model, prj_root)
+
         if steps.get("Deploy", True):
-            _deploy_bitstream_and_driver(model, original_model, prj_root)
+            if not generated_bitstream:
+                model = _load_bitstream_generated_model(prj_root, logger)
+            _deploy_driver(model, original_model, prj_root)

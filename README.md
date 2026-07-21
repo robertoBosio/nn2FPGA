@@ -52,6 +52,8 @@ The easiest way to get started is by running one of the provided examples.
     python3 -m nn2fpga.compiler.cli --config config_examples/cifar10/<example>.toml
     ```
 
+   Set `GenerateBitstream = true` to generate the FPGA bitstream. Set `Deploy = true` to also build the ONNX Runtime integration files in the generated `build` directory.
+
 3. **Collect the output.**
    Copy the generated `build` directory to the target board. It contains:
 

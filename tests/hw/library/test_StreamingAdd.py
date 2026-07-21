@@ -201,8 +201,7 @@ class TestStreamingAdd(BaseHLSTest):
             cwr.add_line(f"typedef DequantQuantPo2<{-align_b}, TInputB, TAcc> AlignB;")
         else:
             cwr.add_line(f"typedef DequantQuantEqual<TInputB> AlignB;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> Quantizer;")
-        cwr.add_line("typedef DequantQuantEqual<TAcc> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> OutputTransform;")
 
         cwr.add_lines(
             csnake.Variable(

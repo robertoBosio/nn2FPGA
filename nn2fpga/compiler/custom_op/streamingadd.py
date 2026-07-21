@@ -45,7 +45,9 @@ class StreamingAdd(NN2FPGAOp):
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
-            "activation": ("s", False, "NoOp"),  # Activation function
+            "activation": ("s", False, "NoOp"),  # NoOp, ReLU, LeakyReLU
+            "activation_alpha_num": ("i", False, 1),
+            "activation_alpha_den": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -175,23 +177,28 @@ class StreamingAdd(NN2FPGAOp):
                 int(np.log2(common_scale))
                 - int(np.log2(output_type.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quantA, input_quantB)}, {output_type.get_hls_data_type()}>"
+            accumulator = self.__get_accumulator(input_quantA, input_quantB)
+            hls_output_type = output_type.get_hls_data_type()
+            activation = self.get_nodeattr("activation")
+            if activation == "NoOp":
+                return f"DequantQuantPo2<{shift}, {accumulator}, {hls_output_type}>"
+            if activation == "ReLU":
+                return f"ReLUQuantPo2<{shift}, {accumulator}, {hls_output_type}>"
+            if activation == "LeakyReLU":
+                alpha_num = self.get_nodeattr("activation_alpha_num")
+                alpha_den = self.get_nodeattr("activation_alpha_den")
+                if self.__is_power_of_two(alpha_den):
+                    alpha_den_shift = int(np.log2(alpha_den))
+                    return f"LeakyReLUQuantPo2<{shift}, {alpha_num}, {alpha_den_shift}, {accumulator}, {hls_output_type}>"
+                raise ValueError(
+                    "Fused LeakyReLU currently requires a power-of-two alpha denominator."
+                )
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingAdd."
+            )
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingAdd."
-            )
-
-    def __get_activation(self, input_quantA, input_quantB) -> str:
-        """ Returns the activation functor for the StreamingAdd operation. """
-
-        activation = self.get_nodeattr("activation")
-        if activation == "NoOp":
-            return f"DequantQuantEqual<{self.__get_accumulator(input_quantA, input_quantB)}>"
-        elif activation == "ReLU":
-            return f"ReLU<{self.__get_accumulator(input_quantA, input_quantB)}>"
-        else:
-            raise ValueError(
-                f"Unsupported activation function '{activation}' for StreamingAdd."
             )
 
     def __get_object_declaration(self, model) -> cpp_object:
@@ -240,10 +247,9 @@ class StreamingAdd(NN2FPGAOp):
                     f"{self.__get_accumulator(input_typeA, input_typeB)}",
                     f"TAcc",
                 ),
-                (self.__get_activation(input_typeA, input_typeB), "Activation"),
                 (
                     f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
-                    f"Quantizer",
+                    f"OutputTransform",
                 ),
                 (f"{self.__get_align_shift(input_typeA, input_typeB)[0]}", "AlignA"),
                 (f"{self.__get_align_shift(input_typeA, input_typeB)[1]}", "AlignB"),
@@ -397,7 +403,13 @@ class StreamingAdd(NN2FPGAOp):
         Returns:
             int: Estimated DSP usage.
         """
-        return 0
+        dim1_unroll = self.get_nodeattr("dim1_unroll")
+        dim2_unroll = self.get_nodeattr("dim2_unroll")
+        act_dsp = 0
+        if self.get_nodeattr("activation") == "LeakyReLU":
+            act_dsp = dim1_unroll * dim2_unroll
+
+        return act_dsp
 
     def has_linebuffer(self) -> bool:
         """ Check if the StreamingAdd operation requires a line buffer.

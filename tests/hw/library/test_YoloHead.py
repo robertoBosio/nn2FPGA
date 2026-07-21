@@ -279,7 +279,6 @@ class TestYoloHead(BaseHLSTest):
         model = helper.make_model(graph, producer_name="qonnx")
 
         # Save the model
-        onnx.save(model, "yolo_head_test.onnx")
         sess = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
         y = sess.run(None, {"X": input_tensor})[0]
 

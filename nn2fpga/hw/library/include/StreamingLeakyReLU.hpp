@@ -9,29 +9,36 @@
 #include <type_traits>
 #include <unordered_map>
 
-// The ReLU can be used also as a functor.
-template <typename T> struct ReLU {
-  T operator()(T acc) const {
-#pragma HLS inline
-    if (acc < 0)
-      return T(0);
-    else
-      return acc;
-  }
-};
+constexpr int leakyrelu_abs(int x) { return x < 0 ? -x : x; }
 
-template <int Shift, typename TAcc, typename TOut> struct ReLUQuantPo2 {
+constexpr int leakyrelu_unsigned_bits(int x) {
+  return x <= 1 ? 1 : 1 + leakyrelu_unsigned_bits(x >> 1);
+}
+
+template <int Shift, int AlphaNum, int AlphaDenShift, typename TAcc,
+          typename TOut>
+struct LeakyReLUQuantPo2 {
   TOut operator()(TAcc acc) const {
 #pragma HLS inline
-    DequantQuantPo2<Shift, TAcc, TOut> quantizer;
-    return acc < 0 ? quantizer(TAcc(0)) : quantizer(acc);
+    if (acc < 0) {
+      using TWide =
+          ap_int<TAcc::width + leakyrelu_unsigned_bits(leakyrelu_abs(AlphaNum)) +
+                 1>;
+      TWide scaled = TWide(acc) * AlphaNum;
+      DequantQuantPo2<Shift + AlphaDenShift, TWide, TOut> quantizer;
+      return quantizer(scaled);
+    } else {
+      DequantQuantPo2<Shift, TAcc, TOut> quantizer;
+      return quantizer(acc);
+    }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t DIM0, size_t DIM1,
-          size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
-class StreamingReLU {
+          typename TOutput, typename OutputTransform,
+          size_t DIM0, size_t DIM1, size_t DIM2, size_t DIM1_UNROLL,
+          size_t DIM2_UNROLL>
+class StreamingLeakyReLU {
 public:
   static_assert(DIM2 % DIM2_UNROLL == 0,
                 "DIM2 must be a multiple of DIM2_UNROLL");
@@ -40,8 +47,7 @@ public:
                 "DIM1 must be a multiple of DIM1_UNROLL");
   static_assert(DIM1_UNROLL > 0, "DIM1_UNROLL must be greater than 0");
   static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
-
-  StreamingReLU() = default;
+  StreamingLeakyReLU() = default;
 
   struct StepState {
     // Loop iteration indexes.
@@ -79,10 +85,10 @@ public:
            hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Loop through the input height and width.
     for (size_t i_hw = 0; i_hw < DIM0 * DIM1 / DIM1_UNROLL; i_hw++) {
-    STREAMINGRELU_RUN_LOOP:
+    STREAMINGLEAKYRELU_RUN_LOOP:
       for (size_t i_ch = 0; i_ch < DIM2 / DIM2_UNROLL; i_ch++) {
 #pragma HLS pipeline II = 1
-        StreamingReLU::pipeline_body(i_data, o_data);
+        StreamingLeakyReLU::pipeline_body(i_data, o_data);
       }
     }
   }
@@ -107,7 +113,7 @@ public:
     if (firing_condition) {
 
       hls::stream<TOutputWord> instant_output_stream[DIM1_UNROLL];
-      StreamingReLU::pipeline_body(i_data, instant_output_stream);
+      StreamingLeakyReLU::pipeline_body(i_data, instant_output_stream);
 
       st.actor_status.fire();
 
@@ -156,14 +162,12 @@ private:
   static void pipeline_body(hls::stream<TInputWord> i_data[DIM1_UNROLL],
                             hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
 #pragma HLS inline
-    ReLU<TInput> relu;
-    Quantizer quantizer;
+    OutputTransform output_transform;
     for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       TInputWord in_word = i_data[i_dim1_par].read();
       TOutputWord out_word;
       for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
-        TInput out_value = relu(in_word[i_dim2_par]);
-        out_word[i_dim2_par] = quantizer(out_value);
+        out_word[i_dim2_par] = output_transform(in_word[i_dim2_par]);
       }
       o_data[i_dim1_par].write(out_word);
     }

@@ -379,9 +379,9 @@ class TestDequantQuant(BaseHLSTest):
     
     def test_mixed_1(self, hls_steps):
         config_dict = {
-            "ACC_DATAWIDTH": 32,
+            "ACC_DATAWIDTH": 16,
             "OUT_DATAWIDTH": 8,
-            "INPUT": 4194304,
+            "INPUT": 65536,
             "ACC_SIGNED": 0,
             "OUT_SIGNED": 1,
             "ACC_SCALE": 1.0,

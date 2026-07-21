@@ -1,4 +1,5 @@
 #pragma once
+#include "StreamingReLU.hpp"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cassert>
@@ -6,7 +7,7 @@
 
 template <typename TInputWordA, typename TInputA, typename TInputWordB,
           typename TInputB, typename TOutputWord, typename TOutput,
-          typename TMul, typename Activation, typename Quantizer, size_t DIM0,
+          typename TMul, typename OutputTransform, size_t DIM0,
           size_t DIM1, size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamingMul {
   static_assert(DIM1 % DIM1_UNROLL == 0, "DIM1 must be divisible by DIM1_UNROLL");
@@ -121,8 +122,7 @@ private:
     TInputWordA inputA_word;
     TInputWordB inputB_word;
     TOutputWord output_word;
-    Quantizer quantizer;
-    Activation activation;
+    OutputTransform output_transform;
 
     for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       // Read the input data structure from the input streams.
@@ -136,11 +136,7 @@ private:
 
         // Perform the multiplication.
         TMul s_mul = inputA_data * inputB_data;
-        // Apply activation function.
-        s_mul = activation(s_mul);
-
-        // Quantize the sum.
-        TOutput output_data = quantizer(s_mul);
+        TOutput output_data = output_transform(s_mul);
 
         // Store the quantized data in the output structure.
         output_word[i_dim2_par] = output_data;

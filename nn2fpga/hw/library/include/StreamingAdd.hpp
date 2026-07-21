@@ -1,4 +1,6 @@
 #pragma once
+#include "StreamingLeakyReLU.hpp"
+#include "StreamingReLU.hpp"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include <cstddef>
@@ -13,8 +15,7 @@
  * @tparam TOutputWord      Data type for output word (packed output elements).
  * @tparam TOutput          Data type for individual output elements.
  * @tparam TAcc             Data type for accumulator.
- * @tparam Activation       Activation functor type for output activation.
- * @tparam Quantizer        Quantizer functor type for output quantization.
+ * @tparam OutputTransform  Functor type for fused activation and quantization.
  * @tparam AlignA           Functor type for aligning input A data.
  * @tparam AlignB           Functor type for aligning input B data.
  * @tparam DIM0             Size of the first dimension of the input/output tensors.
@@ -30,8 +31,8 @@
 
 template <typename TInputWordA, typename TInputA, typename TInputWordB,
           typename TInputB, typename TOutputWord, typename TOutput,
-          typename TAcc, typename Activation, typename Quantizer,
-          typename AlignA, typename AlignB, size_t DIM0, size_t DIM1,
+          typename TAcc, typename OutputTransform, typename AlignA,
+          typename AlignB, size_t DIM0, size_t DIM1,
           size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamingAdd {
   static_assert(DIM1 % DIM1_UNROLL == 0,
@@ -150,8 +151,7 @@ private:
     TInputWordA inputA_word;
     TInputWordB inputB_word;
     TOutputWord output_word;
-    Quantizer quantizer;
-    Activation activation;
+    OutputTransform output_transform;
     AlignA align_a;
     AlignB align_b;
 
@@ -167,11 +167,7 @@ private:
 
         // Perform the addition.
         TAcc s_sum = align_a(inputA_data) + align_b(inputB_data);
-        // Apply activation function.
-        s_sum = activation(s_sum);
-
-        // Quantize the sum.
-        TOutput output_data = quantizer(s_sum);
+        TOutput output_data = output_transform(s_sum);
 
         // Store the quantized data in the output structure.
         output_word[i_dim2_par] = output_data;

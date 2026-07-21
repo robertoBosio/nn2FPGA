@@ -181,23 +181,19 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                 + int(np.log2(input_quantB.scale))
                 - int(np.log2(output_quant.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_multiplier(input_quantA, input_quantB)}, {output_quant.get_hls_data_type()}>"
+            multiplier = self.__get_multiplier(input_quantA, input_quantB)
+            output_type = output_quant.get_hls_data_type()
+            activation = self.get_nodeattr("activation")
+            if activation == "NoOp":
+                return f"DequantQuantPo2<{shift}, {multiplier}, {output_type}>"
+            if activation == "ReLU":
+                return f"ReLUQuantPo2<{shift}, {multiplier}, {output_type}>"
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingMul."
+            )
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingMul."
-            )
-
-    def __get_activation(self, input_quantA, input_quantB) -> str:
-        """ Returns the activation functor for the StreamingMul operation. """
-
-        activation = self.get_nodeattr("activation")
-        if activation == "NoOp":
-            return f"DequantQuantEqual<{self.__get_multiplier(input_quantA, input_quantB)}>"
-        elif activation == "ReLU":
-            return f"ReLU<{self.__get_multiplier(input_quantA, input_quantB)}>"
-        else:
-            raise ValueError(
-                f"Unsupported activation function '{activation}' for StreamingMul."
             )
 
     def __get_object_declaration(self, model) -> cpp_object:
@@ -247,10 +243,9 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                     f"{self.__get_multiplier(input_quantA, input_quantB)}",
                     f"TMul",
                 ),
-                (self.__get_activation(input_quantA, input_quantB), "Activation"),
                 (
                     f"{self.__get_quantizer(input_quantA, input_quantB, output_quant)}",
-                    f"Quantizer",
+                    f"OutputTransform",
                 ),
                 (f"{input_shapeA[-3]}", "DIM0"),
                 (f"{input_shapeA[-2]}", "DIM1"),

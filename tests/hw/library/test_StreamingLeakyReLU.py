@@ -8,11 +8,20 @@ class TestStreamingLeakyReLU(BaseHLSTest):
 
     @property
     def operator_filename(self):
-        return "StreamingLUT"
+        return getattr(self, "_operator_filename", "StreamingLUT")
 
     @property
     def unit_filename(self):
-        return "StreamingLUT"
+        return getattr(self, "_unit_filename", "StreamingLUT")
+
+    def run(self, config_dict: dict, steps: str, workdir: str = ".", clean: bool = True, **kwargs):
+        if int(config_dict["INPUT_DATAWIDTH"]) == 8:
+            self._operator_filename = "StreamingLUT"
+            self._unit_filename = "StreamingLUT"
+        else:
+            self._operator_filename = "StreamingLeakyReLU"
+            self._unit_filename = "StreamingLeakyReLU"
+        return super().run(config_dict, steps, workdir, clean, **kwargs)
 
     def generate_lut_memory(self, config_dict):
         """
@@ -70,7 +79,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         # Zero-points must match tensor element types (and signed/unsigned-ness)
         X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
         Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
-        
+
         # ----- nodes -----
         dqlinear = helper.make_node(
             "DequantizeLinear",
@@ -99,7 +108,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             initializer=[X_scale, X_zp, Y_scale, Y_zp],
         )
         model_qonnx = helper.make_model(graph, producer_name="qonnx")
-        
+
         # ----- run -----
         sess = ort.InferenceSession(
             model_qonnx.SerializeToString(),
@@ -117,8 +126,11 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             value=lut_values,
         )
         return lut_variable.generate_initialization()
-    
+
     def generate_config_file(self, config_dict):
+        if int(config_dict["INPUT_DATAWIDTH"]) != 8:
+            return self.generate_direct_config_file(config_dict)
+
         """
         Generate a self-contained C++ test config (input/output tensors + LUT),
         supporting signed/unsigned input and signed/unsigned output independently.
@@ -198,7 +210,7 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             initializer=[X_scale, X_zp, Y_scale, Y_zp],
         )
         model = helper.make_model(graph, producer_name="qonnx")
-        
+
         sess = ort.InferenceSession(
             model.SerializeToString(), providers=["CPUExecutionProvider"]
         )
@@ -232,7 +244,13 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
 
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TInput, TOutput> Quantizer;")
+        alpha_den = int(config_dict["LEAKY_ALPHA_DEN"])
+        if alpha_den <= 0 or alpha_den & (alpha_den - 1):
+            raise ValueError("Direct StreamingLeakyReLU requires a power-of-two alpha denominator")
+        alpha_den_shift = int(np.log2(alpha_den))
+        cwr.add_line(
+            f"typedef LeakyReLUQuantPo2<{shift}, LEAKY_ALPHA_NUM, {alpha_den_shift}, TInput, TOutput> OutputTransform;"
+        )
 
         cwr.add_lines(
             csnake.Variable(
@@ -250,6 +268,132 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         )
 
         cwr.add_lines(self.generate_lut_memory(config_dict).code)
+
+        cwr.dedent()
+        cwr.add_line("}")
+        return cwr.code
+
+    def generate_direct_config_file(self, config_dict):
+        in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
+        out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
+
+        in_bits = int(config_dict["INPUT_DATAWIDTH"])
+        out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
+
+        onnx_in_type = self.get_tensorproto_dtype(in_bits, in_unsigned)
+        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
+        np_in_type = self.get_numpy_dtype(in_bits, in_unsigned)
+        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+
+        shape = (
+            1,
+            config_dict["DIM2"],
+            config_dict["DIM0"],
+            config_dict["DIM1"],
+        )
+
+        in_info = np.iinfo(np_in_type)
+        if config_dict.get("EXHAUSTIVE_NEGATIVE_INPUTS", False):
+            if in_unsigned:
+                raise ValueError("EXHAUSTIVE_NEGATIVE_INPUTS requires signed input")
+            if np.prod(shape) != -int(in_info.min):
+                raise ValueError(
+                    "EXHAUSTIVE_NEGATIVE_INPUTS shape must contain exactly "
+                    f"{-int(in_info.min)} elements"
+                )
+            input_tensor = np.arange(
+                int(in_info.min), 0, dtype=np.int64
+            ).astype(np_in_type).reshape(shape)
+        elif in_unsigned:
+            input_tensor = np.random.randint(
+                int(in_info.min),
+                int(in_info.max) + 1,
+                size=shape,
+                dtype=np_in_type,
+            )
+        else:
+            alpha_den = int(config_dict["LEAKY_ALPHA_DEN"])
+            input_tensor = np.random.randint(
+                int(in_info.min), int(in_info.max) + 1, size=shape
+            ).astype(np_in_type)
+
+        X = helper.make_tensor_value_info("X", onnx_in_type, shape)
+        Y = helper.make_tensor_value_info("Y", onnx_out_type, shape)
+
+        X_scale = helper.make_tensor("X_scale", TensorProto.FLOAT, [], [float(config_dict["X_SCALE"])])
+        Y_scale = helper.make_tensor("Y_scale", TensorProto.FLOAT, [], [float(config_dict["Y_SCALE"])])
+        X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
+        Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
+
+        dqlinear = helper.make_node(
+            "DequantizeLinear",
+            inputs=["X", "X_scale", "X_zp"],
+            outputs=["X_dq"],
+        )
+
+        leakyrelu = helper.make_node(
+            "LeakyRelu",
+            alpha=float(config_dict["LEAKY_ALPHA"]),
+            inputs=["X_dq"],
+            outputs=["Y_dq"],
+        )
+
+        qlinear = helper.make_node(
+            "QuantizeLinear",
+            inputs=["Y_dq", "Y_scale", "Y_zp"],
+            outputs=["Y"],
+        )
+
+        graph = helper.make_graph(
+            [dqlinear, leakyrelu, qlinear],
+            "qleakyrelu_direct_test",
+            [X],
+            [Y],
+            initializer=[X_scale, X_zp, Y_scale, Y_zp],
+        )
+        model = helper.make_model(graph, producer_name="qonnx")
+
+        sess = ort.InferenceSession(
+            model.SerializeToString(), providers=["CPUExecutionProvider"]
+        )
+        y = sess.run(None, {"X": input_tensor})[0].astype(np_out_type, copy=False)
+
+        shift = int(np.log2(float(config_dict["Y_SCALE"]) / float(config_dict["X_SCALE"])))
+
+        cwr = csnake.CodeWriter()
+        cwr.include("<cstdint>")
+        cwr.include("<array>")
+        cwr.include("<ap_int.h>")
+        cwr.add_line("namespace test_config {")
+        cwr.indent()
+        for key, value in config_dict.items():
+            if key in ["X_SCALE", "W_SCALE", "Y_SCALE", "LEAKY_ALPHA"]:
+                cwr.add_line(f"const float {key} = {float(value)}f;")
+            elif isinstance(value, bool):
+                value_str = "true" if value else "false"
+                cwr.add_line(f"const bool {key} = {value_str};")
+            else:
+                cwr.add_line(f"const int {key} = {int(value)};")
+
+        typedef_suffix = "u" if in_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
+        typedef_suffix = "u" if out_unsigned else ""
+        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TInput, TOutput> Quantizer;")
+        cwr.add_lines(
+            csnake.Variable(
+                "input_tensor",
+                primitive="TInput",
+                value=input_tensor,
+            ).generate_initialization()
+        )
+        cwr.add_lines(
+            csnake.Variable(
+                "output_tensor",
+                primitive="TOutput",
+                value=y,
+            ).generate_initialization()
+        )
 
         cwr.dedent()
         cwr.add_line("}")
@@ -320,3 +464,49 @@ class TestStreamingLeakyReLU(BaseHLSTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
+
+    def test_16bit_direct_13_over_128(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUT_DATAWIDTH": 16,
+            "OUTPUT_DATAWIDTH": 16,
+            "INPUT_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": False,
+            "DIM0": 64,
+            "DIM1": 64,
+            "DIM2": 32,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
+            "X_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "X_ZP": 0,
+            "Y_ZP": 0,
+            "LEAKY_ALPHA": 0.1015625,
+            "LEAKY_ALPHA_NUM": 13,
+            "LEAKY_ALPHA_DEN": 128,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps, clean=False)
+
+    def test_16bit_direct_13_over_128_all_negative(self, hls_steps):
+        config_dict = {
+            "INPUT_DATAWIDTH": 16,
+            "OUTPUT_DATAWIDTH": 16,
+            "INPUT_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": False,
+            "DIM0": 128,
+            "DIM1": 128,
+            "DIM2": 2,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
+            "X_SCALE": 2**-5,
+            "Y_SCALE": 2**-5,
+            "X_ZP": 0,
+            "Y_ZP": 0,
+            "LEAKY_ALPHA": 0.1015625,
+            "LEAKY_ALPHA_NUM": 13,
+            "LEAKY_ALPHA_DEN": 128,
+            "PIPELINE_DEPTH": 5,
+            "EXHAUSTIVE_NEGATIVE_INPUTS": True,
+        }
+        self.run(config_dict, hls_steps, clean=False)

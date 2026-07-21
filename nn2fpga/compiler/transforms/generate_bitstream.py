@@ -78,6 +78,53 @@ def process_verilog_files(hls_dir: Path):
         if v_file.exists():
             optimize_ram_decomp(v_file)
 
+def gate_entry_proc_on_configured_buffers(hls_dir: Path, top_name: str, buffer_names: list[str]) -> None:
+    """Hold HLS entry_proc until DDRStream AXI-Lite pointer registers are programmed."""
+    if not buffer_names:
+        logger.info("Skipping entry_proc gate patch because there are no DDR stream buffers.")
+        return
+
+    top_v = hls_dir / f"{top_name}.v"
+    if not top_v.exists():
+        logger.info("Skipping entry_proc gate patch because %s does not exist.", top_v)
+        return
+
+    text = top_v.read_text()
+    patch_marker = "// nn2fpga patch: gate entry_proc until AXI-Lite DDR buffer addresses are configured"
+    if patch_marker in text:
+        logger.info("entry_proc gate patch already present in %s, skipped.", top_v)
+        return
+
+    start_assignment = "assign entry_proc_U0_ap_start = 1'b1;"
+    occurrences = text.count(start_assignment)
+    if occurrences != 1:
+        raise RuntimeError(
+            f"Unable to patch {top_v}: expected exactly one '{start_assignment}', found {occurrences}."
+        )
+
+    checks = []
+    for buffer_name in buffer_names:
+        for suffix in ("read", "write"):
+            signal = f"{buffer_name}_{suffix}"
+            if not re.search(rf"\b{re.escape(signal)}\b", text):
+                raise RuntimeError(
+                    f"Unable to patch {top_v}: expected buffer address signal '{signal}' was not found."
+                )
+            checks.append(f"    ({signal} != 64'd0)")
+
+    valid_expr = " &&\n".join(checks) if checks else "    1'b1"
+    patch = (
+        f"{patch_marker}\n"
+        "wire entry_proc_cfg_addrs_valid;\n\n"
+        "assign entry_proc_cfg_addrs_valid =\n"
+        f"{valid_expr};\n"
+        "// nn2fpga patch end\n\n"
+        "assign entry_proc_U0_ap_start = entry_proc_cfg_addrs_valid;"
+    )
+
+    top_v.write_text(text.replace(start_assignment, patch, 1))
+    logger.info("Patched %s to gate entry_proc on %d DDR buffer address(es).", top_v, len(buffer_names))
+
 def recover_buffer_axilite_offsets(hls_output_dir: Path, top_name: str, buffer_map: dict) -> None:
     """Recover HLS AXI-Lite pointer register offsets from the generated driver header."""
     if not buffer_map:
@@ -257,16 +304,17 @@ def vivado_tcl_script(
         buffer_master_interfaces.append((f"{buffer}_write", f"{top_name}_0/m_axi_{buffer}_write_bundle"))
 
     ddr_masters = []
-    for input, _ in inputs:
+    for input, _, is_static in inputs:
         ddr_masters.append({"net_name": f"{input}_maxi", "interface": f"{input}_dma/M_AXI_MM2S", "kind": "data"})
+        if not is_static:
+            ddr_masters.append({"net_name": f"{input}_sg_maxi", "interface": f"{input}_dma/M_AXI_SG", "kind": "sg"})
     for output, _ in outputs:
         ddr_masters.append({"net_name": f"{output}_maxi", "interface": f"{output}_dma/M_AXI_S2MM", "kind": "data"})
+        ddr_masters.append({"net_name": f"{output}_sg_maxi", "interface": f"{output}_dma/M_AXI_SG", "kind": "sg"})
     ddr_masters.extend(
         {"net_name": f"{buffer}_maxi", "interface": interface, "kind": "data"}
         for buffer, interface in buffer_master_interfaces
     )
-    for output, _ in outputs:
-        ddr_masters.append({"net_name": f"{output}_sg", "interface": f"{output}_dma/M_AXI_SG", "kind": "sg"})
     hp_groups = split_ddr_masters(ddr_masters)
 
     # Add the Process System Reset
@@ -275,12 +323,13 @@ def vivado_tcl_script(
     )
 
     # Add DMAs
-    for input, _ in inputs:
+    for input, _, is_static in inputs:
         lines.append(
             f'create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 {input}_dma'
         )
+        sg_options = " CONFIG.C_SG_INCLUDE_STSCNTRL_STRM {0}" if not is_static else ""
         lines.append(
-            f'set_property -dict [list CONFIG.C_INCLUDE_MM2S {{{1}}} CONFIG.C_INCLUDE_S2MM {{{0}}} CONFIG.C_INCLUDE_SG {{{0}}} CONFIG.C_SG_LENGTH_WIDTH {{{26}}}] [get_bd_cells {input}_dma]'
+            f'set_property -dict [list CONFIG.C_INCLUDE_MM2S {{{1}}} CONFIG.C_INCLUDE_S2MM {{{0}}} CONFIG.C_INCLUDE_SG {{{0 if is_static else 1}}} CONFIG.C_SG_LENGTH_WIDTH {{{26}}}{sg_options}] [get_bd_cells {input}_dma]'
         )
         lines.append(f'set_property -dict [list CONFIG.C_M_AXI_MM2S_DATA_WIDTH {{{interface_width}}} CONFIG.C_M_AXIS_MM2S_TDATA_WIDTH {{{interface_width}}}] [get_bd_cells {input}_dma]')
 
@@ -326,9 +375,11 @@ def vivado_tcl_script(
     for hp_idx, group in enumerate(hp_groups):
         if group:
             lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smartconnect_hp_{hp_idx}/aclk]')
-    for input, _ in inputs:
+    for input, _, is_static in inputs:
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {input}_dma/s_axi_lite_aclk]')
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {input}_dma/m_axi_mm2s_aclk]')
+        if not is_static:
+            lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {input}_dma/m_axi_sg_aclk]')
     for output, _ in outputs:
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {output}_dma/s_axi_lite_aclk]')
         lines.append(f'connect_bd_net -net ps_clk [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins {output}_dma/m_axi_s2mm_aclk]')
@@ -341,13 +392,13 @@ def vivado_tcl_script(
     for hp_idx, group in enumerate(hp_groups):
         if group:
             lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins smartconnect_hp_{hp_idx}/aresetn]')
-    for input, _ in inputs:
+    for input, _, _ in inputs:
         lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins {input}_dma/axi_resetn]')
     for output, _ in outputs:
         lines.append(f'connect_bd_net -net a_rst [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins {output}_dma/axi_resetn]')
 
     # Connect AXI lite interfaces to the smartconnect
-    for i, (input, _) in enumerate(inputs):
+    for i, (input, _, _) in enumerate(inputs):
         lines.append(f'connect_bd_intf_net -intf_net {input}_axi_lite [get_bd_intf_pins {input}_dma/S_AXI_LITE] [get_bd_intf_pins smartconnect_axilite_0/M0{i}_AXI]')
     for i, (output, _) in enumerate(outputs):
         lines.append(f'connect_bd_intf_net -intf_net {output}_axi_lite [get_bd_intf_pins {output}_dma/S_AXI_LITE] [get_bd_intf_pins smartconnect_axilite_0/M0{i + len(inputs)}_AXI]')
@@ -359,7 +410,7 @@ def vivado_tcl_script(
     lines.append(f'connect_bd_intf_net -intf_net ps_axilite [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smartconnect_axilite_0/S00_AXI]')
 
     # Connect HLS IP streams to the DMAs
-    for input, _ in inputs:
+    for input, _, _ in inputs:
         lines.append(f'connect_bd_intf_net -intf_net {input}_axis [get_bd_intf_pins {top_name}_0/{input}] [get_bd_intf_pins {input}_dma/M_AXIS_MM2S]')
     for output, _ in outputs:
         lines.append(f'connect_bd_intf_net -intf_net {output}_axis [get_bd_intf_pins {top_name}_0/{output}] [get_bd_intf_pins {output}_dma/S_AXIS_S2MM]')
@@ -384,7 +435,7 @@ def vivado_tcl_script(
     lines.append(f'assign_bd_address')
 
     # Delete existing address segments for DMAs
-    for input, _ in inputs:
+    for input, _, _ in inputs:
         lines.append(f'delete_bd_objs [get_bd_addr_segs {{zynq_ultra_ps_e_0/Data/SEG_{input}_dma_Reg}}]')
     for output, _ in outputs:
         lines.append(f'delete_bd_objs [get_bd_addr_segs {{zynq_ultra_ps_e_0/Data/SEG_{output}_dma_Reg}}]')
@@ -395,7 +446,7 @@ def vivado_tcl_script(
         f"assign_bd_address -offset 0x{axilite_base_addr:X} -range {axilite_window_str} "
         f"-target_address_space /zynq_ultra_ps_e_0/Data [get_bd_addr_segs axi_gpio_id/S_AXI/Reg] -force"
     )
-    for input, offset in inputs:
+    for input, offset, _ in inputs:
         lines.append(
             f"assign_bd_address -offset 0x{(axilite_base_addr + offset):X} -range {axilite_window_str} -target_address_space /zynq_ultra_ps_e_0/Data [get_bd_addr_segs {input}_dma/S_AXI_LITE/Reg] -force"
         )
@@ -438,6 +489,7 @@ def vivado_tcl_script(
     lines.append(f'wait_on_run synth_1')
 
     # Launch implementation
+    lines.append(f'set_property strategy Congestion_SpreadLogic_high [get_runs impl_1]')
     lines.append(f'launch_runs impl_1 -to_step write_bitstream -jobs 8')
     lines.append(f'wait_on_run impl_1')
 
@@ -553,6 +605,9 @@ class GenerateBitstream(Transformation):
             # Patch the Verilog files to optimize RAM usage
             process_verilog_files(hls_output_dir / "impl/verilog")
             process_verilog_files(hls_output_dir / "impl/ip/hdl/verilog")
+            buffer_names = list(ap.buffer_map.keys())
+            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/verilog", top_name, buffer_names)
+            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/ip/hdl/verilog", top_name, buffer_names)
 
         # Save the design ID in a constant register of the BD,
         # and reserve the axilite space.
@@ -564,7 +619,7 @@ class GenerateBitstream(Transformation):
         inputs = ap.input_map
         for value in inputs.values():
             value["axi_offset"] = axi_offset
-            input_list.append((value["new_name"], axi_offset))
+            input_list.append((value["new_name"], axi_offset, value["value"] is not None))
             axi_offset += self.axilite_dma_window
 
         # Retrieve output list
