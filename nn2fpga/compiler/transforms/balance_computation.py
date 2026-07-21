@@ -507,18 +507,18 @@ def resourceILP(nodes, model_II, valid_par_solutions, parallel_op, NUM_DSP, NUM_
     prob_min = pulp.LpProblem("Resource_usage", pulp.LpMinimize)
 
     # Objective function: minimize the BRAMs + DSPs required to run the whole network.
-    prob_min += (
-        pulp.lpSum([pulp.lpDot(layer_binary_variables[i].values(),
-                    valid_bram_solutions[i]) for i in range(len(nodes))]) +
-        pulp.lpSum([pulp.lpDot(layer_binary_variables[i].values(),
-                    valid_dsp_solutions[i]) for i in range(len(nodes))]),
-        f"Resource_objective"
-    )
     # prob_min += (
     #     pulp.lpSum([pulp.lpDot(layer_binary_variables[i].values(),
-    #                 valid_bram_solutions[i]) for i in range(len(nodes))]),
+    #                 valid_bram_solutions[i]) for i in range(len(nodes))]) +
+    #     pulp.lpSum([pulp.lpDot(layer_binary_variables[i].values(),
+    #                 valid_dsp_solutions[i]) for i in range(len(nodes))]),
     #     f"Resource_objective"
     # )
+    prob_min += (
+        pulp.lpSum([pulp.lpDot(layer_binary_variables[i].values(),
+                    valid_bram_solutions[i]) for i in range(len(nodes))]),
+        f"Resource_objective"
+    )
 
     # Constraint: Only one binary variable per layer should be equal to 1
     for layer_index in range(len(nodes)):
@@ -668,8 +668,8 @@ def update_model(model: ModelWrapper, parallel_op: dict) -> ModelWrapper:
 def propagate_parallelism(model: ModelWrapper) -> ModelWrapper:
     """Propagate the parallelism information through the model."""
     
-    # Retrieving the NHWCToStream nodes to propagate the parallelism.
-    queue = deque(model.get_nodes_by_op_type("NHWCToStream"))
+    # Retrieving the AXIToStream nodes to propagate the parallelism.
+    queue = deque(model.get_nodes_by_op_type("AXIToStream"))
     mark_visited = {node.name for node in queue}
 
     while queue:

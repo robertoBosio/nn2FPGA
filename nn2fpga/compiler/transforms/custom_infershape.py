@@ -26,7 +26,7 @@ class CustomInferShapes(Transformation):
                 onnx_node = nn2fpga_node.make_shape_compatible_op(model)
 
                 if isinstance(onnx_node, list):
-                    # If the shape-compatible op returns a list (TensorDuplicator), we need to handle each node separately
+                    # If the shape-compatible op returns a list (StreamingTensorDuplicator), we need to handle each node separately
                     node_list = []
                     for i, onnx_sub_node in enumerate(onnx_node):
                         node_list.append(onnx_sub_node)

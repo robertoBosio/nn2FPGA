@@ -1,48 +1,48 @@
+from onnx import helper
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable
-from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 import math
 import numpy as np
 from dataclasses import dataclass
 
 
-class StreamToNHWC(NN2FPGAOp, DSECapable):
+class StreamToAXI(NN2FPGAOp, DSECapable):
     """Node consuming a streaming tensor to an axi lite interface."""
 
     @dataclass(frozen=True)
     class DSEPoint:
-        """DSE point for StreamToNHWC operator."""
+        """DSE point for StreamToAXI operator."""
 
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
 
         @staticmethod
-        def from_dict(d: dict) -> "StreamToNHWC.DSEPoint":
-            return StreamToNHWC.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+        def from_dict(d: dict) -> "StreamToAXI.DSEPoint":
+            return StreamToAXI.DSEPoint(
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
             )
 
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
             }
 
     def get_nodeattr_types(self):
         return {
             "axi_bitwidth": ("i", False, 128),  # Bitwidth of the AXI interface
             # Custom attributes for unroll factors
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
             # Custom attributes for input/output streams
             "in_stream_array": ("i", False, 1),
             "out_stream_array": ("i", False, 1),
@@ -87,11 +87,7 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
         as long as all the channels of it are fitting in the AXI word.
         """
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         return int(math.floor(axi_bitwidth / output_quant.bitwidth))
 
@@ -105,79 +101,74 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
         return ""
 
     def __get_object_declaration(self, model) -> str:
-        """Generates the cpp StreamToNHWC object.
+        """Generates the cpp StreamToAXI object.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
-            str: The StreamToNHWC as cpp_object.
+            str: The StreamToAXI as cpp_object.
         """
         # The output has to be an AXI Lite interface, the bitwidth is defined by the board used.
         output_bitwidth = self.get_nodeattr("axi_bitwidth")
 
-        # The output quant is the same as the input quant, since the StreamToNHWC node
+        # The output quant is the same as the input quant, since the StreamToAXI node
         # does not change the data type of the input tensor.
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
 
         # Retrieve parallelization attributes.
         point = self.__current_dse_point()
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         # Adjust the number of iterations to be multiple of data per word.
         # If not, an extra iteration is needed to flush the remaining data.
-        iter = np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        iter = np.prod(input_shape) // (point.dim2_unroll * point.dim1_unroll)
         if np.prod(input_shape) % self.__get_data_per_word(model) != 0:
             iter += 1
 
-        # Create the StreamToNHWC object.
-        StreamToNHWC = cpp_object(
-            "StreamToNHWC",
+        # Create the StreamToAXI object.
+        StreamToAXI = cpp_object(
+            "StreamToAXI",
             f"{self.onnx_node.name}",
             [
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
-                    "TInputStruct",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    "TInputWord",
                 ),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
-                (f"ap_axiu<{output_bitwidth}, 0, 0, 0>", "TOutputStruct"),
-                (f"ap_uint<{output_bitwidth}>", "TOutput"),
+                (f"{input_quant.get_hls_data_type()}", "TInput"),
+                (f"ap_axiu<{output_bitwidth}, 0, 0, 0>", "TOutputWord"),
                 (
-                    f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>",
+                    f"DequantQuantEqual<{input_quant.get_hls_data_type()}>",
                     "Quantizer",
                 ),
                 (int(iter), "ITER"),
                 (self.__get_data_per_word(model), "DATA_PER_WORD"),
-                (input_shape[2], "HEIGHT"),
-                (input_shape[3], "WIDTH"),
-                (input_shape[1], "CH"),
-                (point.width_unroll, "IN_W_PAR"),
-                (point.channel_unroll, "IN_CH_PAR"),
+                (input_shape[-3], "DIM0"),
+                (input_shape[-2], "DIM1"),
+                (input_shape[-1], "DIM2"),
+                (point.dim1_unroll, "DIM1_UNROLL"),
+                (point.dim2_unroll, "DIM2_UNROLL"),
             ],
         )
 
-        return StreamToNHWC.generate_declaration()
+        return StreamToAXI.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
-        """Generates the C++ code necessary to run the StreamToNHWC node."""
+        """Generates the C++ code necessary to run the StreamToAXI node."""
 
-        # Generate the call to the StreamToNHWC run method.
+        # Generate the call to the StreamToAXI run method.
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
             arguments=(
                 (
                     f"input_data_stream",
-                    f"hls::stream<TInputStruct>",
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"output_data_stream",
-                    f"hls::stream<TOutputStruct>",
+                    f"hls::stream<TOutputWord>",
                 ),
             ),
         )
@@ -189,20 +180,20 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
         )
 
     def __get_step_call(self) -> str:
-        """Generates the C++ code necessary to step the StreamToNHWC node."""
+        """Generates the C++ code necessary to step the StreamToAXI node."""
 
-        # Generate the call to the StreamToNHWC step method.
+        # Generate the call to the StreamToAXI step method.
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
             return_type="void",
             arguments=(
                 (
                     f"input_data_stream",
-                    f"hls::stream<TInputStruct>",
+                    f"hls::stream<TInputWord>",
                 ),
                 (
                     f"output_data_stream",
-                    f"hls::stream<TOutputStruct>",
+                    f"hls::stream<TOutputWord>",
                 ),
             ),
         )
@@ -212,6 +203,14 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
             self.__get_stream_name(self.onnx_node.input[0]),
             self.onnx_node.output[0],
         )
+
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamToAXI is layout agnostic, since it just reads the input tensor as a stream of data. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple:
+        """ The output layout of StreamToAXI is the same as the input layout. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
@@ -244,113 +243,100 @@ class StreamToNHWC(NN2FPGAOp, DSECapable):
 
         return [hls_kernel], [], {}, hls_tag
 
-    def __current_dse_point(self) -> "StreamToNHWC.DSEPoint":
+    def __current_dse_point(self) -> "StreamToAXI.DSEPoint":
         """Retrieve the current DSE point from the node attributes."""
-        return StreamToNHWC.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+        return StreamToAXI.DSEPoint(
+            dim2_unroll=self.get_nodeattr("dim2_unroll"),
+            dim1_unroll=self.get_nodeattr("dim1_unroll"),
         )
 
     def get_latency(
         self, model: ModelWrapper
     ) -> int:
-        """Estimate the latency of the StreamToNHWC operation given a set of parallelization parameters.
+        """Estimate the latency of the StreamToAXI operation given a set of parallelization parameters.
         Args:
-            point (StreamToNHWC.DSEPoint): A DSE point containing the parallelization parameters.
+            point (StreamToAXI.DSEPoint): A DSE point containing the parallelization parameters.
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_shape = self.require_4d_input_shape(model, 0)
 
         # Retrieve current parallelization attributes if not provided.
         point = self.__current_dse_point()
 
-        latency = np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        latency = np.prod(input_shape) // (point.dim2_unroll * point.dim1_unroll)
         return latency
 
     def get_brams(self, model: ModelWrapper) -> int:
-        """Estimate the BRAM usage of the StreamToNHWC operation given a set of parallelization parameters.
+        """Estimate the BRAM usage of the StreamToAXI operation given a set of parallelization parameters.
         Args:
-            point (StreamToNHWC.DSEPoint): A DSE point containing the parallelization parameters.
+            point (StreamToAXI.DSEPoint): A DSE point containing the parallelization parameters.
         Returns:
             int: Estimated BRAM usage.
         """
         return 0
 
     def get_dsps(self, model: ModelWrapper) -> int:
-        """Estimate the DSP usage of the StreamToNHWC operation given a set of parallelization parameters.
+        """Estimate the DSP usage of the StreamToAXI operation given a set of parallelization parameters.
         Args:
-            point (StreamToNHWC.DSEPoint): A DSE point containing the parallelization parameters.
+            point (StreamToAXI.DSEPoint): A DSE point containing the parallelization parameters.
         Returns:
             int: Estimated DSP usage.
         """
         return 0
 
-    def get_dse_points(
-        self, model: ModelWrapper
-    ) -> list["StreamToNHWC.DSEPoint"]:
-        """Check if a given DSE point is valid for the StreamToNHWC operation.
+    def get_dse_points(self, model: ModelWrapper) -> list["StreamToAXI.DSEPoint"]:
+        """Check if a given DSE point is valid for the StreamToAXI operation.
         Args:
-            point (StreamToNHWC.DSEPoint): A DSE point containing the parallelization parameters.
+            point (StreamToAXI.DSEPoint): A DSE point containing the parallelization parameters.
         Returns:
             bool: True if the DSE point is valid, False otherwise.
         """
 
-        def divisors(n, clip):
-            return [i for i in range(1, n + 1) if (n % i == 0 and i <= clip)]
-
         axi_bitwidth = self.get_nodeattr("axi_bitwidth")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Pad to 4D if needed.
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
         act_bits = output_quant.bitwidth
 
         DSE_points = []
-        for channel_unroll in divisors(input_shape[1], input_shape[1]):
-            for width_unroll in divisors(input_shape[3], input_shape[3]):
+        for dim2_unroll in self.divisors([input_shape[-1]], input_shape[-1]):
+            for dim1_unroll in self.divisors([input_shape[-2]], input_shape[-2]):
 
                 # Check if the data fits in the AXI bitwidth.
-                if (np.prod([channel_unroll, width_unroll]) * act_bits) > axi_bitwidth:
+                if (np.prod([dim2_unroll, dim1_unroll]) * act_bits) > axi_bitwidth:
                     continue
 
                 # Width parallelization can only be applied if the full channel fits in the AXI word.
-                if width_unroll > 1 and channel_unroll != input_shape[1]:
+                if dim1_unroll > 1 and dim2_unroll != input_shape[-1]:
                     continue
 
                 DSE_points.append(
-                    StreamToNHWC.DSEPoint(
-                        channel_unroll=channel_unroll, width_unroll=width_unroll
+                    StreamToAXI.DSEPoint(
+                        dim2_unroll=dim2_unroll, dim1_unroll=dim1_unroll
                     )
                 )
 
         return DSE_points
 
     def has_linebuffer(self) -> bool:
-        """Check if the StreamToNHWC operation requires a linebuffer.
+        """Check if the StreamToAXI operation requires a linebuffer.
         Returns:
             bool: True if a linebuffer is required, False otherwise.
         """
         return False
 
     def apply_point(
-        self, model: ModelWrapper, point: "StreamToNHWC.DSEPoint"
+        self, model: ModelWrapper, point: "StreamToAXI.DSEPoint"
     ) -> None:
         """Set the unroll factors in the node attributes based on the given DSE point.
         Args:
-            point (StreamToNHWC.DSEPoint): A DSE point containing the parallelization parameters.
+            point (StreamToAXI.DSEPoint): A DSE point containing the parallelization parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

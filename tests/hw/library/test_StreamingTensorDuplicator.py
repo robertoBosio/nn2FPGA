@@ -1,15 +1,15 @@
 import csnake
 from .base_hls_test import BaseHLSTest
 
-class TestTensorDuplicator(BaseHLSTest):
+class TestStreamingTensorDuplicator(BaseHLSTest):
 
     @property
     def operator_filename(self) -> str:
-        return "TensorDuplicator"
+        return "StreamingTensorDuplicator"
 
     @property
     def unit_filename(self) -> str:
-        return "TensorDuplicator"
+        return "StreamingTensorDuplicator"
 
     def generate_config_file(self, config_dict):
 
@@ -26,7 +26,7 @@ class TestTensorDuplicator(BaseHLSTest):
             else:
                 cwr.add_line(f"const int {key} = {value};")
         cwr.add_line(f"typedef ap_int<{config_dict['DATAWIDTH']}> TInput;")
-        cwr.add_line(f"using TWord = std::array<TInput, {config_dict['CH_PAR']}>;")
+        cwr.add_line(f"using TWord = std::array<TInput, {config_dict['DIM2_UNROLL']}>;")
         cwr.dedent()
         cwr.add_line("}")
         return cwr.code
@@ -34,11 +34,11 @@ class TestTensorDuplicator(BaseHLSTest):
     def test_2copies(self, hls_steps):
         config_dict = {
             "DATAWIDTH": 8,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 2,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 2,
             "PIPELINE_DEPTH": 5,
         }
         self.run(

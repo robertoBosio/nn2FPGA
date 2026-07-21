@@ -162,9 +162,9 @@ def test_double_tensor_pattern():
     transformed_model = model.transform(InsertTensorDuplicator())
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
-    dup_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]
+    dup_nodes = [n for n in transformed_model.graph.node if n.op_type == "StreamingTensorDuplicator"]
 
-    assert len(dup_nodes) == 1, "There should be a TensorDuplicator node after transformation."
+    assert len(dup_nodes) == 1, "There should be a StreamingTensorDuplicator node after transformation."
 
 def test_triple_tensor_pattern():
 
@@ -232,9 +232,9 @@ def test_triple_tensor_pattern():
     transformed_model = model.transform(InsertTensorDuplicator())
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
-    tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]
+    tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "StreamingTensorDuplicator"]
 
-    assert len(tensor_duplicator_nodes) == 2, "There should be two TensorDuplicator nodes after transformation."
+    assert len(tensor_duplicator_nodes) == 2, "There should be two StreamingTensorDuplicator nodes after transformation."
     assert len(transformed_model.graph.output) == 3, "There should be three outputs in the transformed model."
 
 def test_triple_tensor_with_output_pattern():
@@ -299,7 +299,7 @@ def test_triple_tensor_with_output_pattern():
     transformed_model = model.transform(InsertTensorDuplicator())
 
     # Verify that the transformed model contains Split nodes instead of Slice nodes
-    tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "TensorDuplicator"]
+    tensor_duplicator_nodes = [n for n in transformed_model.graph.node if n.op_type == "StreamingTensorDuplicator"]
 
-    assert len(tensor_duplicator_nodes) == 2, "There should be two TensorDuplicator nodes after transformation."
+    assert len(tensor_duplicator_nodes) == 2, "There should be two StreamingTensorDuplicator nodes after transformation."
     assert len(transformed_model.graph.output) == 3, "There should be three outputs in the transformed model."

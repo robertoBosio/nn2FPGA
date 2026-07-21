@@ -1,44 +1,45 @@
 #pragma once
 #include "ap_int.h"
+#include "ap_float.h"
 #include "hls_stream.h"
 #include "utils/CSDFG_utils.hpp"
 #include "utils/HLS_utils.hpp"
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
 
 /**
- * @class StreamToNHWC
- * @brief StreamToNHWC consumes input data streams, quantizes the data, and
+ * @class StreamToAXI
+ * @brief StreamToAXI consumes input data streams, quantizes the data, and
  * packs it into words for an AXI stream.
  *
  * This class is designed to handle the consumption of nn2FPGA input data
  * streams and convert them into an AXI stream format. It supports parallel
- * processing of input channels and width, as specified by IN_CH_PAR and
- * IN_W_PAR, respectively.
+ * processing of input channels and width, as specified by DIM2_UNROLL and
+ * DIM1_UNROLL, respectively.
  *
  * @tparam TInputWord     The type of the input data stream.
  * @tparam TInput         The data type of the input elements.
  * @tparam TOutputWord    The type of the output data stream.
- * @tparam TOutput        The data type of the output elements.
  * @tparam Quantizer      The quantizer functor/class used to quantize input
  * data.
- * @tparam ITER           Number of input data elements to process, rounded up to
- * the nearest multiple of DATA_PER_WORD.
+ * @tparam ITER           Number of input data elements to process, rounded up
+ * to the nearest multiple of DATA_PER_WORD.
  * @tparam DATA_PER_WORD  Number of data elements packed into a single output
  * word.
  * @tparam BITS_PER_DATA  Number of bits used to represent each data element.
- * @tparam HEIGHT         Height of the input tensor.
- * @tparam WIDTH          Width of the input tensor.
- * @tparam CH             Number of input channels.
- * @tparam IN_W_PAR       Number of input width elements processed in parallel.
- * @tparam IN_CH_PAR      Number of input channels processed in parallel.
+ * @tparam DIM0         Height of the input tensor.
+ * @tparam DIM1          Width of the input tensor.
+ * @tparam DIM2             Number of input channels.
+ * @tparam DIM1_UNROLL       Number of input width elements processed in
+ * parallel.
+ * @tparam DIM2_UNROLL      Number of input channels processed in parallel.
  *
  * @note
- * - DATA_PER_WORD must be a multiple of IN_CH_PAR * IN_W_PAR.
- * - If IN_W_PAR > 1, CH must be equal to IN_CH_PAR, this is to preserve
+ * - DATA_PER_WORD must be a multiple of DIM2_UNROLL * DIM1_UNROLL.
+ * - If DIM1_UNROLL > 1, DIM2 must be equal to DIM2_UNROLL, this is to preserve
  * the correct order of the data flowing.
- * - CH must be a multiple of IN_CH_PAR.
- * - WIDTH must be a multiple of IN_W_PAR.
+ * - DIM2 must be a multiple of DIM2_UNROLL.
+ * - DIM1 must be a multiple of DIM1_UNROLL.
  *
  * @section Usage
  * - Use the run() method for functional verification and synthesis.
@@ -47,26 +48,38 @@
  *
  * @section Parallelism
  * The class supports parallel processing of input channels and width, as
- * specified by IN_CH_PAR and IN_W_PAR, respectively.
+ * specified by DIM2_UNROLL and DIM1_UNROLL, respectively.
  *
  * @section Quantization
  * The Quantizer template parameter is used to quantize the extracted data
  * before writing to the output stream.
  */
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t ITER,
-          size_t DATA_PER_WORD, size_t HEIGHT, size_t WIDTH, size_t CH,
-          size_t IN_W_PAR, size_t IN_CH_PAR>
-class StreamToNHWC {
-  static constexpr size_t READS = HEIGHT * WIDTH * CH / (IN_W_PAR * IN_CH_PAR);
+template <typename TInputWord, typename TInput,
+          typename TOutputWord, typename Quantizer, size_t ITER,
+          size_t DATA_PER_WORD, size_t DIM0, size_t DIM1, size_t DIM2,
+          size_t DIM1_UNROLL, size_t DIM2_UNROLL>
+class StreamToAXI {
+  static constexpr size_t TOTAL_ELEMS = DIM0 * DIM1 * DIM2;
+  static constexpr size_t READS =
+      TOTAL_ELEMS / (DIM1_UNROLL * DIM2_UNROLL);
+  static constexpr size_t OUTPUT_WORDS =
+      (TOTAL_ELEMS + DATA_PER_WORD - 1) / DATA_PER_WORD;
+  static constexpr size_t LAST_WORD_ELEMS =
+      TOTAL_ELEMS - ((OUTPUT_WORDS - 1) * DATA_PER_WORD);
+  static constexpr size_t LAST_WORD_BYTES =
+      LAST_WORD_ELEMS * data_width_v<TInput> / 8;
   static_assert(
-      DATA_PER_WORD >= (IN_W_PAR * IN_CH_PAR),
-      "DATA_PER_WORD must be bigger or equal to IN_CH_PAR * IN_W_PAR");
-  static_assert(IN_W_PAR == 1 || CH == IN_CH_PAR,
-                "CH must be equal to IN_CH_PAR when IN_W_PAR > 1");
-  static_assert(CH % IN_CH_PAR == 0, "CH must be a multiple of IN_CH_PAR");
-  static_assert(WIDTH % IN_W_PAR == 0, "WIDTH must be a multiple of IN_W_PAR");
+      DATA_PER_WORD >= (DIM1_UNROLL * DIM2_UNROLL),
+      "DATA_PER_WORD must be bigger or equal to DIM2_UNROLL * DIM1_UNROLL");
+  static_assert(TOTAL_ELEMS % (DIM1_UNROLL * DIM2_UNROLL) == 0,
+                "Total elements must be divisible by input parallelism");
+  static_assert(DIM1_UNROLL == 1 || DIM2 == DIM2_UNROLL,
+                "DIM2 must be equal to DIM2_UNROLL when DIM1_UNROLL > 1");
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM1 % DIM1_UNROLL == 0,
+                "DIM1 must be a multiple of DIM1_UNROLL");
 
   struct StepState {
     // Circular buffer to hold output data for processing.
@@ -79,6 +92,7 @@ class StreamToNHWC {
 
     // Loop iteration index for the input word.
     size_t i_input_word = 0;
+    size_t i_output_word = 0;
     ActorStatus actor_status{1, 1};
     PipelineDelayBuffer<TOutputWord> delayed_output;
     bool initialized = false;
@@ -99,24 +113,24 @@ class StreamToNHWC {
   }
 
 public:
-
-  StreamToNHWC() = default;
+  StreamToAXI() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+  void run(hls::stream<TInputWord> input_data_stream[DIM1_UNROLL],
            hls::stream<TOutputWord> &output_data_stream) {
     TInput circular_buffer[DATA_PER_WORD * 2];
     ap_uint<bits_for(DATA_PER_WORD * 2)> head = 0;
     ap_uint<1> tail = 0;
     ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> size = 0;
+    size_t i_output_word = 0;
 
     // Loop through the input height and width.
   STREAM_TO_NHWC_MAINLOOP:
     for (size_t i_input_word = 0; i_input_word < ITER; i_input_word++) {
 #pragma HLS pipeline II = 1
-      StreamToNHWC::pipeline_body(input_data_stream, output_data_stream,
+      StreamToAXI::pipeline_body(input_data_stream, output_data_stream,
                                   circular_buffer, head, size, tail,
-                                  i_input_word);
+                                  i_input_word, i_output_word);
     }
   }
 
@@ -125,7 +139,7 @@ public:
     st.init(pipeline_depth);
   }
 
-  ActorStatus step(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
+  ActorStatus step(hls::stream<TInputWord> input_data_stream[DIM1_UNROLL],
                    hls::stream<TOutputWord> &output_data_stream) {
 
     // Find the state for this instance.
@@ -137,8 +151,8 @@ public:
     // Compute firing condition.
     bool firing_condition = true;
     if (st.i_input_word < READS) {
-      for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-        if (input_data_stream[i_w_par].empty()) {
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        if (input_data_stream[i_dim1_par].empty()) {
           firing_condition = false;
         }
       }
@@ -146,12 +160,13 @@ public:
 
     if (firing_condition) {
       hls::stream<TOutputWord> instant_output_stream;
-      StreamToNHWC::pipeline_body(input_data_stream, instant_output_stream,
+      StreamToAXI::pipeline_body(input_data_stream, instant_output_stream,
                                   st.circular_buffer, st.head, st.size, st.tail,
-                                  st.i_input_word);
+                                  st.i_input_word, st.i_output_word);
       st.i_input_word++;
       if (st.i_input_word >= ITER) {
         st.i_input_word = 0;
+        st.i_output_word = 0;
       }
 
       st.actor_status.fire(); // Fire the actor status.
@@ -182,57 +197,58 @@ public:
   }
 
 private:
-
-  static void pipeline_body(hls::stream<TInputWord> input_data_stream[IN_W_PAR],
-                            hls::stream<TOutputWord> &output_data_stream,
-                            TInput circular_buffer[DATA_PER_WORD * 2],
-                            ap_uint<bits_for(DATA_PER_WORD * 2)> &head,
-                            ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> &size,
-                            ap_uint<1> &tail_bank,
-                            size_t i_input_word) {
+  static void
+  pipeline_body(hls::stream<TInputWord> input_data_stream[DIM1_UNROLL],
+                hls::stream<TOutputWord> &output_data_stream,
+                TInput circular_buffer[DATA_PER_WORD * 2],
+                ap_uint<bits_for(DATA_PER_WORD * 2)> &head,
+                ap_uint<bits_for((DATA_PER_WORD * 2) + 1)> &size,
+                ap_uint<1> &tail_bank, size_t i_input_word,
+                size_t &i_output_word) {
 #pragma HLS inline
     Quantizer quantizer; // Quantizer instance for quantization.
 
     // Loop through the pixels processed in parallel.
     const bool end_of_tensor = (i_input_word >= READS);
     if (!end_of_tensor) {
-      for (size_t i_w_par = 0; i_w_par < IN_W_PAR; i_w_par++) {
-        TInputWord s_input_struct = input_data_stream[i_w_par].read();
-        for (size_t i_och_par = 0; i_och_par < IN_CH_PAR; i_och_par++) {
-          circular_buffer[head] = s_input_struct[i_och_par];
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        TInputWord s_input_struct = input_data_stream[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+          circular_buffer[head] = s_input_struct[i_dim2_par];
           head = (head + 1) % (DATA_PER_WORD * 2);
         }
       }
-      size += IN_W_PAR * IN_CH_PAR;
+      size += DIM1_UNROLL * DIM2_UNROLL;
     }
 
-    // Check if we have enough data to form an output word or if we are at the
-    // end of the tensor.
-    if (size >= DATA_PER_WORD || end_of_tensor) {
-      ap_uint<bits_for(DATA_PER_WORD * 2)> tail =
-          tail_bank ? DATA_PER_WORD : 0;
+    // Check if we have enough data to form an output word or a final partial
+    // word after all input data has been consumed.
+    if (size >= DATA_PER_WORD || (end_of_tensor && size > 0)) {
+      ap_uint<bits_for(DATA_PER_WORD * 2)> tail = tail_bank ? DATA_PER_WORD : 0;
 
       // If we have enough data to form an output word, proceed with packing.
       TOutputWord output_data;
       for (size_t i = 0; i < DATA_PER_WORD; i++) {
-        output_data.data.range((i + 1) * TInput::width - 1,
-                               i * TInput::width) =
-            quantizer(circular_buffer[tail + i]);
+        output_data.data.range((i + 1) * data_width_v<TInput> - 1, i * data_width_v<TInput>) =
+            get_raw_bits(quantizer(circular_buffer[tail + i]));
       }
 
-      if (end_of_tensor) {
-        size_t valid_bytes = size * TInput::width / 8;
-        output_data.keep = (1 << valid_bytes) - 1;
-        // tail_bank = 0; // Reset the tail bank at the end of the tensor.
-        // size = 0; // Reset the size at the end of the tensor.
-        // head = 0; // Reset the head at the end of the tensor.
+      const bool last_word = (i_output_word == OUTPUT_WORDS - 1);
+      if (last_word) {
         output_data.last = true;
+        output_data.keep = 0;
+        for (size_t i = 0; i < LAST_WORD_BYTES; i++) {
+#pragma HLS unroll
+          output_data.keep[i] = 1;
+        }
       } else {
-        tail_bank ^= ap_uint<1>(1);
-        size -= DATA_PER_WORD;
         output_data.last = false;
         output_data.keep = ~0; // Set all bytes as valid.
       }
+
+      tail_bank ^= ap_uint<1>(1);
+      size -= last_word ? LAST_WORD_ELEMS : DATA_PER_WORD;
+      i_output_word++;
 
       output_data.strb = output_data.keep;
       output_data_stream.write(output_data);

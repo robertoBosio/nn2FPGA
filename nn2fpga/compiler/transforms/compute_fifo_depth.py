@@ -1,87 +1,26 @@
-from copy import deepcopy
 import re
-from onnx import TensorProto, helper, StringStringEntryProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.custom_op.registry import getCustomOp
 from nn2fpga.compiler.core.tensor_fifo import (
-    TensorFifo,
     get_custom_tensor_fifo_metadata,
     set_custom_tensor_fifo_metadata,
 )
-from nn2fpga.compiler.core.hls_schedule_parser import VitisHlsReportParser
-from nn2fpga.compiler.core.tensor_quant import TensorQuant, set_custom_tensor_datatype
-from qonnx.util.basic import qonnx_make_model
-from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_object, cpp_variable, NewCodeWriter
+from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
 from nn2fpga.compiler.utils.board_util import read_board_info
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
-from nn2fpga.compiler.transforms.embed_hls_code import EmbedHLSCode
-from nn2fpga.compiler.transforms.generate_bitstream import GenerateBitstream
 import os
 import json
 import subprocess
 import logging
 logger = logging.getLogger(__name__)
 
-def analyze_memory_occupation(model: ModelWrapper):
-    """Analyze the memory occupation of each stream in the model."""
-    def from_hls_type_to_dtype_size(hls_type: str) -> int:
-        """
-        Parse an HLS type string and return its total size in bits.
-
-        Supported examples:
-            ap_int<16>
-            ap_uint<32>
-            float
-            double
-            std::array<ap_uint<8>, 4>
-            std::array<std::array<ap_uint<8>, 4>, 2>
-        """
-
-        hls_type = hls_type.strip()
-
-        # Handle std::array<T, N>
-        array_match = re.match(r"std::array\s*<(.+),\s*(\d+)\s*>", hls_type)
-        if array_match:
-            element_type = array_match.group(1).strip()
-            array_size = int(array_match.group(2))
-            element_bits = from_hls_type_to_dtype_size(element_type)
-            return element_bits * array_size
-
-        # Handle ap_int<N> or ap_uint<N>
-        ap_match = re.match(r"(ap_int|ap_uint)\s*<\s*(\d+)\s*>", hls_type)
-        if ap_match:
-            return int(ap_match.group(2))
-
-        # Handle float and double
-        if hls_type == "float":
-            return 32
-        if hls_type == "double":
-            return 64
-
-        raise ValueError(f"Unsupported HLS type: {hls_type}")
-
-    stream_occupations = {}
-    tot_bits = 0
-    for fifo in model.graph.value_info:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
-        if tensor_fifo is not None:
-            stream_occupations[fifo.name] = tensor_fifo.depth * (from_hls_type_to_dtype_size(tensor_fifo.hls_type))
-            tot_bits += stream_occupations[fifo.name]
-    
-    stream_occupations = dict(sorted(stream_occupations.items(), key=lambda item: item[1], reverse=True))
-    logger.info(f"Total memory occupation: {tot_bits} bits, {tot_bits / (1024 * 1024 * 8):.2f} MBs")
-    logger.info("Memory occupation of the 10 largest streams:")
-    for stream_name, occupation in list(stream_occupations.items())[:10]:
-        logger.info(f"{stream_name}: {occupation} bits, {occupation * 100 / tot_bits:.2f}% of total")
-
 def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     """ Generate the HLS code to execute the model in fifo-depth mode. """
 
     # Retrieve model II
     model_II = int(model.get_metadata_prop("model_II"))
-    ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
-    constant_inputs = [value['new_name'] for value in ap.input_map.values() if value['value'] is not None]
+    num_objects = 0
 
     cwr = NewCodeWriter()
     cwr.add_autogen_comment()
@@ -121,6 +60,11 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     stream_vars = []
     stream_count = len(model.graph.value_info)
     for fifo in model.graph.value_info:
+        
+        # Checks that the fifo name does not start with a digit, as Vitis HLS
+        # does not allow it in the variable name.
+        if re.match(r"^\d", fifo.name):
+            raise ValueError(f"Stream name {fifo.name} cannot start with a digit.")
 
         # Declare the array of streams only for the first stream of the array.
         if fifo.name.endswith("_0_"):
@@ -148,50 +92,18 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
             size = tensor_fifo.depth
             size = max(size, 1)
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
+        elif "StreamingCircularLineBuffer" in custom_op.get_nodeattr("original_op_type"):
+            output_depths = []
+            for output in node.output:
+                tensor_fifo = get_custom_tensor_fifo_metadata(model, output)
+                if tensor_fifo is not None:
+                    output_depths.append(tensor_fifo.depth)
+            size = max(output_depths) if output_depths else 1
+            size = max(size, 1)
+            function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')}, {size});")
         else:
             function.add_code(f"{custom_op.get_nodeattr('hls_object_name')}.step_init({custom_op.get_nodeattr('pipeline_stages')});")
-
-    # Declare the output streams.
-    consumers_step_calls = []
-    for output in model.graph.output:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, output.name)
-        func = cpp_object(
-            class_name="InfiniteThroughputDMA",
-            obj_name=f"InfiniteThroughputDMA_{output.name}",
-            template_args=[tensor_fifo.hls_type],
-            constructor_args=[tensor_fifo.n_array],
-        )
-        function.add_code(func.generate_declaration())
-        consumers_step_calls.append(
-            f"InfiniteThroughputDMA_{output.name}.step({output.name});"
-        )
-        var = cpp_variable(
-            output.name,
-            f"hls::stream<{tensor_fifo.hls_type}>",
-        )
-        stream_vars.append((var, False))
-
-    producers_step_calls = []
-    for input in model.graph.input:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, input.name)
-        var = cpp_variable(
-            input.name,
-            f"hls::stream<{tensor_fifo.hls_type}>",
-        )
-        stream_vars.append((var, False))
-        if input.name in constant_inputs:
-            continue
-
-        func = cpp_object(
-            class_name="FixedThroughputDMA",
-            obj_name=f"FixedThroughputDMA_{input.name}",
-            template_args=[tensor_fifo.hls_type],
-            constructor_args=[tensor_fifo.n_array, model_II]
-        )
-        function.add_code(func.generate_declaration())
-        producers_step_calls.append(
-            f"FixedThroughputDMA_{input.name}.step({input.name});"
-        )
+        num_objects += 1
 
     # Declare all the internal streams.
     for stream, _ in stream_vars:
@@ -212,11 +124,8 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("CSDFGState current_state;")
 
     # Allocating correct size for the actor statuses.
-    num_consumers = len(consumers_step_calls)
-    num_producers = len(producers_step_calls)
-    num_actors = num_consumers + num_producers
     function.add_code("std::vector<ActorStatus> actor_statuses;")
-    function.add_code(f"actor_statuses.reserve({num_actors});")
+    function.add_code(f"actor_statuses.reserve({num_objects});")
 
     # Allocating correct size for the channel quantities.
     num_channels = sum([stream.array if stream.array is not None else 1 for stream, _ in stream_vars])
@@ -229,20 +138,11 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("ActorStatus actor_status;")
     function.add_code("actor_statuses.clear();")
     function.add_code("channel_quantities.clear();")
-
-    for step_call in consumers_step_calls:
-        function.add_code(f"actor_status = {step_call}")
-        function.add_code("actor_statuses.push_back(actor_status);")
-
+    
     # Execute a step for each node in the model in reverse order.
     # It must be done in reverse order to ensure that nodes cannot immediately consume the data produced by the previous node.
     for node in reversed(model.graph.node):
         function.add_code(f"actor_status = {getCustomOp(node).get_nodeattr('hls_step_call')};")
-        function.add_code("actor_statuses.push_back(actor_status);")
-
-    # Execute a step for each input producer.
-    for step_call in producers_step_calls:
-        function.add_code(f"actor_status = {step_call}")
         function.add_code("actor_statuses.push_back(actor_status);")
 
     # Update the fifo max size for each stream.
@@ -391,137 +291,6 @@ def generate_tcl_script(top_name, part_name, frequency, hls_version):
 
     return "\n".join(lines).format(top_name=top_name, part_name=part_name, t_clk=t_clk)
 
-def generate_schedule(model: ModelWrapper, work_root: str):
-
-    # Create a dummy model with only the nn2FPGAPartition node, to generate the schedule.
-    ap = AcceleratorPackage.from_json(model.get_metadata_prop("accelerator_package"))
-    inputs = []
-    outputs = []
-    inputs_names = []
-    outputs_names = []
-    for k, v in [(k, v) for k, v in ap.input_map.items() if v["value"] is None]:
-        inputs.append(helper.make_tensor_value_info(k, TensorProto.FLOAT, v["shape"]))
-        inputs_names.append(k)
-        logger.info(f"Creating value info for input {k} with shape {v['shape']}")
-    for k, v in [(k, v) for k, v in ap.output_map.items() if v["value"] is None]:
-        outputs.append(helper.make_tensor_value_info(k, TensorProto.FLOAT, v["shape"]))
-        outputs_names.append(k)
-        logger.info(f"Creating value info for output {k} with shape {v['shape']}")
-
-    nn2FPGA_node_copy = helper.make_node(
-        "nn2fpgaPartition",
-        inputs=inputs_names,
-        outputs=outputs_names,
-        name="nn2fpgaPartition_0",
-        domain="nn2fpga.compiler.custom_op",
-    )
-
-    graph = helper.make_graph(
-        nodes=[nn2FPGA_node_copy],
-        name="schedule_graph",
-        inputs=inputs,
-        outputs=outputs,
-    )
-
-    schedule_model = qonnx_make_model(graph)
-    schedule_model = ModelWrapper(schedule_model)
-
-    # Build index of existing keys in dst
-    dst_idx = {}
-    for p in model.model.metadata_props:
-        if p.key in dst_idx:
-            schedule_model.model.metadata_props[dst_idx[p.key]].value = p.value
-        else:
-            kv = StringStringEntryProto()
-            kv.key = p.key
-            kv.value = p.value
-            schedule_model.model.metadata_props.append(kv)
-
-    for input in schedule_model.graph.input:
-        tensor_quant = TensorQuant.from_canonical_name(ap.input_map[input.name]["quant"])
-        set_custom_tensor_datatype(schedule_model, input.name, tensor_quant)
-    for output in schedule_model.graph.output:
-        tensor_quant = TensorQuant.from_canonical_name(ap.output_map[output.name]["quant"])
-        set_custom_tensor_datatype(schedule_model, output.name, tensor_quant)
-
-    schedule_model = schedule_model.transform(EmbedHLSCode(nn2fpga_model=model, erase=False, work_root=work_root))
-    schedule_model = schedule_model.transform(GenerateBitstream(work_dir=work_root, erase=False, only_synthesize=True))
-    
-    # Extract the scheduling information from the HLS report for each node in the original model.
-    for node in model.graph.node:
-        custom_op = getCustomOp(node)
-        hls_tag = custom_op.get_nodeattr("hls_tag")
-        if float(model.get_metadata_prop("hls_version")) > 2025:
-            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/hls/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
-        else:
-            scheduling_report_file = os.path.join(work_root, f"vivado/hlsproj/solution0/.autopilot/db/run_{hls_tag}ul_s.verbose.sched.rpt")
-        if not os.path.exists(scheduling_report_file):
-            logger.warning(f"Scheduling report file not found for node {node.name}. Skipping depth adjustment.")
-            read_skew = 0
-            write_skew = 0
-            pipeline_stages = 1
-
-        else:
-            scheduling_parser = VitisHlsReportParser(scheduling_report_file)
-            if not scheduling_parser.single_loop_function:
-                logger.info(f"Node {node.name} is not single loop pipelined.")
-                read_skew = 0
-                write_skew = 0
-                pipeline_stages = 1
-                custom_op.set_nodeattr("read_skew", read_skew)
-                custom_op.set_nodeattr("write_skew", write_skew)
-                custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
-                continue
-
-            read_skew = 0
-            write_skew = 0
-            max_read_state = 0
-            min_read_state = scheduling_parser.pipeline_depth + 1
-            max_write_state = 0
-            min_write_state = scheduling_parser.pipeline_depth + 1
-            write_op = False
-            read_op = False
-            for op in scheduling_parser.fifo_ops:
-                sequential_state = scheduling_parser.pipeline_states.index(op["state"])
-                if op["op_type"] == "read":
-                    max_read_state = max(max_read_state, sequential_state)
-                    min_read_state = min(min_read_state, sequential_state)
-                    read_op = True
-                elif op["op_type"] == "write":
-                    max_write_state = max(max_write_state, sequential_state)
-                    min_write_state = min(min_write_state, sequential_state)
-                    write_op = True
-            read_skew = max_read_state - min_read_state if read_op else 0
-            write_skew = max_write_state - min_write_state if write_op else 0
-
-            # Vitis HLS is able to optimize concurrent processes inside a single function.
-            # Therefore, a state of the FSM is not monolithic, but can contain multiple unrelated processes.
-            # This means that there could be an actual skew between read and write operations that are scheduled in the same state.
-            # This could happen only to processes that can be logically divided into independent parts, such as
-            # StreamingPad where each stream is indipendent from the others.
-            if custom_op.get_nodeattr("original_op_type") in [
-                "StreamingPad",
-                "StreamingAdd",
-                "BandwidthAdjustIncreaseStreams",
-                "BandwidthAdjustDecreaseStreams",
-                "TensorDuplicator",
-            ]:
-                if read_op:
-                    read_skew += 1
-                if write_op:
-                    write_skew += 1
-                logger.info(f"Node {node.name} is a {custom_op.get_nodeattr('original_op_type')} with possible independent processes. Incrementing read_skew to {read_skew} and write_skew to {write_skew}.")
-            if write_op and read_op:
-                pipeline_stages = max_write_state - min_read_state + 1
-            else:
-                pipeline_stages = 1
-            if pipeline_stages < 1:
-                logger.error(f"Node {node.name} has invalid pipeline stages: {pipeline_stages} because {max_write_state} - {min_read_state} + 1 < 1. Setting to 1.")
-
-        custom_op.set_nodeattr("read_skew", read_skew)
-        custom_op.set_nodeattr("write_skew", write_skew)
-        custom_op.set_nodeattr("pipeline_stages", pipeline_stages)
-
 def adjust_depth_based_on_scheduling(model: ModelWrapper, fifo_depths: dict, work_root: str) -> dict:
     """Adjust the FIFO depth based on the scheduling information."""
 
@@ -565,9 +334,6 @@ class ComputeFifoDepth(Transformation):
 
             # Create the working directory for the simulation.
             make_build_dir(self.work_root)
-
-            # Schedule the model to retrieve information about the pipelines.
-            generate_schedule(model, self.work_root)
 
             with open(os.path.join(self.work_root, "fifo_depth.cpp"), "w") as f:
                 f.write(generate_hls_code(model, self.work_root))
@@ -647,16 +413,14 @@ class ComputeFifoDepth(Transformation):
                     continue
                 f.write(f"{stream_name},{current_meta.depth}\n")
 
-        analyze_memory_occupation(model)
-
         # Optionally erase the working directory.
         if self.erase:
-            logger.info(f"Erasing working directory {self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')} to save space.")
+            logger.info(f"Erasing working directory {self.work_root}/proj_{model.get_metadata_prop('top_name')} to save space.")
             subprocess.run(
                 [
                     "rm",
                     "-rf",
-                    f"{self.work_root}/depth-sim/proj_{model.get_metadata_prop('top_name')}",
+                    f"{self.work_root}/proj_{model.get_metadata_prop('top_name')}",
                 ],
                 check=True,
             )

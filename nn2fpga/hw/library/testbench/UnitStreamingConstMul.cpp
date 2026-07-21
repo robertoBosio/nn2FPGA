@@ -18,8 +18,8 @@ void wrap_run(hls::stream<TInputWordA> i_data0[test_config::W_PAR],
               hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
   StreamingConstMul<TInputWordA, test_config::TInputA,
                test_config::TInputB, TOutputWord, test_config::TOutput,
-               test_config::TMul, test_config::Activation,
-               test_config::Quantizer, test_config::IN_HEIGHT,
+               test_config::TMul, test_config::OutputTransform,
+               test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
                test_config::CH_PAR>
       mul;
@@ -105,8 +105,8 @@ bool test_step() {
   hls::stream<TOutputWord> o_data[test_config::W_PAR];
   StreamingConstMul<TInputWordA, test_config::TInputA,
                test_config::TInputB, TOutputWord, test_config::TOutput,
-               test_config::TMul, test_config::Activation,
-               test_config::Quantizer, test_config::IN_HEIGHT,
+               test_config::TMul, test_config::OutputTransform,
+               test_config::IN_HEIGHT,
                test_config::IN_WIDTH, test_config::IN_CH, test_config::W_PAR,
                test_config::CH_PAR>
       mul;

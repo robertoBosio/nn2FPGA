@@ -10,18 +10,20 @@
 #include <iostream>
 #include <unordered_map>
 
-using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
-using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
+using TInputWord =
+    std::array<test_config::TInput, test_config::REDUCTION_UNROLL>;
+using TOutputWord =
+    std::array<test_config::TOutput, test_config::REDUCTION_UNROLL>;
 
-void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
+void wrap_run(hls::stream<TInputWord> i_data[test_config::LANE_UNROLL],
               const test_config::TLUT LUTmem[test_config::LUT_SIZE],
-              hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
+              hls::stream<TOutputWord> o_data[test_config::LANE_UNROLL]) {
   StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
-                   test_config::LUT_SIZE,
-                   test_config::IN_HEIGHT * test_config::IN_WIDTH,
-                   test_config::IN_CH, test_config::W_PAR, test_config::CH_PAR>
+                   test_config::LUT_SIZE, test_config::DIM0 * test_config::DIM1,
+                   test_config::DIM2, test_config::LANE_UNROLL,
+                   test_config::REDUCTION_UNROLL>
       streaming_softmax;
   streaming_softmax.run<0>(i_data, LUTmem, o_data);
 }
@@ -29,21 +31,25 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::W_PAR],
 bool test_run() {
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::W_PAR];
-  hls::stream<TOutputWord> out_stream[test_config::W_PAR];
+  hls::stream<TInputWord> in_stream[test_config::LANE_UNROLL];
+  hls::stream<TOutputWord> out_stream[test_config::LANE_UNROLL];
 
   // Fill input streams with test data
-  for (size_t i_h = 0; i_h < test_config::IN_HEIGHT; i_h++) {
-    for (size_t i_w = 0; i_w < test_config::IN_WIDTH;
-         i_w += test_config::W_PAR) {
-      for (size_t ch = 0; ch < test_config::IN_CH; ch += test_config::CH_PAR) {
-        for (size_t w_par = 0; w_par < test_config::W_PAR; w_par++) {
+  for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < test_config::DIM1;
+         i_dim1 += test_config::LANE_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+           i_dim2 += test_config::REDUCTION_UNROLL) {
+        for (size_t i_dim1_par = 0; i_dim1_par < test_config::LANE_UNROLL;
+             i_dim1_par++) {
           TInputWord input_word;
-          for (size_t ch_par = 0; ch_par < test_config::CH_PAR; ch_par++) {
-            input_word[ch_par] = test_config::input_tensor[0][ch + ch_par][i_h][
-                i_w + w_par];
+          for (size_t i_dim2_par = 0;
+               i_dim2_par < test_config::REDUCTION_UNROLL; i_dim2_par++) {
+            input_word[i_dim2_par] =
+                test_config::input_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                         [i_dim1 + i_dim1_par];
           }
-          in_stream[w_par].write(input_word);
+          in_stream[i_dim1_par].write(input_word);
         }
       }
     }
@@ -54,23 +60,29 @@ bool test_run() {
 
   // Check output
   bool flag = true;
-  for (size_t i_h = 0; i_h < test_config::IN_HEIGHT; i_h++) {
-    for (size_t i_w = 0; i_w < test_config::IN_WIDTH;
-         i_w += test_config::W_PAR) {
-      for (size_t ch = 0; ch < test_config::IN_CH; ch += test_config::CH_PAR) {
-        for (size_t w_par = 0; w_par < test_config::W_PAR; w_par++) {
-          TOutputWord output_word = out_stream[w_par].read();
-          for (size_t ch_par = 0; ch_par < test_config::CH_PAR; ch_par++) {
-            bool cmp = abs(output_word[ch_par] - test_config::output_tensor[0]
-                                                     [ch + ch_par][i_h]
-                                                     [i_w + w_par]) < 2;
+  for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < test_config::DIM1;
+         i_dim1 += test_config::LANE_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+           i_dim2 += test_config::REDUCTION_UNROLL) {
+        for (size_t i_dim1_par = 0; i_dim1_par < test_config::LANE_UNROLL;
+             i_dim1_par++) {
+          TOutputWord output_word = out_stream[i_dim1_par].read();
+          for (size_t i_dim2_par = 0;
+               i_dim2_par < test_config::REDUCTION_UNROLL; i_dim2_par++) {
+            bool cmp =
+                abs(output_word[i_dim2_par] -
+                    test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                              [i_dim1 + i_dim1_par]) < 2;
             if (!cmp) {
-              std::cout << "Mismatch at index (i_h=" << i_h
-                        << ", i_w=" << i_w + w_par << ", ch=" << ch + ch_par
-                        << "): " << output_word[ch_par] << " != "
-                        << test_config::output_tensor[0][ch + ch_par][i_h]
-                                                     [i_w + w_par]
-                        << std::endl;
+              std::cout
+                  << "Mismatch at index (i_dim0=" << i_dim0
+                  << ", i_dim1=" << i_dim1 + i_dim1_par
+                  << ", i_dim2=" << i_dim2 + i_dim2_par
+                  << "): " << output_word[i_dim2_par] << " != "
+                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                               [i_dim1 + i_dim1_par]
+                  << std::endl;
             }
             flag &= cmp;
           }
@@ -78,7 +90,8 @@ bool test_run() {
       }
     }
   }
-  std::cout << "Output comparison " << (flag ? "passed" : "failed") << std::endl;
+  std::cout << "Output comparison " << (flag ? "passed" : "failed")
+            << std::endl;
 
   return flag;
 }
@@ -86,19 +99,19 @@ bool test_run() {
 bool test_step() {
 
   static constexpr size_t expectedII =
-      test_config::IN_HEIGHT * test_config::IN_WIDTH * test_config::IN_CH * 3 /
-      (test_config::W_PAR * test_config::CH_PAR);
+      test_config::DIM0 * test_config::DIM1 * test_config::DIM2 * 3 /
+      (test_config::LANE_UNROLL * test_config::REDUCTION_UNROLL);
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::W_PAR];
-  hls::stream<TOutputWord> out_stream[test_config::W_PAR];
+  hls::stream<TInputWord> in_stream[test_config::LANE_UNROLL];
+  hls::stream<TOutputWord> out_stream[test_config::LANE_UNROLL];
 
   StreamingSoftmax<TInputWord, test_config::TInput, TOutputWord,
                    test_config::TOutput, test_config::TLUT, test_config::TAcc,
                    test_config::TDiv, test_config::Quantizer,
-                   test_config::LUT_SIZE,
-                   test_config::IN_HEIGHT * test_config::IN_WIDTH,
-                   test_config::IN_CH, test_config::CH_PAR, test_config::W_PAR>
+                   test_config::LUT_SIZE, test_config::DIM0 * test_config::DIM1,
+                   test_config::DIM2, test_config::REDUCTION_UNROLL,
+                   test_config::LANE_UNROLL>
       streaming_softmax;
   streaming_softmax.step_init(test_config::PIPELINE_DEPTH);
   std::unordered_map<CSDFGState, size_t, CSDFGStateHasher> visited_states;
@@ -107,12 +120,14 @@ bool test_step() {
   size_t II = 0;
   while (true) {
     // Provide dummy input data to keep the pipeline busy
-    for (size_t i_w_par = 0; i_w_par < test_config::W_PAR; i_w_par++) {
+    for (size_t i_dim1_par = 0; i_dim1_par < test_config::LANE_UNROLL;
+         i_dim1_par++) {
       TInputWord input_struct;
-      for (size_t ch_par = 0; ch_par < test_config::CH_PAR; ch_par++) {
-        input_struct[ch_par] = 0; // Dummy data
+      for (size_t i_dim2_par = 0; i_dim2_par < test_config::REDUCTION_UNROLL;
+           i_dim2_par++) {
+        input_struct[i_dim2_par] = 0; // Dummy data
       }
-      in_stream[i_w_par].write(input_struct);
+      in_stream[i_dim1_par].write(input_struct);
     }
 
     ActorStatus actor_status =
@@ -134,9 +149,10 @@ bool test_step() {
   }
 
   // Flush the output stream.
-  for (size_t w_par = 0; w_par < test_config::W_PAR; w_par++) {
+  for (size_t i_dim1_par = 0; i_dim1_par < test_config::LANE_UNROLL;
+       i_dim1_par++) {
     TOutputWord output_struct;
-    while (out_stream[w_par].read_nb(output_struct))
+    while (out_stream[i_dim1_par].read_nb(output_struct))
       ;
   }
 

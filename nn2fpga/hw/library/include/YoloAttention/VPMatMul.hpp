@@ -17,7 +17,6 @@ class VPMatMul {
     // Loop iteration indexes.
     size_t i_vrow = 0, i_heads = 0, i_pcol = 0, i_group_reduce = 0;
 
-    TVInputWord v_matrix[DIM_HEADS][DIM_V][DIM_SEQ / REDUCE_PAR];
     TPInputWord p_row[DIM_SEQ / REDUCE_PAR];
     TAcc acc;
     PipelineDelayBuffer<TOutputWord> delayed_output;
@@ -58,19 +57,18 @@ public:
 
     // Compute firing condition.
     bool firing_condition = true;
+    if (i_data_v[st.i_heads].empty()) {
+      firing_condition = false;
+    }
     if (st.i_vrow == 0) {
       if (i_data_p[st.i_heads].empty()) {
         firing_condition = false;
       }
     }
 
-    if (st.i_pcol == 0) {
-      if (i_data_v[st.i_heads].empty()) {
-        firing_condition = false;
-      }
-    }
-
     if (firing_condition) {
+
+      const size_t current_head = st.i_heads;
 
       if (st.i_group_reduce == 0) {
         st.acc = 0;
@@ -78,18 +76,18 @@ public:
 
       // If there is data in the input stream, process it.
       hls::stream<TOutputWord> instant_output_stream[DIM_HEADS];
-      VPMatMul::pipeline_body(
-          i_data_v[st.i_heads], i_data_p[st.i_heads], instant_output_stream[st.i_heads],
-          st.i_pcol, st.i_vrow, st.i_group_reduce, st.acc,
-          st.v_matrix[st.i_heads][st.i_vrow][st.i_group_reduce],
-          st.p_row[st.i_group_reduce]);
+      VPMatMul::pipeline_body(i_data_v[current_head], i_data_p[current_head],
+                              instant_output_stream[current_head], st.i_vrow,
+                              st.i_group_reduce, st.acc,
+                              st.p_row[st.i_group_reduce]);
 
       // Insert new firing status into the multiset.
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      if (!instant_output_stream[st.i_heads].empty()) {
-        st.delayed_output.push(instant_output_stream[st.i_heads].read(), true);
+      if (!instant_output_stream[current_head].empty()) {
+        st.delayed_output.push(instant_output_stream[current_head].read(),
+                               true);
       } else {
         // If the output stream is empty, push a placeholder.
         st.delayed_output.push(TOutputWord(), false);
@@ -135,8 +133,6 @@ public:
            hls::stream<TPInputWord> i_data_p[DIM_HEADS],
            hls::stream<TOutputWord> o_data_vp[DIM_HEADS]) {
 
-    TVInputWord v_matrix[DIM_HEADS][DIM_V][DIM_SEQ / REDUCE_PAR];
-#pragma HLS array_partition variable = v_matrix complete dim = 4
     TPInputWord p_row[DIM_SEQ / REDUCE_PAR];
 #pragma HLS array_partition variable = p_row complete dim = 2
     TAcc acc;
@@ -149,10 +145,8 @@ public:
 #pragma HLS loop_flatten
 #pragma HLS PIPELINE II = 1
             VPMatMul::pipeline_body(i_data_v[i_heads], i_data_p[i_heads],
-                                    o_data_vp[i_heads], i_pcol, i_vrow,
-                                    i_group_reduce, acc,
-                                    v_matrix[i_heads][i_vrow][i_group_reduce],
-                                    p_row[i_group_reduce]);
+                                    o_data_vp[i_heads], i_vrow, i_group_reduce,
+                                    acc, p_row[i_group_reduce]);
           }
         }
       }
@@ -162,15 +156,13 @@ public:
 private:
   static void pipeline_body(hls::stream<TVInputWord> &i_data_v,
                             hls::stream<TPInputWord> &i_data_p,
-                            hls::stream<TOutputWord> &o_data_vp, size_t i_pcol,
-                            size_t i_vrow, size_t i_group_reduce, TAcc &acc,
-                            TVInputWord &v_matrix, TPInputWord &p_row) {
+                            hls::stream<TOutputWord> &o_data_vp, size_t i_vrow,
+                            size_t i_group_reduce, TAcc &acc,
+                            TPInputWord &p_row) {
 #pragma HLS inline
     Quantizer quantizer;
 
-    if (i_pcol == 0) {
-      v_matrix = i_data_v.read();
-    }
+    TVInputWord v_word = i_data_v.read();
     if (i_vrow == 0) {
       p_row = i_data_p.read();
     }
@@ -178,7 +170,6 @@ private:
       acc = 0;
     }
 
-    TVInputWord v_word = v_matrix;
     TPInputWord p_word = p_row;
     for (size_t i_reduce = 0; i_reduce < REDUCE_PAR; i_reduce++) {
       TVInput v_i = (TVInput)v_word[i_reduce];

@@ -1,10 +1,10 @@
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
-from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
@@ -12,12 +12,8 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_stream_type,
-    get_hls_quant_type,
+    get_word_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
-from nn2fpga.compiler.utils.par_utils import get_par_attributes
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules, PRule
 from onnxscript import ir
 from onnx_ir import convenience as ir_convenience
@@ -124,8 +120,8 @@ class StreamingSwish(NN2FPGAOp):
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
 
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -198,7 +194,7 @@ class StreamingSwish(NN2FPGAOp):
         """
 
         nbits = input_quant.bitwidth
-        sigmoid_quant = TensorQuant(
+        sigmoid_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[1]),
             zeropt=model.get_initializer(self.onnx_node.input[2]),
             bitwidth=model.get_initializer(self.onnx_node.input[3]),
@@ -358,7 +354,7 @@ class StreamingSwish(NN2FPGAOp):
 
         lut_variable = cpp_variable(
             name=f"{self.onnx_node.name}_lut",
-            primitive=f"{get_hls_quant_type(output_quant)}",
+            primitive=f"{output_quant.get_hls_data_type()}",
             value=lut_values,
         )
 
@@ -366,19 +362,10 @@ class StreamingSwish(NN2FPGAOp):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quant is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
-
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         lut_size = 1 << input_quant.bitwidth
         StreamingSigmoid = cpp_object(
@@ -386,27 +373,27 @@ class StreamingSwish(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quant)}",
+                    f"{input_quant.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (f"{lut_size}", "LUT_SIZE"),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
+                (f"{input_shape[-3]}", "DIM0"),
+                (f"{input_shape[-2]}", "DIM1"),
+                (f"{input_shape[-1]}", "DIM2"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -467,20 +454,21 @@ class StreamingSwish(NN2FPGAOp):
             f"{self.onnx_node.name}_lut",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingSwish is layout-agnostic, so it accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingSwish is layout-agnostic, so it produces the same layout as input. """
+        return input_layout
+
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -496,7 +484,7 @@ class StreamingSwish(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -526,11 +514,9 @@ class StreamingSwish(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
 
-        unroll_factor = self.get_nodeattr("channel_unroll") * self.get_nodeattr("width_unroll")
+        input_shape = self.require_4d_input_shape(model, 0)
+        unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll")
         return np.prod(input_shape) // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -568,5 +554,5 @@ class StreamingSwish(NN2FPGAOp):
         self.set_nodeattr("in_word_array", upstream.out_word_array)
         self.set_nodeattr("out_word_array", upstream.out_word_array)
 
-        self.set_nodeattr("channel_unroll", upstream.out_word_array)
-        self.set_nodeattr("width_unroll", upstream.out_stream_array)
+        self.set_nodeattr("dim2_unroll", upstream.out_word_array)
+        self.set_nodeattr("dim1_unroll", upstream.out_stream_array)

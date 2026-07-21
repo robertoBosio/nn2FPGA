@@ -5,18 +5,13 @@
 #include <iostream>
 
 void wrap_run(test_config::TAcc input, test_config::TOut &output) {
-  DequantQuantPo2<test_config::SHIFT, test_config::TAcc, test_config::TOut>
-      quantizer;
+  test_config::Quantizer quantizer;
   output = quantizer(input);
 }
 
 bool test_run() {
-  DequantQuantPo2<test_config::SHIFT, test_config::TAcc,
-                  test_config::TOut>
-      quantizer;
-
-  test_config::TAcc input = test_config::INPUT;
-  test_config::TOut expected = test_config::EXPECTED;
+  test_config::TAcc input = test_config::input_tensor[0];
+  test_config::TOut expected = test_config::output_tensor[0];
   test_config::TOut output;
   wrap_run(input, output);
 

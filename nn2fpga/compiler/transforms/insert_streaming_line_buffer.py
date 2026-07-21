@@ -4,7 +4,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import get_by_name
 from onnx import helper
 from nn2fpga.compiler.utils.par_utils import get_par_attributes
-from nn2fpga.compiler.core.tensor_quant import (
+from nn2fpga.compiler.core.tensor_type import (
     get_custom_tensor_datatype,
     set_custom_tensor_datatype,
 )
@@ -62,7 +62,7 @@ class InsertStreamingLineBuffer(Transformation):
 
             # Create the StreamingLineBuffer node
             streaming_line_buffer_node = helper.make_node(
-                op_type="StreamingLineBuffer",
+                op_type="StreamingCircularLineBuffer",
                 domain="nn2fpga.compiler.custom_op",
                 inputs=[node.input[0]],
                 outputs=[f"{node.name}_window"],

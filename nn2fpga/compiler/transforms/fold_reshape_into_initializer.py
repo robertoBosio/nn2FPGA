@@ -1,6 +1,6 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import is_constant_input_node
+from nn2fpga.compiler.core.tensor_type import is_constant_input_node
 from nn2fpga.compiler.transforms.remove_squeeze import remove_flatten_reshape
 from onnx import helper, NodeProto
 import numpy as np

@@ -8,10 +8,8 @@ from nn2fpga.compiler.utils.codegen_utils import (
     NewCodeWriter,
     cpp_function,
     cpp_variable,
-    get_hls_quant_type,
-    get_cpp_quant_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 
 SOLUTION_NAME = "solution0"
 PROJECT_NAME = "hlsproj"
@@ -71,8 +69,9 @@ def dump_tcl_script(
             f"create_clock -period {t_clk}",
             "config_compile -pipeline_style flp",
             f'csim_design -argv "{argv}"',
-            f"{csynth_command}" if simulation_type == "cosim" else "",
+            f"{csynth_command}" if simulation_type in ["cosim", "export"] else "",
             f'cosim_design -argv "{argv}"' if simulation_type == "cosim" else "",
+            f'export_design -flow syn' if simulation_type == "export" else "",
             "exit",
         ]
     )
@@ -80,7 +79,7 @@ def dump_tcl_script(
     return "\n".join(lines)
 
 
-def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
+def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidth) -> str:
     """Generate HLS driver code for the given model.
     Args:
         model (ModelWrapper): The model to generate HLS driver code for.
@@ -120,6 +119,22 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
         )
         kernel_function.add_argument(var)
         kernel_arguments.append(output["new_name"])
+    
+    for buffer_name, buffer in buffer_map.items():
+        read_buffer = f"{buffer_name}_read"
+        var = cpp_variable(
+            read_buffer,
+            f"{buffer['hls_type']}*",
+        )
+        kernel_function.add_argument(var)
+        kernel_arguments.append(buffer_name)
+        write_buffer = f"{buffer_name}_write"
+        var = cpp_variable(
+            write_buffer,
+            f"{buffer['hls_type']}*",
+        )        
+        kernel_function.add_argument(var)
+        kernel_arguments.append(buffer_name)
 
     # Add the function prototype, which will be called from the main function.
     cwr.add_function_prototype(kernel_function)
@@ -153,6 +168,9 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
         )
         main_function.add_code(f"{var.generate_declaration()};")
         file_arg_idx += 1
+    
+    for buffer_name, buffer in buffer_map.items():
+        main_function.add_code(f"{buffer['hls_type']} {buffer_name}[{buffer['depth']}];")
 
     # Add read from file calls for input streams
     for value in input_map.values():
@@ -167,15 +185,15 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             ],
         )
 
-        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
 
         main_function.add_code(
             npy_read.generate_call(
                 [
                     f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
-                    get_hls_quant_type(tensor_quant),
-                    get_cpp_quant_type(tensor_quant),
+                    tensor_type.get_hls_data_type(),
+                    tensor_type.get_cpp_quant_type(),
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],
@@ -200,16 +218,16 @@ def generate_hls_driver(top_name, input_map, output_map, axi_bitwidth) -> str:
             ],
         )
 
-        tensor_quant = TensorQuant.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_quant.bitwidth)
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
         shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
 
         main_function.add_code(
             npy_write.generate_call(
                 [
                     f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
-                    get_hls_quant_type(tensor_quant),
-                    get_cpp_quant_type(tensor_quant),
+                    tensor_type.get_hls_data_type(),
+                    tensor_type.get_cpp_quant_type(),
                 ],
                 f"file_{value['new_name']}",
                 value["new_name"],
@@ -288,6 +306,7 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
             top_name=ap.top_name,
             input_map=ap.input_map,
             output_map=ap.output_map,
+            buffer_map=ap.buffer_map,
             axi_bitwidth=int(board_info["axi_bitwidth"]),
         ))
 

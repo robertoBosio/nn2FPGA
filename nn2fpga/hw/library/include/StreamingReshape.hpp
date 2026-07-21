@@ -10,33 +10,36 @@
 #include <unordered_map>
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t W_PAR, size_t CH_PAR>
+          typename TOutput, typename Quantizer, size_t DIM0, size_t DIM1,
+          size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamingReshape {
 public:
-  static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
-  static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
-  static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
-                "IN_HEIGHT and IN_WIDTH must be greater than 0");
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM2_UNROLL > 0, "DIM2_UNROLL must be greater than 0");
+  static_assert(DIM1 % DIM1_UNROLL == 0,
+                "DIM1 must be a multiple of DIM1_UNROLL");
+  static_assert(DIM1_UNROLL > 0, "DIM1_UNROLL must be greater than 0");
+  static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
 
   StreamingReshape() = default;
 
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status =
-          ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
+          ActorStatus(depth, DIM0 * DIM1 * DIM2 / (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -53,20 +56,20 @@ public:
   }
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[W_PAR],
-           hls::stream<TOutputWord> o_data[W_PAR]) {
+  void run(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Loop through the input height and width.
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH / W_PAR; i_hw++) {
+    for (size_t i_dim01 = 0; i_dim01 < DIM0 * DIM1 / DIM1_UNROLL; i_dim01++) {
     STREAMINGRESHAPE_RUN_LOOP:
-      for (size_t i_ch = 0; i_ch < IN_CH / CH_PAR; i_ch++) {
+      for (size_t i_dim2 = 0; i_dim2 < DIM2 / DIM2_UNROLL; i_dim2++) {
 #pragma HLS pipeline II = 1
         StreamingReshape::pipeline_body(i_data, o_data);
       }
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_data[W_PAR],
-                   hls::stream<TOutputWord> o_data[W_PAR]) {
+  ActorStatus step(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -76,7 +79,7 @@ public:
     bool firing_condition = true;
 
     // Check non empty input streams.
-    for (size_t i_in_stream = 0; i_in_stream < W_PAR; i_in_stream++) {
+    for (size_t i_in_stream = 0; i_in_stream < DIM1_UNROLL; i_in_stream++) {
       if (i_data[i_in_stream].empty()) {
         firing_condition = false;
       }
@@ -84,34 +87,34 @@ public:
 
     if (firing_condition) {
 
-      hls::stream<TOutputWord> instant_output_stream[W_PAR];
+      hls::stream<TOutputWord> instant_output_stream[DIM1_UNROLL];
       StreamingReshape::pipeline_body(i_data, instant_output_stream);
 
       st.actor_status.fire();
 
       // Add the output to the delayed output stream.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        st.delayed_output[w_par].push(instant_output_stream[w_par].read(),
-                                      true);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output[i_dim1_par].push(
+            instant_output_stream[i_dim1_par].read(), true);
       }
 
       // Update the counters.
-      st.i_ch++;
-      if (st.i_ch >= IN_CH / CH_PAR) {
+      st.i_dim2++;
+      if (st.i_dim2 >= DIM2 / DIM2_UNROLL) {
         // If we have processed all output channels, reset the index and
         // increment the height/width index.
-        st.i_ch = 0;
-        st.i_hw++;
+        st.i_dim2 = 0;
+        st.i_dim01++;
       }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH / W_PAR) {
-        st.i_hw = 0; // Reset the height/width index if we have processed all
-                     // iterations.
+      if (st.i_dim01 >= DIM0 * DIM1 / DIM1_UNROLL) {
+        st.i_dim01 = 0; // Reset the height/width index if we have processed all
+                        // iterations.
       }
 
     } else {
       // If there is no data in the input stream, push a delay slot.
-      for (size_t i_w_par = 0; i_w_par < W_PAR; ++i_w_par) {
-        st.delayed_output[i_w_par].push(TOutputWord(), false);
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; ++i_dim1_par) {
+        st.delayed_output[i_dim1_par].push(TOutputWord(), false);
       }
     }
 
@@ -120,9 +123,9 @@ public:
 
     // Write the output data to the output stream.
     TOutputWord out;
-    for (size_t i_w_par = 0; i_w_par < W_PAR; i_w_par++) {
-      if (st.delayed_output[i_w_par].pop(out)) {
-        o_data[i_w_par].write(out);
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output[i_dim1_par].pop(out)) {
+        o_data[i_dim1_par].write(out);
       }
     }
 
@@ -131,17 +134,17 @@ public:
   }
 
 private:
-  static void pipeline_body(hls::stream<TInputWord> i_data[W_PAR],
-                            hls::stream<TOutputWord> o_data[W_PAR]) {
+  static void pipeline_body(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                            hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
 #pragma HLS inline
     Quantizer quantizer;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      TInputWord in_word = i_data[w_par].read();
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      TInputWord in_word = i_data[i_dim1_par].read();
       TOutputWord out_word;
-      for (size_t ch_par = 0; ch_par < CH_PAR; ch_par++) {
-        out_word[ch_par] = quantizer(in_word[ch_par]);
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        out_word[i_dim2_par] = quantizer(in_word[i_dim2_par]);
       }
-      o_data[w_par].write(out_word);
+      o_data[i_dim1_par].write(out_word);
     }
   }
 };

@@ -71,7 +71,7 @@ class InsertTensorDuplicator(Transformation):
 
             # Create the Duplicate node
             dup_node = helper.make_node(
-                op_type="TensorDuplicator",
+                op_type="StreamingTensorDuplicator",
                 domain="nn2fpga.compiler.custom_op",
                 inputs=[fork_out],
                 outputs=dup_outputs,

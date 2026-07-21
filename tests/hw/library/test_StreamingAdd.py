@@ -37,9 +37,9 @@ class TestStreamingAdd(BaseHLSTest):
             int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ),
             dtype=np_ina_type,
         )
@@ -50,9 +50,9 @@ class TestStreamingAdd(BaseHLSTest):
             int(in_info.max) + 1,  # randint upper bound is exclusive
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ),
             dtype=np_inb_type,
         )
@@ -63,9 +63,9 @@ class TestStreamingAdd(BaseHLSTest):
             onnx_ina_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
         B = helper.make_tensor_value_info(
@@ -73,9 +73,9 @@ class TestStreamingAdd(BaseHLSTest):
             onnx_inb_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
         Y = helper.make_tensor_value_info(
@@ -83,9 +83,9 @@ class TestStreamingAdd(BaseHLSTest):
             onnx_out_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
 
@@ -201,8 +201,7 @@ class TestStreamingAdd(BaseHLSTest):
             cwr.add_line(f"typedef DequantQuantPo2<{-align_b}, TInputB, TAcc> AlignB;")
         else:
             cwr.add_line(f"typedef DequantQuantEqual<TInputB> AlignB;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> Quantizer;")
-        cwr.add_line("typedef DequantQuantEqual<TAcc> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> OutputTransform;")
 
         cwr.add_lines(
             csnake.Variable(
@@ -238,11 +237,11 @@ class TestStreamingAdd(BaseHLSTest):
             "INPUTA_DATAWIDTH": 8,
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
@@ -262,11 +261,11 @@ class TestStreamingAdd(BaseHLSTest):
             "INPUTA_DATAWIDTH": 8,
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
@@ -286,11 +285,11 @@ class TestStreamingAdd(BaseHLSTest):
             "INPUTA_DATAWIDTH": 8,
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
@@ -310,11 +309,11 @@ class TestStreamingAdd(BaseHLSTest):
             "INPUTA_DATAWIDTH": 8,
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
             "A_SCALE": 2**-4,
             "B_SCALE": 2**-6,
             "Y_SCALE": 2**-5,

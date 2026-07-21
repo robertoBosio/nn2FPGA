@@ -3,7 +3,8 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Protocol, List, Dict, Any, Iterable, Tuple
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
+from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from qonnx.custom_op.base import CustomOp
 from qonnx.core.modelwrapper import ModelWrapper
 from dataclasses import dataclass
@@ -35,7 +36,7 @@ class NodeInterface:
 
 class NN2FPGAOp(CustomOp, ABC):
     """Abstract base for nn2fpga operators. """
-    
+
     @abstractmethod
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """Lower this operator to the HLSKernel implementation."""
@@ -43,7 +44,7 @@ class NN2FPGAOp(CustomOp, ABC):
     @abstractmethod
     def has_linebuffer(self) -> bool:
         """Return whether the op needs a linebuffer (default False)."""
-    
+
     @abstractmethod
     def get_latency(self, model: ModelWrapper) -> int:
         """Return latency [cycles] for 'point'. If point is None, use current node attrs."""
@@ -55,6 +56,59 @@ class NN2FPGAOp(CustomOp, ABC):
     @abstractmethod
     def get_dsps(self, model: ModelWrapper) -> int:
         """Return DSP usage for 'point'. If point is None, use current node attrs."""
+
+    @abstractmethod
+    def accepted_input_layout(self) -> tuple | None:
+        """Return the permutation tuple this op requires on input,
+        or None if layout-transparent."""
+
+    @abstractmethod
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """Return the permutation tuple this op produces on output.
+        Receives the incoming layout so transparent ops can just return it."""
+
+    def divisors(self, n: list[int], clip: int) -> list[int]:
+        """Return all divisors of all numbers in n that are <= clip."""
+        if not n:  # Handle empty list case.
+            return []
+        return [
+            i
+            for i in range(1, min(n) + 1)
+            if (all(x % i == 0 for x in n) and i <= clip)
+        ]
+
+    def __pad_and_permute(self, shape: list[int], layout_perm: tuple[int, ...]) -> list[int]:
+        """Pad shape to 4D and permute according to layout_perm."""
+        padded_shape = shape + [1] * (4 - len(shape))  # Pad to 4D if needed.
+        padded_layout = TensorLayout(layout_perm, rank=len(padded_shape)).perm  # Adapt layout to original rank
+        permuted_shape = [padded_shape[i] for i in padded_layout]
+        return permuted_shape
+
+    def require_4d_input_shape(self, model: ModelWrapper, input_index: int = 0, input_layout: TensorLayout | None = None) -> list[int]:
+        """Helper to retrieve the 4D padded input shape, permuted based on the layout, raising if not found."""
+        shape = model.get_tensor_shape(self.onnx_node.input[input_index])
+        if shape is None:
+            raise ValueError(
+                f"Tensor shape for input '{self.onnx_node.input[input_index]}' not found in model."
+            )
+        if input_layout is not None:
+            layout_permutation = input_layout.perm
+        else:
+            layout_permutation = tuple(range(len(shape)))  # Default to no permutation if layout is unknown.
+        return self.__pad_and_permute(shape, layout_permutation)
+
+    def require_4d_output_shape(self, model: ModelWrapper, output_index: int = 0, output_layout: TensorLayout | None = None) -> list[int]:
+        """Helper to retrieve the 4D padded output shape, permuted based on the layout, raising if not found."""
+        shape = model.get_tensor_shape(self.onnx_node.output[output_index])
+        if shape is None:
+            raise ValueError(
+                f"Tensor shape for output '{self.onnx_node.output[output_index]}' not found in model."
+            )
+        if output_layout is not None:
+            layout_permutation = output_layout.perm
+        else:
+            layout_permutation = tuple(range(len(shape)))  # Default to no permutation if layout is unknown.
+        return self.__pad_and_permute(shape, layout_permutation)
 
     def get_port_interface(self) -> NodeInterface:
         return NodeInterface.from_dict({
@@ -100,7 +154,7 @@ class ParamDesc:
     input_index: int
     name: str
     shape: Tuple[int, ...]
-    tensor_quant: TensorQuant
+    tensor_quant: QuantizedTensorType
     in_channel_unroll: int
     out_channel_unroll: int
     width_unroll: int

@@ -1,11 +1,12 @@
 import base64
+from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph, GiveUniqueNodeNames, GiveReadableTensorNames
 from qonnx.core.modelwrapper import ModelWrapper
 import qonnx.custom_op.general.quant as qonnx_quant
 from onnx import NodeProto, TensorProto, helper
-from nn2fpga.compiler.core.tensor_quant import (
-    TensorQuant,
+from nn2fpga.compiler.core.tensor_type import (
+    QuantizedTensorType,
     set_custom_tensor_datatype,
     get_custom_tensor_datatype,
 )
@@ -151,7 +152,7 @@ class AddStreamingParams(Transformation):
         )
         sequential_streaming = list()
         grouped_initializer = np.array([], dtype=np.uint32)
-        params_quant = TensorQuant(
+        params_quant = QuantizedTensorType(
             scale=1.0,
             zeropt=0,
             bitwidth=32,
@@ -201,7 +202,9 @@ class AddStreamingParams(Transformation):
             "index": index,
             "shape": grouped_initializer.shape,
             "quant": params_quant.get_canonical_name(),
+            "layout": TensorLayout.identity(len(grouped_initializer.shape)).get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
+            "mode": "axis",
         }
         param_stream_input = helper.make_tensor_value_info(
             "const_param_stream", TensorProto.INT32, grouped_initializer.shape
@@ -213,9 +216,9 @@ class AddStreamingParams(Transformation):
         )
         set_custom_tensor_datatype(model, param_stream_input.name, params_quant)
 
-        # Create the NHWCToStream node
+        # Create the AXIToStream node
         produce_node = helper.make_node(
-            op_type="NHWCToStream",
+            op_type="AXIToStream",
             domain="nn2fpga.compiler.custom_op",
             inputs=[param_stream_input.name],
             outputs=input_stream,
@@ -227,7 +230,7 @@ class AddStreamingParams(Transformation):
             in_word_array=1,
             out_word_array=1,
             axi_bitwidth=board_res["axi_bitwidth"],
-            name=f"NHWCToStream_const_param_stream",
+            name=f"AXIToStream_const_param_stream",
         )
 
         model.graph.node.append(produce_node)
@@ -239,7 +242,6 @@ class AddStreamingParams(Transformation):
             node.output.extend([f"{node.name}_shift_out"])
 
             params_to_shift -= params_size
-            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
             custom_op.set_nodeattr("data_to_shift", params_to_shift)
             model.del_initializer(node.input[0])
             node.input[0] = input_stream[0]
@@ -248,6 +250,7 @@ class AddStreamingParams(Transformation):
                 node.input[0],
                 params_quant
             )
+            model.set_tensor_shape(f"{node.name}_shift_out", [1, params_to_shift])
 
             # The next input is the first output of the current ParamStream node
             input_stream = [f"{node.name}_shift_out"]
@@ -263,7 +266,6 @@ class AddStreamingParams(Transformation):
             )
 
             params_to_shift -= params_size
-            # model.set_tensor_shape(output_stream[0], custom_op.get_nodeattr("mem_shape"))
             custom_op.set_nodeattr("data_to_shift", params_to_shift)
             model.del_initializer(node.input[0])
             node.input[0] = input_stream[0]

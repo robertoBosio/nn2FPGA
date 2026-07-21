@@ -6,4 +6,7 @@ theme:
   name: material
 
 nav:
-  - Home: index.md
+- Home: index.md
+- Developer Guide:
+    - Compiler Core:
+        - AcceleratorPackage: developer/compiler/core/accelerator_package.md

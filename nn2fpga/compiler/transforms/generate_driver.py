@@ -8,45 +8,9 @@ from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from nn2fpga.compiler.transforms.set_dynamic_batchsize import SetDynamicBatchSize
 from nn2fpga.compiler.utils.codegen_utils import NewCodeWriter
 from nn2fpga.compiler.utils.board_util import read_board_info
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 from onnx import NodeProto
 import numpy as np
-
-def get_onnxruntime_dtype(tensor_quant: TensorQuant) -> str:
-    """ Get the ONNX Runtime data type for a given tensor quantization. """
-    if tensor_quant.signed:
-        if tensor_quant.bitwidth <= 8:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8"
-        elif tensor_quant.bitwidth <= 16:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16"
-        elif tensor_quant.bitwidth <= 32:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32"
-    else:
-        if tensor_quant.bitwidth <= 8:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8"
-        elif tensor_quant.bitwidth <= 16:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16"
-        elif tensor_quant.bitwidth <= 32:
-            return "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32"
-    raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
-
-def get_spec_dtype(tensor_quant: TensorQuant) -> str:
-    """ Get the data type string for a given tensor quantization, suitable for the spec file. """
-    if tensor_quant.signed:
-        if tensor_quant.bitwidth <= 8:
-            return "i8"
-        elif tensor_quant.bitwidth <= 16:
-            return "i16"
-        elif tensor_quant.bitwidth <= 32:
-            return "i32"
-    else:
-        if tensor_quant.bitwidth <= 8:
-            return "u8"
-        elif tensor_quant.bitwidth <= 16:
-            return "u16"
-        elif tensor_quant.bitwidth <= 32:
-            return "u32"
-    raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
 
 def generate_spec(
     model: ModelWrapper,
@@ -58,6 +22,7 @@ def generate_spec(
     frequency: int,
     axilite_base_addr: int,
     axilite_size: int,
+    control_axi_offset: int,
     design_id: str,
 ) -> None:
 
@@ -84,6 +49,7 @@ def generate_spec(
     cwr.add_line(f'static constexpr uint32_t DesignID = {int(design_id)};')
     cwr.add_line(f"static constexpr uint64_t AXIL_BASE = 0x{axilite_base_addr:X};")
     cwr.add_line(f"static constexpr size_t AXIL_SIZE = 0x{axilite_size:X};")
+    cwr.add_line(f"static constexpr off_t ControlAxiOffset = 0x{control_axi_offset:X};")
 
     cwr.add_line(f"static inline const std::array<PortDesc, {len(ap.input_map)}> Inputs{{{{")
     cwr.indent()
@@ -91,13 +57,13 @@ def generate_spec(
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
+        tensor_type = TensorType.from_canonical_name(value["quant"])
         mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
-        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        buffer_size = np.dtype(tensor_type.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
             buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+            f"PortDesc{{DType::{tensor_type.get_spec_type()}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -108,13 +74,22 @@ def generate_spec(
         tensor_shape = value["shape"]
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
+        tensor_type = TensorType.from_canonical_name(value["quant"])
         mode = "PortMode::StaticInit" if value['value'] is not None else "PortMode::Dynamic"
-        buffer_size = np.dtype(quant.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
+        buffer_size = np.dtype(tensor_type.get_numpy_dtype()).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
             buffer_size *= Nmax
         cwr.add_line(
-            f"PortDesc{{DType::{get_spec_dtype(quant)}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+            f"PortDesc{{DType::{tensor_type.get_spec_type()}, {{{str_tensor_shape}}}, 0x{value['axi_offset']:X}, {mode}, {buffer_size}}}, // {name}"
+        )
+    cwr.dedent()
+    cwr.add_line("}};")
+
+    cwr.add_line(f"static inline const std::array<BufferDesc, {len(ap.buffer_map)}> Buffers{{{{")
+    cwr.indent()
+    for buffer_name, buffer in ap.buffer_map.items():
+        cwr.add_line(
+            f"BufferDesc{{{buffer['size_bytes']}, 0x{buffer['read_axi_offset']:X}, 0x{buffer['write_axi_offset']:X}}}, // {buffer_name}"
         )
     cwr.dedent()
     cwr.add_line("}};")
@@ -123,8 +98,8 @@ def generate_spec(
                  f"{len(ap.input_map)}> OrtInputTypes{{{{")
     cwr.indent()
     for name in ap.input_map:
-        quant = TensorQuant.from_canonical_name(ap.input_map[name]["quant"])
-        cwr.add_line(f"{get_onnxruntime_dtype(quant)}, // {name}")
+        tensor_type = TensorType.from_canonical_name(ap.input_map[name]["quant"])
+        cwr.add_line(f"{tensor_type.get_onnxruntime_type()}, // {name}")
     cwr.dedent()
     cwr.add_line("}};")
 
@@ -132,8 +107,8 @@ def generate_spec(
                  f"{len(ap.output_map)}> OrtOutputTypes{{{{")
     cwr.indent()
     for name in ap.output_map:
-        quant = TensorQuant.from_canonical_name(ap.output_map[name]["quant"])
-        cwr.add_line(f"{get_onnxruntime_dtype(quant)}, // {name}")
+        tensor_type = TensorType.from_canonical_name(ap.output_map[name]["quant"])
+        cwr.add_line(f"{tensor_type.get_onnxruntime_type()}, // {name}")
     cwr.dedent()
     cwr.add_line("}};")
 
@@ -162,30 +137,163 @@ import time
 PL.reset()
 ol = Overlay("Overlay/design.bit")
 """
-    # Xilinx DMA has a maximum transfer size of 64MB, so we need to choose a batch size that fits 
-    # within this limit based on the input and output buffer sizes defined in the accelerator package.
-    max_batch_size = 1024
-    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
-        if value['value'] is not None:
-            continue
-        tensor_shape = value["shape"]
-        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
-        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
-        max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
+    if ap.buffer_map:
+        test_code += f"kernel = ol.{ap.top_name}_0\n"
+        test_code += """
+def write_u64(ip, offset, value):
+    ip.write(offset, value & 0xFFFFFFFF)
+    ip.write(offset + 4, (value >> 32) & 0xFFFFFFFF)
 
-    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
-        if value['value'] is not None:
-            continue
-        tensor_shape = value["shape"]
-        tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
-        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
-        max_batch_size = min(max_batch_size, 64 * 1024 * 1024 // buffer_size)
+"""
+    test_code += """
+FRAMES = 300
+RING_DEPTH = 3
+INPUT_BUFFERS = RING_DEPTH
+OUTPUT_BUFFERS = RING_DEPTH
+POLL_SLEEP_S = 0.0005
 
-    test_code += f"BATCH = {max_batch_size}\n"
+def release_buffer(buf):
+    freebuffer = getattr(buf, "freebuffer", None)
+    if freebuffer is not None:
+        freebuffer()
+
+def release_buffer_list(buffers):
+    for buf in buffers:
+        release_buffer(buf)
+    buffers.clear()
+
+DMA_MM2S = 1
+DMA_S2MM = 0
+DMACR_RS = 0x00000001
+DMACR_RESET = 0x00000004
+DMASR_HALTED = 0x00000001
+DMASR_IDLE = 0x00000002
+DMASR_ERROR_MASK = 0x00000770
+BD_STS_COMPLETE = 1 << 31
+BD_STS_ERROR_MASK = 0x30000000
+BD_CTRL_SOF = 1 << 27
+BD_CTRL_EOF = 1 << 26
+BD_CTRL_LEN_MASK = 0x03FFFFFF
+
+class SgDmaRing:
+    def __init__(self, dma_ip, direction, depth, name):
+        self.mmio = dma_ip.mmio
+        self.direction = direction
+        self.depth = depth
+        self.name = name
+        self.offset = 0x00 if direction == DMA_MM2S else 0x30
+        self.flush_before = direction == DMA_MM2S
+        self.desc = allocate(shape=(depth, 16), dtype=np.uint32)
+        self.free = list(range(depth))
+        self.queued = []
+        self.started = False
+        self.tail = None
+        self._init_descriptors()
+        self.reset()
+
+    def _reg(self, off):
+        return self.offset + off
+
+    def _desc_addr(self, idx):
+        return self.desc.physical_address + idx * 16 * 4
+
+    def _init_descriptors(self):
+        self.desc[:] = 0
+        for idx in range(self.depth):
+            next_addr = self._desc_addr((idx + 1) % self.depth)
+            self.desc[idx, 0] = next_addr & 0xFFFFFFFF
+            self.desc[idx, 1] = (next_addr >> 32) & 0xFFFFFFFF
+        self.desc.flush()
+
+    def reset(self):
+        self.mmio.write(self._reg(0x00), DMACR_RESET)
+        while self.mmio.read(self._reg(0x00)) & DMACR_RESET:
+            pass
+        self.mmio.write(self._reg(0x04), 0xFFFFFFFF)
+        self.mmio.write(self._reg(0x00), 0x00000000)
+        self.started = False
+        self.tail = None
+
+    def has_free(self):
+        return bool(self.free)
+
+    def status(self):
+        return self.mmio.read(self._reg(0x04))
+
+    def _check_error(self):
+        sr = self.status()
+        if sr & DMASR_ERROR_MASK:
+            raise RuntimeError(f"{self.name} SG DMA error: status=0x{sr:08x}")
+
+    def _start_at(self, idx):
+        addr = self._desc_addr(idx)
+        self.mmio.write(self._reg(0x08), addr & 0xFFFFFFFF)
+        self.mmio.write(self._reg(0x0C), (addr >> 32) & 0xFFFFFFFF)
+        self.mmio.write(self._reg(0x00), DMACR_RS)
+        while self.mmio.read(self._reg(0x04)) & DMASR_HALTED:
+            self._check_error()
+        self.started = True
+
+    def enqueue(self, seq, buf, nbytes=None):
+        if not self.free:
+            raise RuntimeError(f"{self.name}: no free SG descriptors")
+        if nbytes is None:
+            nbytes = buf.nbytes
+        if nbytes <= 0 or nbytes > BD_CTRL_LEN_MASK:
+            raise ValueError(f"{self.name}: invalid transfer length {nbytes}")
+
+        idx = self.free.pop(0)
+        addr = buf.physical_address
+        self.desc[idx, 2] = addr & 0xFFFFFFFF
+        self.desc[idx, 3] = (addr >> 32) & 0xFFFFFFFF
+        self.desc[idx, 4] = 0
+        self.desc[idx, 5] = 0
+        self.desc[idx, 6] = (nbytes & BD_CTRL_LEN_MASK) | BD_CTRL_SOF | BD_CTRL_EOF
+        self.desc[idx, 7] = 0
+        self.desc[idx, 8:16] = 0
+        self.desc.flush()
+
+        if self.flush_before:
+            buf.flush()
+
+        if not self.started:
+            self._start_at(idx)
+
+        tail_addr = self._desc_addr(idx)
+        self.mmio.write(self._reg(0x10), tail_addr & 0xFFFFFFFF)
+        self.mmio.write(self._reg(0x14), (tail_addr >> 32) & 0xFFFFFFFF)
+        self.tail = idx
+        self.queued.append({"seq": seq, "idx": idx, "buf": buf, "nbytes": nbytes})
+        return self.queued[-1]
+
+    def poll(self):
+        self._check_error()
+        completed = []
+        while self.queued:
+            head = self.queued[0]
+            idx = head["idx"]
+            self.desc.invalidate()
+            status = int(self.desc[idx, 7])
+            if not (status & BD_STS_COMPLETE):
+                break
+            if status & BD_STS_ERROR_MASK:
+                raise RuntimeError(f"{self.name}: descriptor {idx} error status=0x{status:08x}")
+            if not self.flush_before:
+                head["buf"].invalidate()
+            completed.append(self.queued.pop(0))
+        return completed
+
+    def reclaim(self, desc_info):
+        idx = desc_info["idx"]
+        self.desc[idx, 7] = 0
+        self.desc.flush()
+        self.free.append(idx)
+
+    def close(self):
+        self.reset()
+        release_buffer(self.desc)
+
+"""
 
     # Generate code to allocate input and output buffers based on the accelerator package specification.
     for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
@@ -193,30 +301,36 @@ ol = Overlay("Overlay/design.bit")
         dma_name = value['new_name'] 
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         np_dtype_info = np.iinfo(np_dtype)
-        buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
         if value['value'] is None:
-            str_tensor_shape = f"BATCH, {str_tensor_shape}"
+            test_code += f"{dma_name}_buffers = [allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\") for _ in range(INPUT_BUFFERS)]\n"
+            test_code += f"for _buf in {dma_name}_buffers:\n"
+            test_code += f"    _buf[:] = np.random.randint({np_dtype_info.min}, {np_dtype_info.max}, size=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
         else:
             str_tensor_shape = f"{str_tensor_shape},"
-        test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
-        test_code += f"{dma_name}_data = np.random.randint({np_dtype_info.min}, {np_dtype_info.max}, size=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+            test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
+            test_code += f"{dma_name}_data = np.random.randint({np_dtype_info.min}, {np_dtype_info.max}, size=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
 
     for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
         tensor_shape = value["shape"]
         dma_name = value['new_name']
         tensor_shape_nobatch = tensor_shape[1:]  # Exclude batch size
         str_tensor_shape = ', '.join(map(str, tensor_shape_nobatch))
-        quant = TensorQuant.from_canonical_name(value["quant"])
-        np_dtype = quant.get_numpy_dtype()
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        np_dtype = tensor_type.get_numpy_dtype()
         buffer_size = np.dtype(np_dtype).itemsize * np.prod(tensor_shape_nobatch)
-        str_tensor_shape = f"BATCH, {str_tensor_shape}"
-        test_code += f"{dma_name}_buffer = allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
-        test_code += f"{dma_name}_data = np.zeros(({str_tensor_shape}), dtype=\"{np_dtype.__name__}\")\n"
-        test_code += f"ol.{dma_name}_dma.recvchannel._max_size = {buffer_size}\n"
-        test_code += f"ol.{dma_name}_dma.recvchannel._align = 1\n"
+        test_code += f"{dma_name}_buffers = [allocate(shape=({str_tensor_shape}), dtype=\"{np_dtype.__name__}\") for _ in range(OUTPUT_BUFFERS)]\n"
+        #test_code += f"ol.{dma_name}_dma.recvchannel._max_size = {buffer_size}\n"
+        #test_code += f"ol.{dma_name}_dma.recvchannel._align = 1\n"
+
+    for buffer_name, buffer in ap.buffer_map.items():
+        test_code += f"{buffer_name}_buffer = allocate(shape=({buffer['size_bytes']},), dtype=np.int8)\n"
+        test_code += f"{buffer_name}_buffer[:] = 0\n"
+        test_code += f"{buffer_name}_addr = {buffer_name}_buffer.device_address\n"
+        test_code += f"write_u64(kernel, 0x{buffer['read_axi_offset']:X}, {buffer_name}_addr)\n"
+        test_code += f"write_u64(kernel, 0x{buffer['write_axi_offset']:X}, {buffer_name}_addr)\n"
 
     # Load the static inputs
     for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
@@ -227,56 +341,140 @@ ol = Overlay("Overlay/design.bit")
             test_code += f"ol.{dma_name}_dma.sendchannel.wait()\n"
             test_code += f"print('Static input {dma_name} loaded')\n"
 
-    test_code += """
-batch_lat_s = []
-img_lat_s = []
-total_images = 0
-total_time_s = 0.0
-for batch_idx in range(10):  # Run 10 batches for testing\n"""
+    dynamic_inputs = [
+        value['new_name']
+        for _, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index'])
+        if value['value'] is None
+    ]
+    output_names = [
+        value['new_name']
+        for _, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index'])
+    ]
 
-    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
-        if value['value'] is not None:
-            continue
-        dma_name = value['new_name']
-        test_code += f"""    {dma_name}_buffer[:] = {dma_name}_data[:]\n"""
-    test_code += """    start_time = time.perf_counter()\n"""
-    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
-        dma_name = value['new_name']
-        test_code += f"    ol.{dma_name}_dma.recvchannel.transfer({dma_name}_buffer)\n"
-    for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
-        if value['value'] is not None:
-            continue
-        dma_name = value['new_name']
-        test_code += f"    ol.{dma_name}_dma.sendchannel.transfer({dma_name}_buffer)\n"
-    for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
-        dma_name = value['new_name']
-        test_code += f"    ol.{dma_name}_dma.recvchannel.wait()\n"
-    test_code += """    end_time = time.perf_counter()\n"""
-    test_code += """    batch_time = end_time - start_time\n"""
-    test_code += """    batch_lat_s.append(batch_time)\n"""
-    test_code += """    img_lat_s.append(batch_time / BATCH)\n"""
-    test_code += """    total_images += BATCH\n"""
-    test_code += """    total_time_s += batch_time\n"""
     test_code += """
-throughput = total_images / total_time_s
-avg_batch_ms = (sum(batch_lat_s) / len(batch_lat_s)) * 1e3
-avg_img_ms = (sum(img_lat_s) / len(img_lat_s)) * 1e3
+input_rings = {}
+output_rings = {}
+"""
+    for dma_name in dynamic_inputs:
+        test_code += f"input_rings['{dma_name}'] = SgDmaRing(ol.{dma_name}_dma, DMA_MM2S, RING_DEPTH, '{dma_name}_mm2s')\n"
+    for dma_name in output_names:
+        test_code += f"output_rings['{dma_name}'] = SgDmaRing(ol.{dma_name}_dma, DMA_S2MM, RING_DEPTH, '{dma_name}_s2mm')\n"
 
-print("===== Benchmark results =====")
-print(f"Measured batches:        {len(batch_lat_s)}")
-print(f"Measured images:         {total_images}")
-print(f"Total measured time (s): {total_time_s:.6f}")
-print(f"Throughput (img/s):      {throughput:.2f}")
-print(f"Avg batch latency (ms):  {avg_batch_ms:.3f}")
-print(f"Avg img latency (ms):    {avg_img_ms:.3f}")
+    test_code += """
+free_slots = list(range(RING_DEPTH))
+active = {}
+sent_frames = 0
+completed_frames = 0
+blocked_no_slot = 0
+blocked_no_desc = 0
+submit_times = {}
+latencies_s = []
+
+def rings_have_capacity():
+    return all(ring.has_free() for ring in input_rings.values()) and all(
+        ring.has_free() for ring in output_rings.values()
+    )
+
+start_s = time.perf_counter()
+
+while completed_frames < FRAMES:
+    now = time.perf_counter()
+
+    for name, ring in input_rings.items():
+        for desc in ring.poll():
+            req = active.get(desc["seq"])
+            if req is not None:
+                req["input_done"][name] = True
+
+    for name, ring in output_rings.items():
+        for desc in ring.poll():
+            req = active.get(desc["seq"])
+            if req is not None:
+                req["output_done"][name] = True
+
+    for seq in sorted(list(active.keys())):
+        req = active[seq]
+        if all(req["output_done"].values()):
+            completed_frames += 1
+            submit_s = submit_times.pop(seq, None)
+            if submit_s is not None:
+                latencies_s.append(now - submit_s)
+            for desc in req["input_descs"]:
+                desc["ring"].reclaim(desc)
+            for desc in req["output_descs"]:
+                desc["ring"].reclaim(desc)
+            free_slots.append(req["slot"])
+            del active[seq]
+
+    while sent_frames < FRAMES:
+        if not free_slots:
+            blocked_no_slot += 1
+            break
+        if not rings_have_capacity():
+            blocked_no_desc += 1
+            break
+
+        slot = free_slots.pop(0)
+        seq = sent_frames
+        req = {
+            "slot": slot,
+            "input_done": {name: False for name in input_rings},
+            "output_done": {name: False for name in output_rings},
+            "input_descs": [],
+            "output_descs": [],
+        }
+
+"""
+    for dma_name in output_names:
+        test_code += f"        desc = output_rings['{dma_name}'].enqueue(seq, {dma_name}_buffers[slot])\n"
+        test_code += f"        desc['ring'] = output_rings['{dma_name}']\n"
+        test_code += "        req['output_descs'].append(desc)\n"
+    for dma_name in dynamic_inputs:
+        test_code += f"        desc = input_rings['{dma_name}'].enqueue(seq, {dma_name}_buffers[slot])\n"
+        test_code += f"        desc['ring'] = input_rings['{dma_name}']\n"
+        test_code += "        req['input_descs'].append(desc)\n"
+    test_code += """
+        active[seq] = req
+        submit_times[seq] = now
+        sent_frames += 1
+
+    if POLL_SLEEP_S > 0:
+        time.sleep(POLL_SLEEP_S)
+
+total_s = time.perf_counter() - start_s
+sorted_latencies = sorted(latencies_s)
+avg_latency_ms = (sum(latencies_s) / len(latencies_s)) * 1e3 if latencies_s else float("nan")
+p50_latency_ms = sorted_latencies[len(sorted_latencies) // 2] * 1e3 if sorted_latencies else float("nan")
+max_latency_ms = max(latencies_s) * 1e3 if latencies_s else float("nan")
+
+print("===== SG streaming benchmark results =====")
+print(f"Frames submitted:          {sent_frames}")
+print(f"Frames completed:          {completed_frames}")
+print(f"Total measured time (s):   {total_s:.6f}")
+print(f"Completed throughput img/s:{completed_frames / total_s:.2f}")
+print(f"Avg submit-to-output ms:   {avg_latency_ms:.3f}")
+print(f"P50 submit-to-output ms:   {p50_latency_ms:.3f}")
+print(f"Max submit-to-output ms:   {max_latency_ms:.3f}")
+print(f"No-free-slot polls:        {blocked_no_slot}")
+print(f"No-free-desc polls:        {blocked_no_desc}")
+
+for ring in input_rings.values():
+    ring.close()
+for ring in output_rings.values():
+    ring.close()
 """
 
     for name, value in sorted(ap.output_map.items(), key=lambda x: x[1]['index']):
         dma_name = value['new_name']
-        test_code += f"del {dma_name}_buffer\n"
+        test_code += f"release_buffer_list({dma_name}_buffers)\n"
     for name, value in sorted(ap.input_map.items(), key=lambda x: x[1]['index']):
         dma_name = value['new_name']
-        test_code += f"del {dma_name}_buffer\n"
+        if value['value'] is not None:
+            test_code += f"release_buffer({dma_name}_buffer)\n"
+        else:
+            test_code += f"release_buffer_list({dma_name}_buffers)\n"
+    for buffer_name in ap.buffer_map:
+        test_code += f"release_buffer({buffer_name}_buffer)\n"
     return test_code
 
 def make_deploy_directory(work_dir: str, top_name: str) -> str:
@@ -297,6 +495,7 @@ class GenerateDriver(Transformation):
         top_name = model.get_metadata_prop("top_name")
         axilite_address = int(model.get_metadata_prop("axilite_address"))
         axilite_size = int(model.get_metadata_prop("axilite_size"))
+        control_axi_offset = int(model.get_metadata_prop("control_axi_offset") or 0)
         board = model.get_metadata_prop("board_name")
         frequency = model.get_metadata_prop("frequency")
         design_id = model.get_metadata_prop("design_id")
@@ -323,6 +522,7 @@ class GenerateDriver(Transformation):
                     frequency=frequency,
                     axilite_base_addr=axilite_address,
                     axilite_size=axilite_size,
+                    control_axi_offset=control_axi_offset,
                     design_id=design_id,
                 )
             )
@@ -357,5 +557,16 @@ class GenerateDriver(Transformation):
         
         with open(f"{deploy_dir}/throughput_test.py", "w") as f:
             f.write(generate_pynq_test(nn2FPGA_node))
+
+        bitstream_path = f"{self.work_dir}/vivado/vivadoproj/vivadoproj.runs/impl_1/{top_name}_bd.bit"
+        hwh_path = f"{self.work_dir}/vivado/vivadoproj/vivadoproj.gen/sources_1/bd/{top_name}_bd/hw_handoff/{top_name}_bd.hwh"
+        shutil.copy(
+            bitstream_path,
+            f"{deploy_dir}/design.bit"
+        )
+        shutil.copy(
+            hwh_path,
+            f"{deploy_dir}/design.hwh"
+        )
 
         return model, False

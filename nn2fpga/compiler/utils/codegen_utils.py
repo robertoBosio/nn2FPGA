@@ -1,31 +1,14 @@
 import re
 from csnake import CodeWriter, Function, Variable
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import TensorType
 
-def get_stream_type(tensor_quant: TensorQuant, ch_par: int) -> str:
-    """ Get the HLS stream type for a given tensor quantization and parallelization factor. """
-    return f"hls::stream<{get_struct_type(tensor_quant, ch_par)}>"
+def get_stream_type(tensor_quant: TensorType, dim2_unroll: int) -> str:
+    """ Get the HLS stream type for a given tensor type and parallelization factor. """
+    return f"hls::stream<{get_word_type(tensor_quant, dim2_unroll)}>"
 
-def get_struct_type(tensor_quant: TensorQuant, ch_par: int) -> str:
-    """ Get the HLS struct type for a given tensor quantization. """
-    return f"std::array<{get_hls_quant_type(tensor_quant)}, {ch_par}>"
-
-def get_hls_quant_type(tensor_quant: TensorQuant) -> str:
-    """ Get the HLS type for a given tensor quantization. """
-    return f"ap_{'' if tensor_quant.signed else 'u'}int<{tensor_quant.bitwidth}>"
-
-def get_cpp_quant_type(tensor_quant: TensorQuant) -> str:
-    """ Get the C++ type for a given tensor quantization. """
-    cpp_type_string = "unsigned " if not tensor_quant.signed else ""
-    if tensor_quant.bitwidth <= 8:
-        return f"{cpp_type_string}char"
-    elif tensor_quant.bitwidth <= 16:
-        return f"{cpp_type_string}short"
-    elif tensor_quant.bitwidth <= 32:
-        return f"{cpp_type_string}int"
-    else:
-        raise ValueError(f"Unsupported bitwidth: {tensor_quant.bitwidth}")
-
+def get_word_type(tensor_quant: TensorType, dim2_unroll: int) -> str:
+    """ Get the HLS struct type for a given tensor type. """
+    return f"std::array<{tensor_quant.get_hls_data_type()}, {dim2_unroll}>"
 
 def NewCodeWriter():
     """

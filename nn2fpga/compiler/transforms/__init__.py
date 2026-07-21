@@ -17,7 +17,9 @@ from nn2fpga.compiler.transforms.fullyconnected_to_conv import FullyConnectedToP
 from nn2fpga.compiler.transforms.fuse_elementwise_op import FuseElementwiseOps
 from nn2fpga.compiler.transforms.generate_bitstream import GenerateBitstream
 from nn2fpga.compiler.transforms.generate_driver import GenerateDriver
+from nn2fpga.compiler.transforms.generate_lightningsim_code import GenerateLightningSimCode
 from nn2fpga.compiler.transforms.infer_quant import InferQuant
+from nn2fpga.compiler.transforms.infer_layouts import InferLayouts
 from nn2fpga.compiler.transforms.insert_axi_converters import InsertAXIConverters
 from nn2fpga.compiler.transforms.insert_streaming_line_buffer import (
     InsertStreamingLineBuffer,
@@ -26,6 +28,7 @@ from nn2fpga.compiler.transforms.insert_tensor_duplicator import InsertTensorDup
 from nn2fpga.compiler.transforms.lower_to_HLS import LowerToHLS
 from nn2fpga.compiler.transforms.lower_to_nn2fpga_layers import LowerToNN2FPGALayers
 from nn2fpga.compiler.transforms.optimize_bitwidth import OptimizeBitwidth
+from nn2fpga.compiler.transforms.optimize_fifo import OptimizeFifo
 from nn2fpga.compiler.transforms.propagate_quant import PropagateQuant
 from nn2fpga.compiler.transforms.remove_noop_nodes import RemoveNoopNodes
 from nn2fpga.compiler.transforms.remove_redundant_quant import RemoveRedundantQuant

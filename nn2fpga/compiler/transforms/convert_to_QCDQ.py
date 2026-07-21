@@ -1,167 +1,230 @@
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.qonnx_to_qcdq import QuantToQCDQ
-from onnx import TensorProto, helper, OperatorSetIdProto
+from qonnx.custom_op.registry import getCustomOp
+from nn2fpga.compiler.transforms.add_streaming_params import quant_array
+from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
+from nn2fpga.compiler.core.tensor_type import TensorType, QuantizedTensorType
+from nn2fpga.compiler.core.tensor_layout import TensorLayout
+from onnx import TensorProto, helper, numpy_helper
 import onnx.shape_inference as si
 from onnxscript.rewriter import pattern, rewrite
 from onnxscript import ir
 import numpy as np
-from nn2fpga.compiler.transforms.add_streaming_params import quant_array
-from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
 import logging
+
 logger = logging.getLogger(__name__)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Existing helpers (unchanged)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_tensorproto_dtype(bitwidth, signed):
-    """Get the TensorProto data type based on bitwidth and signedness."""
+    bitwidth = int(bitwidth)
+    signed   = bool(signed)
     if bitwidth <= 8:
-        if signed:
-            return TensorProto.INT8
-        else:
-            return TensorProto.UINT8
-    # elif bitwidth <= 16:
-    #     if signed:
-    #         return TensorProto.INT16
-    #     else:
-    #         return TensorProto.UINT16
+        return TensorProto.INT8  if signed else TensorProto.UINT8
+    elif bitwidth <= 16:
+        # INT16/UINT16 not supported by Q/DQ before opset 21 — promote to 32-bit
+        return TensorProto.INT32 if signed else TensorProto.UINT32
     elif bitwidth <= 32:
-        if signed:
-            return TensorProto.INT32
-        else:
-            return TensorProto.UINT32
+        return TensorProto.INT32 if signed else TensorProto.UINT32
     else:
-        raise ValueError("Unsupported bitwidth for quantization.")
+        raise ValueError(f"Unsupported bitwidth for quantization: {bitwidth}")
 
-def toNHWC(tensor_shape):
-    """Convert a tensor shape from NCHW to NHWC format."""
-    NHWC_shape = [tensor_shape[0]]  # Batch size
-    NHWC_shape.extend(tensor_shape[2:])  # Height and Width
-    NHWC_shape.append(tensor_shape[1])  # Channels
-    return NHWC_shape
 
-def toNCHW(tensor_shape):
-    """Convert a tensor shape from NHWC to NCHW format."""
-    NCHW_shape = [tensor_shape[0]]  # Batch size
-    NCHW_shape.append(tensor_shape[-1])  # Channels
-    NCHW_shape.extend(tensor_shape[1:-1])  # Height and Width
-    return NCHW_shape
+def get_numpy_dtype(bitwidth, signed):
+    bitwidth = int(bitwidth)
+    signed   = bool(signed)
+    if bitwidth <= 8:
+        return np.int8  if signed else np.uint8
+    elif bitwidth <= 16:
+        return np.int32 if signed else np.uint32
+    elif bitwidth <= 32:
+        return np.int32 if signed else np.uint32
+    else:
+        raise ValueError(f"Unsupported bitwidth for quantization: {bitwidth}")
+
 
 def constant_quant_pattern(
     qonnx_op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode
 ):
     return qonnx_op.Quant(
-        x,
-        scale,
-        zero_point,
-        bitwidth,
-        signed=signed,
-        narrow=narrow,
+        x, scale, zero_point, bitwidth,
+        signed=signed, narrow=narrow,
         _allow_other_attributes=True,
         _domain="qonnx.custom_op.general",
     )
 
+
+def dynamic_quant_pattern(
+    qonnx_op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode
+):
+    return qonnx_op.Quant(
+        x, scale, zero_point, bitwidth,
+        signed=signed, narrow=narrow,
+        _allow_other_attributes=True,
+        _domain="qonnx.custom_op.general",
+    )
+
+
+def _extract_scalar_const(v):
+    if v.const_value is None:
+        return None
+    arr = v.const_value.numpy()
+    if arr.shape != ():
+        return None
+    return arr.item()
+
+
+def _extract_optional_attr_value(v, default=None):
+    if v is None:
+        return default
+    return getattr(v, "value", default)
+
+
+def _is_supported_quant_config(bitwidth, signed, narrow, rounding_mode):
+    if bitwidth is None:
+        return False
+    bitwidth = int(bitwidth)
+    narrow   = bool(narrow)
+    if bitwidth not in (8, 16, 32):
+        logger.warning("Skipping Quant lowering: unsupported bitwidth=%s", bitwidth)
+        return False
+    if narrow:
+        logger.warning("Skipping Quant lowering: narrow=True not representable by plain Q/DQ")
+        return False
+    if rounding_mode not in (None, "ROUND"):
+        logger.warning("Skipping Quant lowering: unsupported rounding_mode=%s", rounding_mode)
+        return False
+    return True
+
+
 def is_quant_with_constant_input(
     context, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode, **_
 ):
-    # Ensure all required inputs are constants
-    if not all([i.const_value is not None for i in [x, scale, zero_point, bitwidth]]):
+    if not all(i.const_value is not None for i in [x, scale, zero_point, bitwidth]):
         return False
-
-    # Check bitwidth is a scalar and a reasonable value
-    bitwidth_val = bitwidth.const_value
-    if len(bitwidth_val.shape) != 0:
+    bitwidth_scalar   = _extract_scalar_const(bitwidth)
+    if bitwidth_scalar is None:
         return False
-    
-    bitwidth_scalar = bitwidth_val.numpy().squeeze()
-    # It's better to check for a valid range, not just a minimum
-    if not (1 <= bitwidth_scalar <= 32): # Assuming a range from 1 to 32 bits
+    signed_val        = _extract_optional_attr_value(signed, False)
+    narrow_val        = _extract_optional_attr_value(narrow, False)
+    rounding_mode_val = _extract_optional_attr_value(rounding_mode, "ROUND")
+    if not _is_supported_quant_config(bitwidth_scalar, signed_val, narrow_val, rounding_mode_val):
         return False
-
-    # Check that scale is a scalar or 1D tensor
-    scale_val = scale.const_value
-    if len(scale_val.shape) > 1:
+    if scale.const_value.numpy().ndim > 1 or zero_point.const_value.numpy().ndim > 1:
         return False
-
-    # Check that zero_point is a scalar or 1D tensor
-    zero_point_val = zero_point.const_value
-    if len(zero_point_val.shape) > 1:
-        return False
-
     return True
+
+
+def _make_constant_tensor_value(op, name, np_value, onnx_dtype):
+    return op.Constant(
+        value=helper.make_tensor(
+            name=name, data_type=onnx_dtype,
+            dims=list(np_value.shape),
+            vals=np_value.flatten().tolist(),
+        )
+    )
+
+
+def _make_zero_point_input(op, zero_point, bitwidth, signed):
+    target_onnx_dtype = get_tensorproto_dtype(bitwidth, signed)
+    target_np_dtype   = get_numpy_dtype(bitwidth, signed)
+    if zero_point.const_value is not None:
+        zp_np = np.rint(zero_point.const_value.numpy()).astype(target_np_dtype, copy=False)
+        return _make_constant_tensor_value(
+            op, name=f"{zero_point.name}_qcdq_cast",
+            np_value=zp_np, onnx_dtype=target_onnx_dtype,
+        )
+    logger.warning("Skipping Quant lowering: zero_point is not constant (%s)", zero_point.name)
+    return None
+
 
 def quant_constant_to_dequant(
     op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode
 ):
-    # Extract numpy values
-    x_np = x.const_value.numpy()
-    scale_np = scale.const_value.numpy().squeeze()
-    zero_point_np = zero_point.const_value.numpy().squeeze()
-    bitwidth_np = bitwidth.const_value.numpy().squeeze()
-    signed_val = signed.value
-    narrow_val = narrow.value
-    rounding_mode_val = rounding_mode.value if rounding_mode else "ROUND"
+    x_np              = x.const_value.numpy()
+    scale_np          = scale.const_value.numpy().squeeze()
+    zero_point_np     = zero_point.const_value.numpy().squeeze()
+    bitwidth_np       = int(bitwidth.const_value.numpy().squeeze())
+    signed_val        = bool(_extract_optional_attr_value(signed, False))
+    narrow_val        = bool(_extract_optional_attr_value(narrow, False))
+    rounding_mode_val = _extract_optional_attr_value(rounding_mode, "ROUND")
 
-    # Quantize original constant
     c_x = quant_array(
-        x_np,
-        scale_np,
-        zero_point_np,
-        bitwidth_np,
-        signed=signed_val,
-        narrow=narrow_val,
-        rounding_mode=rounding_mode_val,
+        x_np, scale_np, zero_point_np, bitwidth_np,
+        signed=signed_val, narrow=narrow_val, rounding_mode=rounding_mode_val,
     )
-
-    # Get ONNX dtype for quantized tensor (e.g. UINT8 / INT8 / INT16)
-    data_type = get_tensorproto_dtype(bitwidth_np, signed_val)
-
-    # New quantized constant tensor
-    quantized_tensor = helper.make_tensor(
-        name=f"quantized_{x.name}",
-        data_type=data_type,
-        dims=c_x.shape,
-        vals=c_x.flatten().tolist(),
+    data_type       = get_tensorproto_dtype(bitwidth_np, signed_val)
+    quantized_const = _make_constant_tensor_value(
+        op, name=f"quantized_{x.name}",
+        np_value=np.asarray(c_x), onnx_dtype=data_type,
     )
+    zp_input = _make_zero_point_input(op, zero_point, bitwidth_np, signed_val)
+    if zp_input is None:
+        return op.Identity(x)
+    return op.DequantizeLinear(quantized_const, scale, zp_input)
 
-    # Constant node for the quantized data
-    quantized_const_node = op.Constant(value=quantized_tensor)
 
-    # ----- zero_point handling -----
-    # Default: reuse original zero_point
-    zp_input = zero_point
-
-    # If zero_point is float, create a new initializer with SAME type as c_x
-    if np.issubdtype(zero_point_np.dtype, np.floating):
-        # Round to nearest integer, cast to the same numpy dtype as c_x
-        zp_int_np = np.rint(zero_point_np).astype(c_x.dtype)
-
-        # Preserve original shape (for broadcasting semantics)
-        zp_shape = list(zero_point.const_value.shape)
-
-        zp_tensor = helper.make_tensor(
-            name=f"{zero_point.name}_cast",
-            data_type=data_type,          # same ONNX dtype as quantized tensor
-            dims=zp_shape,
-            vals=zp_int_np.flatten().tolist(),
+def is_dynamic_quant_rewritable(
+    context, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode, **_
+):
+    if x.const_value is not None:
+        return False
+    if any(v.const_value is None for v in [scale, zero_point, bitwidth]):
+        return False
+    bitwidth_scalar   = _extract_scalar_const(bitwidth)
+    if bitwidth_scalar is None:
+        return False
+    signed_val        = _extract_optional_attr_value(signed, False)
+    narrow_val        = _extract_optional_attr_value(narrow, False)
+    rounding_mode_val = _extract_optional_attr_value(rounding_mode, "ROUND")
+    if not _is_supported_quant_config(bitwidth_scalar, signed_val, narrow_val, rounding_mode_val):
+        return False
+    if scale.const_value.numpy().ndim != 0 or zero_point.const_value.numpy().ndim != 0:
+        logger.warning(
+            "Skipping Quant lowering: only scalar scale/zero_point handled in dynamic Q/DQ rewrite"
         )
+        return False
+    return True
 
-        # New Constant node that outputs zero-point with matching integer type
-        zp_input = op.Constant(value=zp_tensor)
-
-    # DequantizeLinear(quantized_x, scale, zero_point_int)
-    return op.DequantizeLinear(quantized_const_node, scale, zp_input)
 
 def create_const_initializer(model, value, dtype):
     init_name = model.make_new_valueinfo_name()
-    model.set_initializer(
-        init_name,
-        np.array(value, dtype=dtype),
-    )
+    model.set_initializer(init_name, np.array(value, dtype=dtype))
     return init_name
 
+
+def quant_to_qcdq(op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode):
+    bitwidth_val = int(bitwidth.const_value.numpy().squeeze())
+    signed_val   = bool(signed.value)
+    zp_input = _make_zero_point_input(op, zero_point, bitwidth_val, signed_val)
+    if zp_input is None:
+        return op.Identity(x)
+    q  = op.QuantizeLinear(x, scale, zp_input)
+    dq = op.DequantizeLinear(q, scale, zp_input)
+    return dq
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main transformation
+# ─────────────────────────────────────────────────────────────────────────────
+
 class ConvertToQCDQ(Transformation):
-    """Convert the model to use QCDQ nodes for quantization."""
+    """Convert QONNX Quant nodes to ONNX Q/DQ.
+
+    Transposes around the nn2fpgaPartition node are inserted in the quantized
+    (INT8) domain so they operate on 1-byte elements rather than 4-byte floats:
+
+      Input side:
+        float → QuantizeLinear(float→int8) → Transpose(int8) → partition
+
+      Output side:
+        partition → Transpose(int8) → DequantizeLinear(int8→float)
+
+    """
 
     def __init__(self):
         self._rewrite_rule_set = pattern.RewriteRuleSet(
@@ -170,30 +233,38 @@ class ConvertToQCDQ(Transformation):
                     constant_quant_pattern,
                     quant_constant_to_dequant,
                     is_quant_with_constant_input,
-                )
+                ),
+                pattern.RewriteRule(
+                    dynamic_quant_pattern,
+                    quant_to_qcdq,
+                    is_dynamic_quant_rewritable,
+                ),
             ],
             commute=True,
         )
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        """Apply the transformation to convert quantization nodes to QCDQ."""
 
-        # Convert the model to QCDQ format
-        model = ir.from_proto(model.model)
-        model = rewrite(model, pattern_rewrite_rules=self._rewrite_rule_set)
-        model = ir.to_proto(model)
-        model = ModelWrapper(model)
-        model = model.transform(QuantToQCDQ())
+        if model.get_nodes_by_op_type("Quant") != []:
+            model = model.transform(QuantToQCDQ())
 
-        # Add transpose and QuantizeLinear/DequantizeLinear nodes around the nn2fpgaPartition node
+            ir_model    = ir.from_proto(model.model)
+            ir_model    = rewrite(ir_model, pattern_rewrite_rules=self._rewrite_rule_set)
+            model_proto = ir.to_proto(ir_model)
+
+            model = ModelWrapper(model_proto)
+            assert model.get_nodes_by_op_type("Quant") == [], \
+                "Not all Quant nodes were rewritten to QCDQ pattern"
+
         partition_nodes = model.get_nodes_by_op_type("nn2fpgaPartition")
-        partition_node = partition_nodes[0] if partition_nodes else None
+        partition_node  = partition_nodes[0] if partition_nodes else None
 
         if partition_node:
             ap = AcceleratorPackage.from_json(
                 getCustomOp(partition_node).get_nodeattr("accelerator_package")
             )
 
+            # ── Inputs: QuantizeLinear(float→int8) → Transpose(int8) ─────
             new_inputs_map = {}
             for i, inp in enumerate(partition_node.input):
 
@@ -201,168 +272,176 @@ class ConvertToQCDQ(Transformation):
                     model.find_producer(inp) is not None
                     and model.find_producer(inp).op_type == "QuantizeLinear"
                 ):
-                    # Skip if the input is already quantized
                     continue
 
                 inp_shape = model.get_tensor_shape(inp)
                 if inp_shape is None:
-                    continue  # Skip if input shape is not available
+                    continue
 
-                inp_shape_nhwc = toNHWC(inp_shape)
+                input_layout = TensorLayout.from_canonical_name(
+                    ap.input_map[inp].get("layout")
+                )
+                assert len(input_layout.perm) == len(
+                    inp_shape
+                ), f"Input layout perm length {len(input_layout.perm)} does not match input shape length {len(inp_shape)} for input '{inp}'"
+                inp_shape_perm = [inp_shape[dim] for dim in input_layout.perm]
 
-                # If the input is already in NHWC format, skip the transpose
-                quant_input_name = inp
-                if inp_shape != inp_shape_nhwc:
-                    quant_input_name = f"{inp}_transposed"
-
-                    perm = list(range(len(inp_shape_nhwc)))
-                    perm = toNHWC(perm)  # Convert to NHWC permutation
-                    transpose_before = helper.make_node(
-                        "Transpose",
-                        name=f"{inp}_transpose",
-                        inputs=[inp],
-                        outputs=[f"{inp}_transposed"],
-                        perm=perm,
+                input_tensor_type = TensorType.from_canonical_name(
+                    ap.input_map[inp]["quant"]
+                )
+                
+                tensor_name = inp
+                if isinstance(input_tensor_type, QuantizedTensorType):
+                    # The expected input tensor is quantized, thus we need 
+                    # to insert QuantizeLinear before the partition input.
+                    scale_init_name  = create_const_initializer(
+                        model, input_tensor_type.scale, np.float32
+                    )
+                    zeropt_init_name = create_const_initializer(
+                        model, input_tensor_type.zeropt,
+                        input_tensor_type.get_numpy_dtype()
+                    )
+                    # 1. Quantize the original float tensor (shape unchanged)
+                    quantize_node = helper.make_node(
+                        "QuantizeLinear",
+                        inputs=[inp, scale_init_name, zeropt_init_name],
+                        outputs=[f"{inp}_quantized"],
+                        name=f"{inp}_quantize",
+                        axis=len(inp_shape) - 1,
                     )
                     model.set_tensor_shape(
-                        f"{inp}_transposed",
-                        inp_shape_nhwc,
+                        f"{inp}_quantized",
+                        inp_shape,
+                        dtype=input_tensor_type.get_tensorproto_dtype(),
                     )
-                    model.graph.node.append(transpose_before)
+                    model.graph.node.append(quantize_node)
+                    tensor_name = f"{inp}_quantized"
 
-                input_tensor_quant = TensorQuant.from_canonical_name(ap.input_map[inp]["quant"])
-                scale_init_name = create_const_initializer(
-                    model,
-                    input_tensor_quant.scale,
-                    np.float32,
-                )
-                zeropt_init_name = create_const_initializer(
-                    model,
-                    input_tensor_quant.zeropt,
-                    input_tensor_quant.get_numpy_dtype()
-                )
+                if not input_layout.is_identity():
+                    # The expected input layout is not the onnx layout, 
+                    # thus we need to insert a Transpose.
 
-                quantize_node = helper.make_node(
-                    "QuantizeLinear",
-                    inputs=[quant_input_name, scale_init_name, zeropt_init_name],
-                    outputs=[f"{inp}_quantized"],
-                    name=f"{inp}_quantize",
-                    axis=1,  # Channel axis for NHWC
-                )
-                model.set_tensor_shape(
-                    f"{inp}_quantized",
-                    inp_shape_nhwc,
-                    dtype=input_tensor_quant.get_tensorproto_dtype(),
-                )
+                    transpose_node = helper.make_node(
+                        "Transpose",
+                        name=f"{inp}_transpose",
+                        inputs=[f"{tensor_name}"],
+                        outputs=[f"{tensor_name}_transposed"],
+                        perm=input_layout.perm,
+                    )
+                    model.set_tensor_shape(
+                        f"{tensor_name}_transposed",
+                        inp_shape_perm,
+                        dtype=input_tensor_type.get_tensorproto_dtype(),
+                    )
+                    model.graph.node.append(transpose_node)
+                    tensor_name = f"{tensor_name}_transposed"
 
-                model.graph.node.append(quantize_node)
-                new_inputs_map[inp] = (i, f"{inp}_quantized")
+                new_inputs_map[inp] = (i, f"{tensor_name}")
 
             if new_inputs_map:
-                # Replace the inputs with the transposed versions
                 for old_name, (index, new_name) in new_inputs_map.items():
                     partition_node.input[index] = new_name
 
-                # 2) Update the input map in the accelerator package and preserve the order
-                rename = {old: new for old, (_, new) in new_inputs_map.items()}
-                old_map = ap.input_map
-                ap.input_map = {rename.get(k, k): v for k, v in old_map.items()}
+                rename       = {old: new for old, (_, new) in new_inputs_map.items()}
+                ap.input_map = {rename.get(k, k): v for k, v in ap.input_map.items()}
 
-                # 3) Update shapes
                 for old_name, (_, new_name) in new_inputs_map.items():
-                    ap.input_map[new_name]["shape"] = toNHWC(ap.input_map[new_name]["shape"])
+                    input_layout = TensorLayout.from_canonical_name(
+                        ap.input_map[new_name].get("layout")
+                    )
+                    inp_shape    = ap.input_map[new_name]["shape"]
+                    inp_perm     = [dim for dim in input_layout.perm if dim < len(inp_shape)]
+                    ap.input_map[new_name]["shape"] = [inp_shape[dim] for dim in inp_perm]
 
+            # ── Outputs: Transpose(int8) → DequantizeLinear(int8→float) ──
             new_outputs_map = {}
             for i, out in enumerate(partition_node.output):
                 consumers = model.find_consumers(out)
 
-                if consumers is not None and all(
+                if len(consumers) > 0 and all(
                     consumer.op_type == "DequantizeLinear" for consumer in consumers
                 ):
-                    # Skip if the output is already dequantized
                     continue
 
                 out_shape = model.get_tensor_shape(out)
                 if out_shape is None:
                     continue
 
-                # Compute the shape in output to the nn2fpgaPartition node which is channel last format
-                out_shape_nhwc = toNHWC(out_shape)
-
-                # If the shapes in channel last and channel first formats are the same, skip
-                # the transpose node and assign the output directly to the dequantize node
-                dequant_output_name = f"{out}_dequantized"
-                if out_shape == out_shape_nhwc:
-                    dequant_output_name = out
-
-                output_tensor_quant = TensorQuant.from_canonical_name(ap.output_map[out]["quant"])
-                scale_init_name = create_const_initializer(
-                    model,
-                    output_tensor_quant.scale,
-                    np.float32,
+                output_layout = TensorLayout.from_canonical_name(
+                    ap.output_map[out].get("layout")
                 )
-                zeropt_init_name = create_const_initializer(
-                    model,
-                    output_tensor_quant.zeropt,
-                    output_tensor_quant.get_numpy_dtype()
+                assert len(output_layout.perm) == len(
+                    out_shape
+                ), f"Output layout perm length {len(output_layout.perm)} does not match output shape length {len(out_shape)} for output '{out}'"
+                out_shape_perm = [out_shape[dim] for dim in output_layout.perm]
+
+                output_tensor_type = TensorType.from_canonical_name(
+                    ap.output_map[out]["quant"]
                 )
 
-                dequantize_node = helper.make_node(
-                    "DequantizeLinear",
-                    inputs=[f"{out}_quantized", scale_init_name, zeropt_init_name],
-                    outputs=[dequant_output_name],
-                    name=f"{out}_dequantize",
-                    axis=1,  # Channel axis for NHWC
-                )
+                tensor_name = out
+                if isinstance(output_tensor_type, QuantizedTensorType):
+                    scale_init_name  = create_const_initializer(
+                        model, output_tensor_type.scale, np.float32
+                    )
+                    zeropt_init_name = create_const_initializer(
+                        model, output_tensor_type.zeropt,
+                        output_tensor_type.get_numpy_dtype()
+                    )
 
-                model.set_tensor_shape(
-                    f"{out}_quantized",
-                    out_shape_nhwc,
-                    dtype=output_tensor_quant.get_tensorproto_dtype(),
-                )
+                    # Partition output tensor name carries the int8 data
+                    model.set_tensor_shape(
+                        f"{tensor_name}_quantized",
+                        out_shape,
+                        dtype=output_tensor_type.get_tensorproto_dtype(),
+                    )
+                    # 2. Dequantize the transposed int8 tensor back to float
+                    dequantize_node = helper.make_node(
+                        "DequantizeLinear",
+                        inputs=[f"{tensor_name}_quantized",
+                                scale_init_name, zeropt_init_name],
+                        outputs=[out],
+                        name=f"{out}_dequantize",
+                        axis=len(out_shape) - 1,
+                    )
+                    model.graph.node.append(dequantize_node)
+                    tensor_name = f"{tensor_name}_quantized"
 
-                model.graph.node.append(dequantize_node)
-                if out_shape != out_shape_nhwc:
-                    # Add a Transpose node after the partition node
-                    perm = list(range(len(out_shape_nhwc)))
-                    perm = toNCHW(perm)  # Convert to NCHW permutation
-                    # Create a Transpose node to convert from NHWC to NCHW
-                    # This is needed because the output of the partition node is in NHWC format
-                    # but the rest of the model expects NCHW format
-
-                    transpose_after = helper.make_node(
+                if not output_layout.is_identity():
+                    transpose_node = helper.make_node(
                         "Transpose",
                         name=f"{out}_transpose",
-                        inputs=[f"{out}_dequantized"],
-                        outputs=[out],
-                        perm=perm,  # NHWC to NCHW
+                        inputs=[f"{tensor_name}_pre_transpose"],
+                        outputs=[f"{tensor_name}"],
+                        perm=output_layout.inverse().perm,  # Inverse perm to get back to original layout
                     )
                     model.set_tensor_shape(
-                        f"{out}_dequantized",
-                        out_shape_nhwc,
+                        f"{tensor_name}_pre_transpose",
+                        out_shape_perm,
+                        dtype=output_tensor_type.get_tensorproto_dtype(),
                     )
+                    model.graph.node.append(transpose_node)
+                    tensor_name = f"{tensor_name}_pre_transpose"
 
-                    model.graph.node.append(transpose_after)
-                new_outputs_map[out] = (i, f"{out}_quantized")
+                new_outputs_map[out] = (i, f"{tensor_name}")
 
             if new_outputs_map:
-                # Replace the outputs with the transposed versions
                 for old_name, (index, new_name) in new_outputs_map.items():
-                    # Update the partition node output
                     partition_node.output[index] = new_name
 
-                # 2) Update the output map in the accelerator package and preserve the order
-                rename = {old: new for old, (_, new) in new_outputs_map.items()}
-                old_map = ap.output_map
-                ap.output_map = {rename.get(k, k): v for k, v in old_map.items()}
+                rename        = {old: new for old, (_, new) in new_outputs_map.items()}
+                ap.output_map = {rename.get(k, k): v for k, v in ap.output_map.items()}
 
-                # 3) Update shapes
                 for old_name, (_, new_name) in new_outputs_map.items():
-                    ap.output_map[new_name]["shape"] = toNHWC(ap.output_map[new_name]["shape"])
+                    output_layout = TensorLayout.from_canonical_name(
+                        ap.output_map[new_name].get("layout")
+                    )
+                    out_shape  = ap.output_map[new_name]["shape"]
+                    out_perm   = [dim for dim in output_layout.perm if dim < len(out_shape)]
+                    ap.output_map[new_name]["shape"] = [out_shape[dim] for dim in out_perm]
 
-            # Set the updated accelerator package back to the partition node
             getCustomOp(partition_node).set_nodeattr(
                 "accelerator_package", ap.to_json()
             )
-
+        
         return model, False

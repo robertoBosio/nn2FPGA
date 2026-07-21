@@ -1,6 +1,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import SortGraph
 from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata
@@ -26,6 +27,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
     # Include sections for HLS
     cwr.include("ap_int.h")
+    cwr.include("ap_float.h")
     cwr.include("hls_stream.h")
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
@@ -43,35 +45,89 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                     rel_path = rel_path.replace(os.sep, "/")
                     if "testbench" not in rel_path:
                         cwr.include(rel_path)
-    
+
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
     function.add_code("#pragma HLS TOP")
     function.add_code("#pragma HLS DATAFLOW disable_start_propagation")
     function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    for input_name in [input['new_name'] for input in ap.input_map.values()]:
+    for input in ap.input_map.values():
+        input_name = input['new_name']
+        mode = input['mode']
         tensor_fifo = get_custom_tensor_fifo_metadata(model, input_name)
+        if mode == "axis":
+            var = cpp_variable(
+                input_name,
+                f"hls::stream<{tensor_fifo.hls_type}>&",
+                pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
+            )
+        elif mode == "m_axi":
+            var = cpp_variable(
+                input_name,
+                f"{tensor_fifo.hls_type}*",
+                pragma=[
+                    f"#pragma HLS INTERFACE m_axi port={input_name} bundle={input_name}_bundle",
+                ],
+            )
+        else:
+            raise ValueError(f"Unsupported mode {mode} for input {input_name}")
+        function.add_argument(var)
+        for pragma in var.pragma:
+            function.add_code(pragma)
+
+    for output in ap.output_map.values():
+        output_name = output['new_name']
+        mode = output['mode']
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, output_name)
+        if mode == "axis":
+            var = cpp_variable(
+                output_name,
+                f"hls::stream<{tensor_fifo.hls_type}>&",
+                pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
+        )
+        elif mode == "m_axi":
+            var = cpp_variable(
+                output_name,
+                f"{tensor_fifo.hls_type}*",
+                pragma=[
+                    f"#pragma HLS INTERFACE m_axi port={output_name} bundle={output_name}_bundle",
+                ],
+            )
+        else:
+            raise ValueError(f"Unsupported mode {mode} for output {output_name}")
+        function.add_argument(var)
+        for pragma in var.pragma:
+            function.add_code(pragma)
+    
+    for buffer_name, buffer in ap.buffer_map.items():
+        read_buffer = f"{buffer_name}_read"
         var = cpp_variable(
-            input_name,
-            f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
+            read_buffer,
+            f"{buffer['hls_type']}*",
+            pragma=[
+                f"#pragma HLS INTERFACE m_axi port={read_buffer} bundle={read_buffer}_bundle depth={buffer['depth']}",
+                f"#pragma HLS STABLE variable={read_buffer}",
+            ],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
 
-    for output_name in [output['new_name'] for output in ap.output_map.values()]:
-        tensor_fifo = get_custom_tensor_fifo_metadata(model, output_name)
+        write_buffer = f"{buffer_name}_write"
         var = cpp_variable(
-            output_name,
-            f"hls::stream<{tensor_fifo.hls_type}>&",
-            pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
+            write_buffer,
+            f"{buffer['hls_type']}*",
+            pragma=[
+                f"#pragma HLS INTERFACE m_axi port={write_buffer} bundle={write_buffer}_bundle depth={buffer['depth']}",
+                f"#pragma HLS STABLE variable={write_buffer}",
+            ],
         )
         function.add_argument(var)
         for pragma in var.pragma:
             function.add_code(pragma)
-    
+        function.add_code(f"#pragma HLS ALIAS ports = {read_buffer}, {write_buffer} distance = 0")
+
     stream_vars = {}
     for fifo in model.graph.value_info:
 
@@ -85,7 +141,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                 array=tensor_fifo.n_array,
             )
             stream_vars[trimmed_name] = (var, [1] * tensor_fifo.n_array)
-    
+
     for fifo in model.graph.value_info:
 
         # Read the index in the array from the name of the fifo.
@@ -96,6 +152,12 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
         index = int(m.group(2))
         if base_name not in stream_vars:
             raise ValueError(f"Stream {base_name} not found in stream_vars.")
+
+        # Checks that the fifo name does not start with a digit, as Vitis HLS
+        # does not allow it in the variable name.
+        if re.match(r"^\d", base_name):
+            raise ValueError(f"Stream name {base_name} cannot start with a digit.")
+
         tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
         var, arr = stream_vars[base_name]
         arr[index] = tensor_fifo.depth
@@ -136,7 +198,6 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                 function.add_code(f'std::cout << "{trimmed_name}," << {base_name}[{index}].size() << std::endl;')
             function.add_code(f'#endif') 
 
-
     cwr.add_function_definition(function)
     return cwr.code
 
@@ -145,21 +206,22 @@ class EmbedHLSCode(Transformation):
     Class to handle the conversion of ONNX models to HLS (High-Level Synthesis) format.
     """
 
-    def __init__(self, nn2fpga_model: ModelWrapper, work_root: str = "/tmp", erase: bool = True):
+    def __init__(self, hls_model: ModelWrapper, work_root: str = "/tmp", erase: bool = True):
         """
         Initializes the OnnxToHLS transformation.
         Args:
             work_root (str): The root directory of the project.
-            nn2fpga_model (ModelWrapper): The model ready to be converted to HLS.
+            hls_model (ModelWrapper): The model ready to be converted to HLS.
             erase (bool): If True, the starting onnx models will be erased after the transformation.
         """
         super().__init__()
         self.work_root = work_root
-        self.nn2fpga_model = nn2fpga_model
+        self.hls_model = hls_model
         self.erase = erase
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
+        model = model.transform(SortGraph())
         partition_nodes = model.get_nodes_by_op_type("nn2fpgaPartition")
         if not partition_nodes:
             raise ValueError(f"Partition nodes not found in model.")
@@ -169,12 +231,12 @@ class EmbedHLSCode(Transformation):
         partition_node = partition_nodes[0]
 
         ap = AcceleratorPackage.from_json(
-            self.nn2fpga_model.get_metadata_prop("accelerator_package")
+            self.hls_model.get_metadata_prop("accelerator_package")
         )
 
         # Update the accelerator package with the HLS code and driver
         ap.work_dir = self.work_root
-        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.nn2fpga_model, ap).encode()).decode("ascii")
+        ap.hls_code_b64 = base64.b64encode(generate_hls_code(self.hls_model, ap).encode()).decode("ascii")
 
         getCustomOp(partition_node).set_nodeattr(
             "accelerator_package", ap.to_json()

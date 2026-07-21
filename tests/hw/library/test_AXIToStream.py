@@ -1,15 +1,15 @@
 import csnake
 from .base_hls_test import BaseHLSTest
 
-class TestNHWCToStream(BaseHLSTest):
+class TestAXIToStream(BaseHLSTest):
 
     @property
     def operator_filename(self) -> str:
-        return "NHWCToStream"
+        return "AXIToStream"
     
     @property
     def unit_filename(self) -> str:
-        return "NHWCToStream"
+        return "AXIToStream"
 
     def generate_config_file(self, config_dict):
 
@@ -42,11 +42,11 @@ class TestNHWCToStream(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 128,
             "OUT_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 4,
-            "OUT_W_PAR": 1,
-            "OUT_CH_PAR": 2,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 2,
             "DATA_PER_WORD": 16,
             "PIPELINE_DEPTH": 4,
         }
@@ -56,11 +56,11 @@ class TestNHWCToStream(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 64,
             "OUT_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 3,
-            "OUT_W_PAR": 2,
-            "OUT_CH_PAR": 3,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 3,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 3,
             "DATA_PER_WORD": 8,
             "PIPELINE_DEPTH": 1,
         }
@@ -70,11 +70,11 @@ class TestNHWCToStream(BaseHLSTest):
         config_dict = {
             "AXI_DATAWIDTH": 64,
             "OUT_DATAWIDTH": 8,
-            "WIDTH": 4,
-            "HEIGHT": 4,
-            "CH": 3,
-            "OUT_W_PAR": 1,
-            "OUT_CH_PAR": 3,
+            "DIM1": 4,
+            "DIM0": 4,
+            "DIM2": 3,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 3,
             "DATA_PER_WORD": 8,
             "PIPELINE_DEPTH": 2,
         }

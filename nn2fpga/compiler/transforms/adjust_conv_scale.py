@@ -1,12 +1,11 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 from qonnx.custom_op.registry import getCustomOp
 import logging
 import numpy as np
 import math
 from nn2fpga.compiler.transforms.add_streaming_params import quant_array, safe_int_quant_call
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
 logger = logging.getLogger(__name__)
 
 NODES_WITH_BIAS = [
@@ -131,15 +130,19 @@ class AdjustConvScale(Transformation):
                     "AdjustBiasScale only supports both per-tensor or both per-channel."
                 )
 
-            # Prepare TensorQuant objects to inspect quant params
-            bias_tensor_quant = TensorQuant.from_quant_node(bias_q, model)
-            weight_tensor_quant = TensorQuant.from_quant_node(w_q, model)
+            # Prepare TensorType objects to inspect quant params
+            bias_tensor_quant = QuantizedTensorType.from_quant_node(bias_q, model)
+            weight_tensor_quant = QuantizedTensorType.from_quant_node(w_q, model)
+            eps = 1e-6
 
             # If per-tensor mode
             if bias_was_per_tensor:
                 b_scalar = float(bias_scale[0])
                 w_scalar = float(weight_scale[0])
                 x_scalar = float(input_scale[0]) if input_scale.size == 1 else float(np.max(input_scale))
+
+                if abs(b_scalar - w_scalar * x_scalar) < eps:
+                    continue # Already aligned, no adjustment needed.
 
                 if w_scalar * x_scalar > b_scalar:
                     # In case bias_scale < input_scale * weight_scale we need to rescale the weights
@@ -204,7 +207,6 @@ class AdjustConvScale(Transformation):
                 # weight rescale (because bias scale < input*weight and dividing bias ints would lose bits).
                 prod_s = (w_s * x_s).astype(np.float32)
                 # small epsilon to avoid division by zero
-                eps = 1e-12
                 need_rescale_weights = prod_s > (b_s + eps)   # boolean array length c_out
 
                 logger.debug(

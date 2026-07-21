@@ -1,12 +1,14 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.transforms.propagate_quant import QUANT_INVARIANT_NODES
-from nn2fpga.compiler.core.tensor_quant import (
+from nn2fpga.compiler.core.tensor_type import (
     get_custom_tensor_datatype,
     set_custom_tensor_datatype,
 )
 import numpy as np
+import logging
 
+logger = logging.getLogger(__name__)
 
 class InferQuant(Transformation):
     """Infer quantization parameters for nodes without quantization parameters that are quant invariant."""
@@ -29,5 +31,8 @@ class InferQuant(Transformation):
             if input_quant is not None:
                 # If the input has quantization parameters, set them for the output
                 set_custom_tensor_datatype(model, node.output[0], input_quant)
+                logger.info(
+                    f"Inferred quantization parameters for node {node.name} ({node.op_type}) based on input quantization."
+                )
 
         return (model, False)

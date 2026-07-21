@@ -1,28 +1,21 @@
-from attr import dataclass
-
 import numpy as np
 import onnxruntime as rt
+from attr import dataclass
 from onnx import TensorProto, helper
-from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp, NodeInterface
+from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_stream_type,
-    get_hls_quant_type,
+    get_word_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
-from nn2fpga.compiler.utils.par_utils import get_par_attributes
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
-from onnxscript import ir
-from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 import logging
 
@@ -53,13 +46,12 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
                 StreamingSoftmax.rewrite,
             )
         ]
-    
+
     @dataclass(frozen=True)
     class DSEPoint:
         lanes_unroll: int
         reduction_unroll: int
 
-        # optional helpers to interop with old code / ONNX storage
         def to_dict(self) -> dict:
             return {
                 "lanes_unroll": self.lanes_unroll,
@@ -147,53 +139,49 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         """
         return f"{name}_stream"
 
-    def __get_accumulator(self, input_shape, input_quant: TensorQuant) -> str:
+    def __get_accumulator(self, n_sums: int, input_quant: QuantizedTensorType) -> str:
         """
         Get the accumulator type for the given input quantization.
         For softmax, we need to accumulate exponentials, so we need a wider type.
         We can use a simple heuristic of doubling the bitwidth for the accumulator.
         """
-        axis = self.get_nodeattr("axis")
-        if axis < 0:
-            axis += len(input_shape)
-        n_sums = input_shape[axis]
         accumulator_bitwidth = EXP_PRECISION + int(np.floor(np.log2(n_sums) + 1))
 
         signed = False
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=accumulator_bitwidth,
             signed=signed,
             scale=input_quant.scale,
             zeropt=input_quant.zeropt,
         )
-        return f"{get_hls_quant_type(acc_quant)}"
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __get_lut_type(self) -> str:
         """
         Get the type for the LUT entries in the softmax computation.
         The LUT stores quantized exponentials.
         """
-        lut_quant = TensorQuant(
+        lut_quant = QuantizedTensorType(
             bitwidth=EXP_PRECISION,  # Use the output bitwidth for max precision
             signed=False,
             scale=0.0, # Not the actual scale, but it is usless for type generation.
             zeropt=0,
         )
-        return f"{get_hls_quant_type(lut_quant)}"
+        return f"{lut_quant.get_hls_data_type()}"
 
     def __get_division_type(self) -> str:
         """
         Get the type for the division result in the softmax computation.
         """
 
-        div_quant = TensorQuant(
+        div_quant = QuantizedTensorType(
             bitwidth=DIV_PRECISION,
             signed=False,
             scale=0.0, # Not the actual scale, but it is usless for type generation.
             zeropt=0,
         )
-        return f"{get_hls_quant_type(div_quant)}"
-    
+        return f"{div_quant.get_hls_data_type()}"
+
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
@@ -206,7 +194,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             self.__is_power_of_two(output_quant.scale)
         ):
             shift = ((DIV_PRECISION - EXP_PRECISION) + int(np.log2(output_quant.scale)))
-            return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {get_hls_quant_type(output_quant)}>"
+            return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingSoftmax."
@@ -253,23 +241,19 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quant is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        axis = self.get_nodeattr("axis")
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        input_shape = [1] * (4 - len(input_shape)) + input_shape
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
-        output_shape = [1] * (4 - len(output_shape)) + output_shape
+        # In the case of -1, we need to convert it to the actual axis index
+        # based on the actual tensor input shape, not the expanded one. 
+        if axis < 0:
+            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
+        axis_permuted = input_layout.perm.index(axis)
 
-        dim_reduction = input_shape[self.get_nodeattr("axis")]
+        dim_reduction = input_shape[axis_permuted]
         dim_lanes = np.prod(input_shape) // dim_reduction
 
         lut_size = 1 << input_quant.bitwidth
@@ -278,26 +262,26 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quant)}",
+                    f"{input_quant.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
                     f"{self.__get_lut_type()}",
                     f"TLUT",
                 ),
-                (f"{self.__get_accumulator(input_shape, input_quant)}", "TAcc"),
+                (f"{self.__get_accumulator(dim_reduction, input_quant)}", "TAcc"),
                 (f"{self.__get_division_type()}", "TDiv"),
                 (f"{self.__get_quantizer(output_quant)}", "Quantizer"),
                 (f"{lut_size}", "LUT_SIZE"),
@@ -365,20 +349,20 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}_lut",
             self.__get_stream_name(self.onnx_node.output[0]),
         )
+    
+
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingSoftmax is layout-agnostic, so it accepts any input layout. """
+        return None
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingSoftmax is layout-agnostic, so it produces the same layout as input. """
+        return input_layout
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -394,7 +378,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -424,12 +408,10 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
+        input_shape = self.require_4d_input_shape(model, 0)
 
         unroll_factor = self.get_nodeattr("lanes_unroll") * self.get_nodeattr("reduction_unroll")
-        return np.prod(input_shape) * 2 // unroll_factor
+        return np.prod(input_shape) * 3 // unroll_factor
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingSoftmax operation.
@@ -456,7 +438,7 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
             bool: True if Line Buffering is required, False otherwise.
         """
         return False
-    
+
     def __current_dse_point(self) -> "StreamingSoftmax.DSEPoint":
         """ Returns the current DSE point of the StreamingSoftmax operation. """
         return StreamingSoftmax.DSEPoint(
@@ -467,47 +449,26 @@ class StreamingSoftmax(NN2FPGAOp, DSECapable):
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingSoftmax.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingSoftmax operation."""
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        axis = self.get_nodeattr("axis")
+        if axis < 0:
+            axis += len(model.get_tensor_shape(self.onnx_node.input[0]))
+        axis_permuted = input_layout.perm.index(axis)
 
-        dim_reduction = input_shape[self.get_nodeattr("axis")]
+        dim_reduction = input_shape[axis_permuted]
         dim_lanes = np.prod(input_shape) // dim_reduction
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for lanes_unroll in divisors([dim_lanes], dim_lanes):
-            for reduction_unroll in divisors([dim_reduction], dim_reduction):
+        for lanes_unroll in self.divisors([dim_lanes], dim_lanes):
+            for reduction_unroll in self.divisors([dim_reduction], dim_reduction):
                 # Check dimension of input streams
                 if (input_bits * reduction_unroll) > 4096:
                     continue

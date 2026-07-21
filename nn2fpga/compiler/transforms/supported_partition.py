@@ -8,10 +8,11 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.create_generic_partitions import PartitionFromDict
 from qonnx.transformation.general import SortGraph
-from nn2fpga.compiler.core.tensor_quant import is_constant_input_node
+from nn2fpga.compiler.core.tensor_type import is_constant_input_node
 from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple, Optional
+from fractions import Fraction
 import logging
 logger = logging.getLogger(__name__)
 
@@ -58,14 +59,16 @@ def _is_const_source(model, tensor_name: str) -> bool:
     """Initializer OR produced by Constant op."""
     if tensor_name == "" or tensor_name is None:
         return False
+    if _is_initializer(model, tensor_name):
+        return True
     p = model.find_producer(tensor_name)
     if p is None:
         return False
     if p.op_type == "Constant":
         return True
-    if _is_initializer(model, p.input[0]):
-        return True
-    return False
+    if p.op_type == "Quant" or p.op_type == "IntQuant":
+        # Check if all inputs to this Quant node are initializers (params quant) or not (act quant)
+        return is_constant_input_node(model, p)
 
 def check_attribute(
     node: onnx.NodeProto, attr_name: str, expected_value, reasons: list, optional=False
@@ -187,10 +190,10 @@ def check_act_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list) ->
     scale = numpy_helper.to_array(get_by_name(graph.initializer, scale_name))
     zeropt = numpy_helper.to_array(get_by_name(graph.initializer, zeropt_name))
 
-    # Check if per-channel (length > 1)
-    if scale.ndim > 1 or zeropt.ndim > 1:
-        reasons.append(f"Activation Quant with unspported per-channel quantization")
-        return False  # Per-channel quantization is not supported for activations.
+    # Activation quantization must be per-tensor, not per-channel.
+    if np.asarray(scale).size != 1 or np.asarray(zeropt).size != 1:
+        reasons.append("Activation Quant with unsupported per-channel quantization")
+        return False
     
     # Check that the zero point is close to integer values
     if float(zeropt.item()).is_integer() is False:
@@ -215,17 +218,18 @@ def _same_quant_params(model: ModelWrapper, nodeA: onnx.NodeProto, nodeB: onnx.N
     # Get scale and zero_point initializers
     scale_name = nodeA.input[1]
     zeropt_name = nodeA.input[2]
-    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name))
-    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name))
+    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name)).flatten()
+    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name)).flatten()
     scales.append(scale)
     zeropts.append(zeropt)
 
     scale_name = nodeB.input[1]
     zeropt_name = nodeB.input[2]
-    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name))
-    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name))
+    scale = numpy_helper.to_array(get_by_name(model.graph.initializer, scale_name)).flatten()
+    zeropt = numpy_helper.to_array(get_by_name(model.graph.initializer, zeropt_name)).flatten()
     scales.append(scale)
     zeropts.append(zeropt)
+    logger.info(f"Comparing quant params: scales {scales}, zeropts {zeropts}")
 
     # Check if all scales and zero points are the same
     supported = True
@@ -362,6 +366,9 @@ class MulHardSigmoidTimesConst(Pattern):
 
         hs = None
         const_op = None
+        logger.info(
+            f"Checking Mul inputs for HardSigmoid+Const pattern: a={a} (producer {pa.op_type if pa else 'None'}), b={b} (producer {pb.op_type if pb else 'None'})"
+        )
 
         if pa is not None and pa.op_type == "HardSigmoid" and _is_const_source(model, b):
             hs = pa
@@ -712,12 +719,12 @@ class AddQuant(Pattern):
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
 
-class ConcatQuantSameParamsAxis1(Pattern):
+class ConcatQuantSameParamsAxis(Pattern):
     """
     Matches Concat where all inputs come from activation Quant/IntQuant
-    AND have identical (scale, zeropt), AND axis==1.
+    AND have identical (scale, zeropt).
     """
-    name = "Concat(Quant(...)) same params + axis=1"
+    name = "Concat(Quant(...)) same params"
     anchor_op = "Concat"
 
     def _match_impl(self, model, anchor_node) -> Match:
@@ -727,13 +734,24 @@ class ConcatQuantSameParamsAxis1(Pattern):
         if len(anchor_node.input) < 2:
             return Match(False, self.name, covered, ["Concat expects >=2 inputs"])
 
-        if (
-            not check_attribute(anchor_node, "axis", 1, reasons)
-            and not check_attribute(anchor_node, "axis", 2, reasons)
-            and not check_attribute(anchor_node, "axis", 3, reasons)
-        ):
+        axis_attr = get_by_name(anchor_node.attribute, "axis")
+        if axis_attr is None:
+            reasons.append("Attribute axis not found")
             return Match(False, self.name, covered, reasons)
 
+        input_shape = model.get_tensor_shape(anchor_node.input[0])
+        if input_shape is None:
+            reasons.append("Concat input shape unknown")
+            return Match(False, self.name, covered, reasons)
+
+        axis = axis_attr.i
+        if axis < 0:
+            axis += len(input_shape)
+        if axis not in (1, 2, 3):
+            reasons.append(f"Concat axis must resolve to 1, 2, or 3, got {axis_attr.i}")
+            return Match(False, self.name, covered, reasons)
+
+        reasons = []  # reset reasons for quant checks
         qnodes = []
         for inp in anchor_node.input:
             q = model.find_producer(inp)
@@ -868,6 +886,53 @@ class HardSigmoidQuant(QuantizedActivationPattern):
 class LeakyReluQuant(QuantizedActivationPattern):
     anchor_op = "LeakyRelu"
     name = "LeakyRelu(Quant(x))"
+
+class LeakyReluQuantOrFusable(Pattern):
+    """
+    Mirrors the current Relu logic:
+      - Either: LeakyRelu input is produced by activation Quant/IntQuant satisfying check_act_quant
+      - Or: LeakyRelu input producer is in [Conv, Gemm, Add] (assumed fusable)
+    """
+    name = "LeakyRelu(Quant(x)) or fused into Conv/Gemm/Add"
+    anchor_op = "LeakyRelu"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 1:
+            return Match(False, self.name, covered, ["Missing input"])
+
+        prod = model.find_producer(anchor_node.input[0])
+        if prod is None:
+            reasons.append("LeakyRelu input has no producer")
+            return Match(False, self.name, covered, reasons)
+
+        # Case 1: quantized input
+        if prod.op_type in ("Quant", "IntQuant"):
+            if not check_act_quant(model, prod, reasons):
+                return Match(False, self.name, covered, reasons)
+            covered.update({anchor_node.name, prod.name})
+            return Match(True, self.name, covered, reasons)
+
+        # Case 2: fusable into preceding op (requires Po2 alpha denominator)
+        if prod.op_type in ("Conv", "Gemm", "Add"):
+            alpha_attr = get_by_name(anchor_node.attribute, "alpha")
+            if alpha_attr is None:
+                reasons.append("Missing alpha attribute")
+                return Match(False, self.name, covered, reasons)
+            alpha_frac = Fraction(alpha_attr.f).limit_denominator()
+            if alpha_frac.denominator <= 0 or not (alpha_frac.denominator > 0 and float(np.log2(alpha_frac.denominator)).is_integer()):
+                reasons.append(
+                    f"LeakyReLU alpha denominator {alpha_frac.denominator} is not a power of two; "
+                    f"fused LeakyReLU requires a power-of-two alpha denominator"
+                )
+                return Match(False, self.name, covered, reasons)
+            covered.update({anchor_node.name})
+            return Match(True, self.name, covered, reasons)
+
+        reasons.append("LeakyRelu must be quantized or fusable into Conv/Gemm/Add")
+        return Match(False, self.name, covered, reasons)
 
 class SigmoidQuant(QuantizedActivationPattern):
     anchor_op = "Sigmoid"
@@ -1160,6 +1225,84 @@ class SliceSplitTreeFeasibleQuantized(Pattern):
             prev_end = en
         return prev_end == dim
 
+class YoloHeadSoftmax(Pattern):
+    """
+    Match the softmax in the YOLO head, anchored at the Softmax node:
+
+      Quant -> Reshape -> Quant -> Transpose -> Quant -> Softmax -> Quant -> Conv
+    """
+    name = "YoloHeadSoftmax"
+    anchor_op = "Softmax"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+
+        if len(anchor_node.input) < 1:
+            return Match(False, self.name, covered, ["Softmax missing required input"])
+
+        softmax_output_quant = model.find_consumer(anchor_node.output[0])
+        if softmax_output_quant is None or not check_act_quant(model, softmax_output_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax output must be consumed by supported activation Quant/IntQuant"],
+            )
+        covered.add(anchor_node.name)
+        covered.add(softmax_output_quant.name)
+
+        conv = model.find_consumer(softmax_output_quant.output[0])
+        if conv is None or conv.op_type != "Conv":
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax output quant must be consumed by a Conv"],
+            )
+        covered.add(conv.name)
+
+        softmax_quant = model.find_producer(anchor_node.input[0])
+        if softmax_quant is None or not check_act_quant(model, softmax_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Softmax input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(softmax_quant.name)
+
+        softmax_transpose = model.find_producer(softmax_quant.input[0])
+        if softmax_transpose is None or softmax_transpose.op_type != "Transpose":
+            return Match(False, self.name, covered, ["Softmax input quant must be produced by a Transpose"])
+        covered.add(softmax_transpose.name)
+
+        transpose_quant = model.find_producer(softmax_transpose.input[0])
+        if transpose_quant is None or not check_act_quant(model, transpose_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Transpose input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(transpose_quant.name)
+
+        reshape = model.find_producer(transpose_quant.input[0])
+        if reshape is None or reshape.op_type != "Reshape":
+            return Match(False, self.name, covered, ["Transpose input must be produced by a Reshape"])
+        covered.add(reshape.name)
+
+        reshape_quant = model.find_producer(reshape.input[0])
+        if reshape_quant is None or not check_act_quant(model, reshape_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Reshape input must be produced by supported activation Quant/IntQuant"],
+            )
+        covered.add(reshape_quant.name)
+        return Match(True, self.name, covered, reasons)
+
 class YoloAttentionFromInputReshape(Pattern):
     """
     Match the full YOLO attention block anchored at the initial Reshape:
@@ -1182,7 +1325,6 @@ class YoloAttentionFromInputReshape(Pattern):
         -> Reshape
         -> Quant(Y_out)
 
-    Assumes explicit Quant/IntQuant nodes, not Q/DQ.
     """
 
     name = "YoloAttentionFromInputReshape"
@@ -1199,6 +1341,15 @@ class YoloAttentionFromInputReshape(Pattern):
 
         if len(anchor_node.output) < 1:
             return Match(False, self.name, covered, ["Reshape has no output"])
+        
+        reshape_input_quant = model.find_producer(anchor_node.input[0])
+        if reshape_input_quant is None or not check_act_quant(model, reshape_input_quant, reasons):
+            return Match(
+                False,
+                self.name,
+                covered,
+                ["Reshape input must come from supported activation Quant/IntQuant"],
+            )
 
         reshape_quant = model.find_consumer(anchor_node.output[0])
         if reshape_quant is None or not check_act_quant(model, reshape_quant, reasons):
@@ -1363,6 +1514,7 @@ class YoloAttentionFromInputReshape(Pattern):
             return Match(False, self.name, covered, ["V Reshape output must feed Quant/IntQuant"])
 
         covered.update({
+            reshape_input_quant.name,
             anchor_node.name,
             reshape_quant.name,
             q_slice.name,
@@ -1483,13 +1635,14 @@ class YoloAttentionFromInputReshape(Pattern):
 
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
-    "Concat": [ConcatQuantSameParamsAxis1()],
+    "Concat": [ConcatQuantSameParamsAxis()],
     "Flatten": [FlattenFCOnly()],
     "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "HardSigmoid": [HardSigmoidQuant()],
-    "LeakyRelu": [LeakyReluQuant()],
+    "LeakyRelu": [LeakyReluQuantOrFusable()],
     "Relu": [ReluQuantOrFusable()],
     "Sigmoid": [SigmoidQuant()],
+    "Softmax": [YoloHeadSoftmax()],
     "Swish": [SwishQuant()],
     "Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
     "IntQuant": [IntQuantNodePattern()],
@@ -1704,6 +1857,37 @@ class SupportedPartition(Transformation):
 
         return violations
 
+    def _largest_connected_component(self, model: ModelWrapper, node_set: Set[str]) -> Set[str]:
+        """Return the largest connected component within node_set (undirected)."""
+        graph = model.graph
+        adj = defaultdict(list)
+        for node in graph.node:
+            if node.name not in node_set:
+                continue
+            for succ in model.find_direct_successors(node) or []:
+                if succ.name in node_set:
+                    adj[node.name].append(succ.name)
+                    adj[succ.name].append(node.name)
+
+        visited = set()
+        components = []
+        for node_name in node_set:
+            if node_name in visited:
+                continue
+            component = set()
+            queue = deque([node_name])
+            visited.add(node_name)
+            while queue:
+                curr = queue.popleft()
+                component.add(curr)
+                for neighbor in adj[curr]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            components.append(component)
+
+        return max(components, key=len, default=set())
+
     def __find_largest_connected_component(self, model: ModelWrapper) -> list:
         
         graph = model.graph
@@ -1725,45 +1909,20 @@ class SupportedPartition(Transformation):
 
             # Add all covered nodes that exist in the graph
             fpga_nodes.update(n for n in m.covered if n in node_names)
+
+        largest_component = self._largest_connected_component(model, fpga_nodes)
+        logger.info(f"Found {len(fpga_nodes)} FPGA-supported nodes.")
+        logger.info(f"Largest connected component has {len(largest_component)} nodes.")
         
-        fpga_nodes = self.__repair_convexity_remove_reentries(model, fpga_nodes)
+        # Solve convexity violations by removing re-entry destination nodes until no violations remain
+        subgraph = self.__repair_convexity_remove_reentries(model, largest_component)
 
-        # Build adjacency list between FPGA nodes
-        adj = defaultdict(list)
-        for node in graph.node:
-            if node.name not in fpga_nodes:
-                continue
-            for succ in model.find_direct_successors(node) or []:
-                if succ.name in fpga_nodes:
-                    adj[node.name].append(succ.name)
-                    adj[succ.name].append(node.name)  # undirected edge
+        # Re-run connected component analysis to drop orphaned nodes
+        # (ancillary nodes like Constant ops or param quants whose consumer was removed)
+        subgraph = self._largest_connected_component(model, subgraph)
+        logger.info(f"After convexity repair, largest component has {len(subgraph)} nodes.")
 
-        # Find connected components using BFS
-        visited = set()
-        components = []
-
-        for node_name in fpga_nodes:
-            if node_name in visited:
-                continue
-            component = set()
-            queue = deque([node_name])
-            visited.add(node_name)
-
-            while queue:
-                curr = queue.popleft()
-                component.add(curr)
-                for neighbor in adj[curr]:
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        queue.append(neighbor)
-
-            components.append(component)
-
-        # Select the largest component
-        largest_component = max(components, key=len, default=set())
-        logger.info(f"Found {len(components)} connected components among FPGA-supported nodes.")
-        logger.info(f"Largest component has {len(largest_component)} nodes.")
-        return largest_component
+        return subgraph
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         logger.info("Partitioning model into FPGA and CPU partitions.")
@@ -1779,8 +1938,7 @@ class SupportedPartition(Transformation):
         }
 
         if len(partition_dict["FPGA"]) == 0:
-            logger.warning("No FPGA-supported nodes found in the model. Returning original model.")
-            return (model, False)
+            raise ValueError("No supported nodes found for FPGA partition.")
         
         # Since there is something to be run on FPGA, we import the opset of nn2fpga
         model.model.opset_import.append(

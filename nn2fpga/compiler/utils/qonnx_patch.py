@@ -25,7 +25,7 @@ def patch_qonnx_ops():
     from qonnx.core.modelwrapper import ModelWrapper
     from qonnx.transformation.create_generic_partitions import PartitionFromLambda
     from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
-    from nn2fpga.compiler.core.tensor_quant import TensorQuant
+    from nn2fpga.compiler.core.tensor_type import FloatTensorType, QuantizedTensorType
     from onnx import helper
     import copy
     import pathlib
@@ -142,18 +142,16 @@ def patch_qonnx_ops():
                     "new_name": input.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(input.name),
+                    "layout": None,
                     "quant": None,
                     "value": None,
+                    "mode": "axis",
                 }
+                tensor_type = FloatTensorType()  # default to float if not quantized
                 if first_node.op_type == "Quant":
-                    tensor_quant = TensorQuant.from_quant_node(first_node, p_model)
-                    ap_input_map[input.name]["quant"] = tensor_quant.get_canonical_name()
-                else:
-                    # Currently, we do not support non quantized inputs in nn2fpgaPartition,
-                    # so there is something wrong if we reach this point.
-                    raise ValueError(
-                        f"Partition input {input.name} is not quantized."
-                    )
+                    tensor_type = QuantizedTensorType.from_quant_node(first_node, p_model)
+                ap_input_map[input.name]["quant"] = tensor_type.get_canonical_name()
+
                 index += 1
 
             index = 0 
@@ -168,18 +166,15 @@ def patch_qonnx_ops():
                     "new_name": output.name,
                     "index": index,
                     "shape": p_model.get_tensor_shape(output.name),
+                    "layout": None,
                     "quant": None,
                     "value": None,
+                    "mode": "axis",
                 }
+                tensor_type = FloatTensorType()  # default to float if not quantized
                 if last_node.op_type == "Quant":
-                    tensor_quant = TensorQuant.from_quant_node(last_node, p_model)
-                    ap_output_map[output.name]["quant"] = tensor_quant.get_canonical_name()
-                else:
-                    # Currently, we do not support non quantized outputs in nn2fpgaPartition,
-                    # so there is something wrong if we reach this point.
-                    raise ValueError(
-                        f"Partition output {output.name} is not quantized."
-                    )
+                    tensor_type = QuantizedTensorType.from_quant_node(last_node, p_model)
+                ap_output_map[output.name]["quant"] = tensor_type.get_canonical_name()
                 index += 1
 
             # Create the accelerator package

@@ -33,6 +33,14 @@ git submodule update --init --recursive
 ./run.sh
 ```
 
+For custom board images or OS versions, see [Generating a board sysroot](developer/sysroot.md).
+
+For custom operator internals, see [Runtime operator](developer/runtime_operator.md).
+
+For the archived YOLOv5nu allocator and zero-copy measurements, see [Zero-copy investigation](developer/zero_copy_investigation.md).
+
+For the YOLOv5nu fused runtime copy-transpose experiment, see [Runtime layout transform experiment](developer/runtime_layout_transform_experiment.md).
+
 ---
 
 ## Quick Start
@@ -51,6 +59,8 @@ The easiest way to get started is by running one of the provided examples.
     ```bash id="run02"
     python3 -m nn2fpga.compiler.cli --config config_examples/cifar10/<example>.toml
     ```
+
+   Set `GenerateBitstream = true` to generate the FPGA bitstream. Set `Deploy = true` to also build the ONNX Runtime integration files in the generated `build` directory.
 
 3. **Collect the output.**
    Copy the generated `build` directory to the target board. It contains:

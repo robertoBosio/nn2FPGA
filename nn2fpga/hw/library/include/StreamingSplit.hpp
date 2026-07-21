@@ -9,39 +9,144 @@
 #include <unordered_map>
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t SPLIT, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t CH_PAR, size_t W_PAR>
-class StreamingSplitChannels {
-public:
-  static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
-  static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
+          typename TOutput, typename Quantizer, size_t SPLIT, size_t DIM0,
+          size_t DIM1, size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
+class StreamingSplitDim2 {
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM2_UNROLL > 0, "DIM2_UNROLL must be greater than 0");
   static_assert(SPLIT > 0, "SPLIT must be greater than 0");
-  static_assert(SPLIT < IN_CH, "SPLIT must be less than IN_CH");
-  static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
-                "IN_HEIGHT and IN_WIDTH must be greater than 0");
-  static_assert(SPLIT % CH_PAR == 0, "SPLIT must be a multiple of CH_PAR");
-  static_assert((IN_CH - SPLIT) % CH_PAR == 0,
-                "IN_CH - SPLIT must be a multiple of CH_PAR");
-  StreamingSplitChannels() = default;
-  
+  static_assert(SPLIT < DIM2, "SPLIT must be less than DIM2");
+  static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
+  static_assert(SPLIT % DIM2_UNROLL == 0,
+                "SPLIT must be a multiple of DIM2_UNROLL");
+  static_assert((DIM2 - SPLIT) % DIM2_UNROLL == 0,
+                "DIM2 - SPLIT must be a multiple of DIM2_UNROLL");
+
+public:
+  StreamingSplitDim2() = default;
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
+
+  ActorStatus step(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    // Retrieve the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
+    bool firing_condition = true;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (i_data[i_dim1_par].empty()) {
+        firing_condition = false;
+      }
+    }
+
+    if (firing_condition) {
+
+      // If there is data in the input stream, process it.
+      hls::stream<TOutputWord> instant_output_stream_1[DIM1_UNROLL];
+      hls::stream<TOutputWord> instant_output_stream_2[DIM1_UNROLL];
+      StreamingSplitDim2::pipeline_body(i_data, instant_output_stream_1,
+                                        instant_output_stream_2, st.i_dim2);
+
+      // Insert new firing status into the multiset.
+      st.actor_status.fire();
+
+      // Add the output to the delayed output stream.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        if (!instant_output_stream_1[i_dim1_par].empty()) {
+          st.delayed_output_1[i_dim1_par].push(
+              instant_output_stream_1[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        }
+        if (!instant_output_stream_2[i_dim1_par].empty()) {
+          st.delayed_output_2[i_dim1_par].push(
+              instant_output_stream_2[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+        }
+      }
+
+      // Update the counters.
+      st.i_dim2 += DIM2_UNROLL;
+      if (st.i_dim2 >= DIM2) {
+        // If we have processed all output channels, reset the index and
+        // increment the height/width index.
+        st.i_dim2 = 0;
+        st.i_dim01++;
+      }
+      if (st.i_dim01 >= DIM0 * DIM1 / DIM1_UNROLL) {
+        st.i_dim01 = 0; // Reset the height/width index if we have processed all
+                        // iterations.
+      }
+
+    } else {
+      // If there is no data in the input stream, push a delay slot.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+      }
+    }
+
+    // Advance the state of the actor firings.
+    st.actor_status.advance();
+
+    // Write the output data to the output stream.
+    TOutputWord out;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output_1[i_dim1_par].pop(out)) {
+        o_data_1[i_dim1_par].write(out);
+      }
+      if (st.delayed_output_2[i_dim1_par].pop(out)) {
+        o_data_2[i_dim1_par].write(out);
+      }
+    }
+
+    // Return the actor status.
+    return st.actor_status;
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    for (size_t i_dim01 = 0; i_dim01 < DIM0 * DIM1 / DIM1_UNROLL; i_dim01++) {
+    STREAMINGSPLITDIM2_RUN_LOOP:
+      for (size_t i_dim2 = 0; i_dim2 < DIM2; i_dim2 += DIM2_UNROLL) {
+#pragma HLS PIPELINE II = 1
+        pipeline_body(i_data, o_data_1, o_data_2, i_dim2);
+      }
+    }
+  }
+
+private:
   struct StepState {
     // Loop iteration indexes.
-    size_t i_hw = 0, i_ch = 0;
+    size_t i_dim01 = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output_1[W_PAR];
-    PipelineDelayBuffer<TOutputWord> delayed_output_2[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output_1[DIM1_UNROLL];
+    PipelineDelayBuffer<TOutputWord> delayed_output_2[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output_1[i] = PipelineDelayBuffer<TOutputWord>(depth);
         delayed_output_2[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status =
-          ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
+          ActorStatus(depth, DIM0 * DIM1 * DIM2 / (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -52,164 +157,172 @@ public:
     return r;
   }
 
-  void step_init(size_t pipeline_depth = 1) {
-    auto &st = registry()[this];
-    st.init(pipeline_depth);
-  }
-  
-  ActorStatus step(hls::stream<TInputWord> i_data[W_PAR],
-                   hls::stream<TOutputWord> o_data_1[W_PAR],
-                   hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    // Retrieve the state for this instance.
-    auto it = registry().find(this);
-    assert(it != registry().end() && "Instance not initialized");
-    auto &st = it->second;
-
-    // Compute firing condition.
-    bool firing_condition = true;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (i_data[w_par].empty()) {
-        firing_condition = false;
-      }
-    }
-
-    if (firing_condition) {
-
-      // If there is data in the input stream, process it.
-      hls::stream<TOutputWord> instant_output_stream_1[W_PAR];
-      hls::stream<TOutputWord> instant_output_stream_2[W_PAR];
-        StreamingSplitChannels::pipeline_body(i_data, instant_output_stream_1,
-                                                instant_output_stream_2,
-                                                st.i_ch);
-
-      // Insert new firing status into the multiset.
-      st.actor_status.fire();
-
-      // Add the output to the delayed output stream.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        if (!instant_output_stream_1[w_par].empty()) {
-          st.delayed_output_1[w_par].push(instant_output_stream_1[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_1[w_par].push(TOutputWord(), false);
-        }
-        if (!instant_output_stream_2[w_par].empty()) {
-          st.delayed_output_2[w_par].push(instant_output_stream_2[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_2[w_par].push(TOutputWord(), false);
-        }
-      }
-
-      // Update the counters.
-      st.i_ch += CH_PAR;
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all output channels, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_hw++;
-      }
-      if (st.i_hw >= IN_HEIGHT * IN_WIDTH / W_PAR) {
-        st.i_hw = 0; // Reset the height/width index if we have processed all
-                     // iterations.
-      }
-
-    } else {
-      // If there is no data in the input stream, push a delay slot.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        st.delayed_output_1[w_par].push(TOutputWord(), false);
-        st.delayed_output_2[w_par].push(TOutputWord(), false);
-      }
-    }
-
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
-
-    // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (st.delayed_output_1[w_par].pop(out)) {
-        o_data_1[w_par].write(out);
-      }
-      if (st.delayed_output_2[w_par].pop(out)) {
-        o_data_2[w_par].write(out);
-      }
-    }
-
-    // Return the actor status.
-    return st.actor_status;
-  }
-
-  template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[W_PAR],
-           hls::stream<TOutputWord> o_data_1[W_PAR],
-           hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    for (size_t i_hw = 0; i_hw < IN_HEIGHT * IN_WIDTH / W_PAR; i_hw++) {
-    STREAMINGSPLITCHANNELS_RUN_LOOP:
-      for (size_t i_ch = 0; i_ch < IN_CH; i_ch += CH_PAR) {
-#pragma HLS PIPELINE II = 1
-        pipeline_body(i_data, o_data_1, o_data_2, i_ch);
-      }
-    }
-  }
-
-private:
-  void pipeline_body(hls::stream<TInputWord> i_data[W_PAR],
-                     hls::stream<TOutputWord> o_data_1[W_PAR],
-                     hls::stream<TOutputWord> o_data_2[W_PAR], size_t i_ch) {
+  void pipeline_body(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_2[DIM1_UNROLL],
+                     size_t i_dim2) {
 #pragma HLS inline
     Quantizer quantizer;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      TInputWord in_word = i_data[w_par].read();
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      TInputWord in_word = i_data[i_dim1_par].read();
       TOutputWord out_word;
-      for (size_t ch_par = 0; ch_par < CH_PAR; ch_par++) {
-        out_word[ch_par] = quantizer(in_word[ch_par]);
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        out_word[i_dim2_par] = quantizer(in_word[i_dim2_par]);
       }
-      if (i_ch < SPLIT) {
-        o_data_1[w_par].write(out_word);
+      if (i_dim2 < SPLIT) {
+        o_data_1[i_dim1_par].write(out_word);
       } else {
-        o_data_2[w_par].write(out_word);
+        o_data_2[i_dim1_par].write(out_word);
       }
     }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t SPLIT, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t CH_PAR, size_t W_PAR>
-class StreamingSplitWidths {
-public:
-  static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
-  static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
+          typename TOutput, typename Quantizer, size_t SPLIT, size_t DIM0,
+          size_t DIM1, size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
+class StreamingSplitDim1 {
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM2_UNROLL > 0, "DIM2_UNROLL must be greater than 0");
   static_assert(SPLIT > 0, "SPLIT must be greater than 0");
-  static_assert(SPLIT < IN_WIDTH, "SPLIT must be less than IN_WIDTH");
-  static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
-                "IN_HEIGHT and IN_WIDTH must be greater than 0");
-  static_assert(SPLIT % W_PAR == 0, "SPLIT must be a multiple of W_PAR");
-  static_assert((IN_WIDTH - SPLIT) % W_PAR == 0,
-                "IN_WIDTH - SPLIT must be a multiple of W_PAR");
-  StreamingSplitWidths() = default;
+  static_assert(SPLIT < DIM1, "SPLIT must be less than DIM1");
+  static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
+  static_assert(SPLIT % DIM1_UNROLL == 0,
+                "SPLIT must be a multiple of DIM1_UNROLL");
+  static_assert((DIM1 - SPLIT) % DIM1_UNROLL == 0,
+                "DIM1 - SPLIT must be a multiple of DIM1_UNROLL");
 
+public:
+  StreamingSplitDim1() = default;
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    for (size_t i_dim0 = 0; i_dim0 < DIM0; i_dim0++) {
+      for (size_t i_dim1 = 0; i_dim1 < DIM1; i_dim1 += DIM1_UNROLL) {
+      STREAMINGSPLITDIM1_RUN_LOOP:
+        for (size_t i_dim2 = 0; i_dim2 < DIM2; i_dim2 += DIM2_UNROLL) {
+#pragma HLS PIPELINE II = 1
+          pipeline_body(i_data, o_data_1, o_data_2, i_dim1);
+        }
+      }
+    }
+  }
+
+  ActorStatus step(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    // Retrieve the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
+    bool firing_condition = true;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (i_data[i_dim1_par].empty()) {
+        firing_condition = false;
+      }
+    }
+
+    if (firing_condition) {
+
+      // If there is data in the input stream, process it.
+      hls::stream<TOutputWord> instant_output_stream_1[DIM1_UNROLL];
+      hls::stream<TOutputWord> instant_output_stream_2[DIM1_UNROLL];
+      StreamingSplitDim1::pipeline_body(i_data, instant_output_stream_1,
+                                        instant_output_stream_2, st.i_dim1);
+
+      // Insert new firing status into the multiset.
+      st.actor_status.fire();
+
+      // Add the output to the delayed output stream.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        if (!instant_output_stream_1[i_dim1_par].empty()) {
+          st.delayed_output_1[i_dim1_par].push(
+              instant_output_stream_1[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        }
+        if (!instant_output_stream_2[i_dim1_par].empty()) {
+          st.delayed_output_2[i_dim1_par].push(
+              instant_output_stream_2[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+        }
+      }
+
+      // Update the counters.
+      st.i_dim2 += DIM2_UNROLL;
+      if (st.i_dim2 >= DIM2) {
+        // If we have processed all output channels, reset the index and
+        // increment the height/width index.
+        st.i_dim2 = 0;
+        st.i_dim1 += DIM1_UNROLL;
+      }
+      if (st.i_dim1 >= DIM1) {
+        st.i_dim1 = 0; // Reset the height/width index if we have processed all
+        // iterations.
+        st.i_dim0++;
+      }
+      if (st.i_dim0 >= DIM0) {
+        st.i_dim0 = 0; // Reset the height index if we have processed all
+                       // iterations.
+      }
+    } else {
+      // If there is no data in the input stream, push a delay slot.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+      }
+    }
+
+    // Advance the state of the actor firings.
+    st.actor_status.advance();
+
+    // Write the output data to the output stream.
+    TOutputWord out;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output_1[i_dim1_par].pop(out)) {
+        o_data_1[i_dim1_par].write(out);
+      }
+      if (st.delayed_output_2[i_dim1_par].pop(out)) {
+        o_data_2[i_dim1_par].write(out);
+      }
+    }
+
+    // Return the actor status.
+    return st.actor_status;
+  }
+
+private:
   struct StepState {
     // Loop iteration indexes.
-    size_t i_w = 0, i_ch = 0, i_h = 0;
+    size_t i_dim1 = 0, i_dim2 = 0, i_dim0 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output_1[W_PAR];
-    PipelineDelayBuffer<TOutputWord> delayed_output_2[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output_1[DIM1_UNROLL];
+    PipelineDelayBuffer<TOutputWord> delayed_output_2[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output_1[i] = PipelineDelayBuffer<TOutputWord>(depth);
         delayed_output_2[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status =
-          ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
+          ActorStatus(depth, DIM0 * DIM1 * DIM2 / (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -220,166 +333,168 @@ public:
     return r;
   }
 
-  void step_init(size_t pipeline_depth = 1) {
-    auto &st = registry()[this];
-    st.init(pipeline_depth);
-  }
-
-  template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[W_PAR],
-           hls::stream<TOutputWord> o_data_1[W_PAR],
-           hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    for (size_t i_h = 0; i_h < IN_HEIGHT; i_h++) {
-      for (size_t i_w = 0; i_w < IN_WIDTH; i_w += W_PAR) {
-      STREAMINGSPLITWIDTHS_RUN_LOOP:
-        for (size_t i_ch = 0; i_ch < IN_CH; i_ch += CH_PAR) {
-#pragma HLS PIPELINE II = 1
-          pipeline_body(i_data, o_data_1, o_data_2, i_w);
-        }
-      }
-    }
-  }
-
-  ActorStatus step(hls::stream<TInputWord> i_data[W_PAR],
-                   hls::stream<TOutputWord> o_data_1[W_PAR],
-                   hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    // Retrieve the state for this instance.
-    auto it = registry().find(this);
-    assert(it != registry().end() && "Instance not initialized");
-    auto &st = it->second;
-
-    // Compute firing condition.
-    bool firing_condition = true;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (i_data[w_par].empty()) {
-        firing_condition = false;
-      }
-    }
-
-    if (firing_condition) {
-
-      // If there is data in the input stream, process it.
-      hls::stream<TOutputWord> instant_output_stream_1[W_PAR];
-      hls::stream<TOutputWord> instant_output_stream_2[W_PAR];
-      StreamingSplitWidths::pipeline_body(i_data, instant_output_stream_1,
-                                            instant_output_stream_2, st.i_w);
-
-      // Insert new firing status into the multiset.
-      st.actor_status.fire();
-
-      // Add the output to the delayed output stream.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        if (!instant_output_stream_1[w_par].empty()) {
-          st.delayed_output_1[w_par].push(instant_output_stream_1[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_1[w_par].push(TOutputWord(), false);
-        }
-        if (!instant_output_stream_2[w_par].empty()) {
-          st.delayed_output_2[w_par].push(instant_output_stream_2[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_2[w_par].push(TOutputWord(), false);
-        }
-      }
-
-      // Update the counters.
-      st.i_ch += CH_PAR;
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all output channels, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_w += W_PAR;
-      }
-      if (st.i_w >= IN_WIDTH) {
-        st.i_w = 0; // Reset the height/width index if we have processed all
-        // iterations.
-        st.i_h++;
-      }
-      if (st.i_h >= IN_HEIGHT) {
-        st.i_h = 0; // Reset the height index if we have processed all
-                    // iterations.
-      }
-    } else {
-      // If there is no data in the input stream, push a delay slot.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        st.delayed_output_1[w_par].push(TOutputWord(), false);
-        st.delayed_output_2[w_par].push(TOutputWord(), false);
-      }
-    }
-
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
-
-    // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (st.delayed_output_1[w_par].pop(out)) {
-        o_data_1[w_par].write(out);
-      }
-      if (st.delayed_output_2[w_par].pop(out)) {
-        o_data_2[w_par].write(out);
-      }
-    }
-
-    // Return the actor status.
-    return st.actor_status;
-  }
-
-private:
-  void pipeline_body(hls::stream<TInputWord> i_data[W_PAR],
-                     hls::stream<TOutputWord> o_data_1[W_PAR],
-                     hls::stream<TOutputWord> o_data_2[W_PAR], size_t i_w) {
+  void pipeline_body(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_2[DIM1_UNROLL],
+                     size_t i_dim1) {
 #pragma HLS inline
     Quantizer quantizer;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      TInputWord in_word = i_data[w_par].read();
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      TInputWord in_word = i_data[i_dim1_par].read();
       TOutputWord out_word;
-      for (size_t ch_par = 0; ch_par < CH_PAR; ch_par++) {
-        out_word[ch_par] = quantizer(in_word[ch_par]);
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        out_word[i_dim2_par] = quantizer(in_word[i_dim2_par]);
       }
-      if (i_w < SPLIT) {
-        o_data_1[w_par].write(out_word);
+      if (i_dim1 < SPLIT) {
+        o_data_1[i_dim1_par].write(out_word);
       } else {
-        o_data_2[w_par].write(out_word);
+        o_data_2[i_dim1_par].write(out_word);
       }
     }
   }
 };
 
 template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t SPLIT, size_t IN_HEIGHT,
-          size_t IN_WIDTH, size_t IN_CH, size_t CH_PAR, size_t W_PAR>
-class StreamingSplitHeights {
-public:
-  static_assert(IN_CH % CH_PAR == 0, "IN_CH must be a multiple of CH_PAR");
-  static_assert(CH_PAR > 0, "CH_PAR must be greater than 0");
+          typename TOutput, typename Quantizer, size_t SPLIT, size_t DIM0,
+          size_t DIM1, size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL>
+class StreamingSplitDim0 {
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM2_UNROLL > 0, "DIM2_UNROLL must be greater than 0");
   static_assert(SPLIT > 0, "SPLIT must be greater than 0");
-  static_assert(SPLIT < IN_HEIGHT, "SPLIT must be less than IN_HEIGHT");
-  static_assert(IN_HEIGHT > 0 && IN_WIDTH > 0,
-                "IN_HEIGHT and IN_WIDTH must be greater than 0");
-  StreamingSplitHeights() = default;
+  static_assert(SPLIT < DIM0, "SPLIT must be less than DIM0");
+  static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
 
+public:
+  StreamingSplitDim0() = default;
+
+  void step_init(size_t pipeline_depth = 1) {
+    auto &st = registry()[this];
+    st.init(pipeline_depth);
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+           hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    for (size_t i_dim0 = 0; i_dim0 < DIM0; i_dim0++) {
+      for (size_t i_dim1 = 0; i_dim1 < DIM1; i_dim1 += DIM1_UNROLL) {
+      STREAMINGSPLITDIM0_RUN_LOOP:
+        for (size_t i_dim2 = 0; i_dim2 < DIM2; i_dim2 += DIM2_UNROLL) {
+#pragma HLS PIPELINE II = 1
+          pipeline_body(i_data, o_data_1, o_data_2, i_dim0);
+        }
+      }
+    }
+  }
+
+  ActorStatus step(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                   hls::stream<TOutputWord> o_data_2[DIM1_UNROLL]) {
+    // Retrieve the state for this instance.
+    auto it = registry().find(this);
+    assert(it != registry().end() && "Instance not initialized");
+    auto &st = it->second;
+
+    // Compute firing condition.
+    bool firing_condition = true;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (i_data[i_dim1_par].empty()) {
+        firing_condition = false;
+      }
+    }
+
+    if (firing_condition) {
+
+      // If there is data in the input stream, process it.
+      hls::stream<TOutputWord> instant_output_stream_1[DIM1_UNROLL];
+      hls::stream<TOutputWord> instant_output_stream_2[DIM1_UNROLL];
+      StreamingSplitDim0::pipeline_body(i_data, instant_output_stream_1,
+                                        instant_output_stream_2, st.i_dim0);
+
+      // Insert new firing status into the multiset.
+      st.actor_status.fire();
+
+      // Add the output to the delayed output stream.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        if (!instant_output_stream_1[i_dim1_par].empty()) {
+          st.delayed_output_1[i_dim1_par].push(
+              instant_output_stream_1[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        }
+        if (!instant_output_stream_2[i_dim1_par].empty()) {
+          st.delayed_output_2[i_dim1_par].push(
+              instant_output_stream_2[i_dim1_par].read(), true);
+        } else {
+          // If the output stream is empty, push a placeholder.
+          st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+        }
+      }
+
+      // Update the counters.
+      st.i_dim2 += DIM2_UNROLL;
+      if (st.i_dim2 >= DIM2) {
+        // If we have processed all output channels, reset the index and
+        // increment the height/width index.
+        st.i_dim2 = 0;
+        st.i_dim1 += DIM1_UNROLL;
+      }
+      if (st.i_dim1 >= DIM1) {
+        st.i_dim1 = 0; // Reset the height/width index if we have processed all
+        // iterations.
+        st.i_dim0++;
+      }
+      if (st.i_dim0 >= DIM0) {
+        st.i_dim0 = 0; // Reset the height index if we have processed all
+                       // iterations.
+      }
+    } else {
+      // If there is no data in the input stream, push a delay slot.
+      for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+        st.delayed_output_1[i_dim1_par].push(TOutputWord(), false);
+        st.delayed_output_2[i_dim1_par].push(TOutputWord(), false);
+      }
+    }
+
+    // Advance the state of the actor firings.
+    st.actor_status.advance();
+
+    // Write the output data to the output stream.
+    TOutputWord out;
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      if (st.delayed_output_1[i_dim1_par].pop(out)) {
+        o_data_1[i_dim1_par].write(out);
+      }
+      if (st.delayed_output_2[i_dim1_par].pop(out)) {
+        o_data_2[i_dim1_par].write(out);
+      }
+    }
+
+    // Return the actor status.
+    return st.actor_status;
+  }
+
+private:
   struct StepState {
     // Loop iteration indexes.
-    size_t i_h = 0, i_w = 0, i_ch = 0;
+    size_t i_dim0 = 0, i_dim1 = 0, i_dim2 = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output_1[W_PAR];
-    PipelineDelayBuffer<TOutputWord> delayed_output_2[W_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output_1[DIM1_UNROLL];
+    PipelineDelayBuffer<TOutputWord> delayed_output_2[DIM1_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < W_PAR; i++) {
+      for (size_t i = 0; i < DIM1_UNROLL; i++) {
         delayed_output_1[i] = PipelineDelayBuffer<TOutputWord>(depth);
         delayed_output_2[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status =
-          ActorStatus(depth, IN_HEIGHT * IN_WIDTH * IN_CH / (CH_PAR * W_PAR));
+          ActorStatus(depth, DIM0 * DIM1 * DIM2 / (DIM2_UNROLL * DIM1_UNROLL));
       initialized = true;
     }
   };
@@ -390,129 +505,22 @@ public:
     return r;
   }
 
-  void step_init(size_t pipeline_depth = 1) {
-    auto &st = registry()[this];
-    st.init(pipeline_depth);
-  }
-
-  template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[W_PAR],
-           hls::stream<TOutputWord> o_data_1[W_PAR],
-           hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    for (size_t i_h = 0; i_h < IN_HEIGHT; i_h++) {
-      for (size_t i_w = 0; i_w < IN_WIDTH; i_w += W_PAR) {
-        for (size_t i_ch = 0; i_ch < IN_CH; i_ch += CH_PAR) {
-#pragma HLS PIPELINE II = 1
-          pipeline_body(i_data, o_data_1, o_data_2, i_h);
-        }
-      }
-    }
-  }
-
-  ActorStatus step(hls::stream<TInputWord> i_data[W_PAR],
-                   hls::stream<TOutputWord> o_data_1[W_PAR],
-                   hls::stream<TOutputWord> o_data_2[W_PAR]) {
-    // Retrieve the state for this instance.
-    auto it = registry().find(this);
-    assert(it != registry().end() && "Instance not initialized");
-    auto &st = it->second;
-
-    // Compute firing condition.
-    bool firing_condition = true;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (i_data[w_par].empty()) {
-        firing_condition = false;
-      }
-    }
-
-    if (firing_condition) {
-
-      // If there is data in the input stream, process it.
-      hls::stream<TOutputWord> instant_output_stream_1[W_PAR];
-      hls::stream<TOutputWord> instant_output_stream_2[W_PAR];
-      StreamingSplitHeights::pipeline_body(i_data, instant_output_stream_1,
-                                           instant_output_stream_2, st.i_h);
-
-      // Insert new firing status into the multiset.
-      st.actor_status.fire();
-
-      // Add the output to the delayed output stream.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        if (!instant_output_stream_1[w_par].empty()) {
-          st.delayed_output_1[w_par].push(instant_output_stream_1[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_1[w_par].push(TOutputWord(), false);
-        }
-        if (!instant_output_stream_2[w_par].empty()) {
-          st.delayed_output_2[w_par].push(instant_output_stream_2[w_par].read(),
-                                          true);
-        } else {
-          // If the output stream is empty, push a placeholder.
-          st.delayed_output_2[w_par].push(TOutputWord(), false);
-        }
-      }
-
-      // Update the counters.
-      st.i_ch += CH_PAR;
-      if (st.i_ch >= IN_CH) {
-        // If we have processed all output channels, reset the index and
-        // increment the height/width index.
-        st.i_ch = 0;
-        st.i_w += W_PAR;
-      }
-      if (st.i_w >= IN_WIDTH) {
-        st.i_w = 0; // Reset the height/width index if we have processed all
-        // iterations.
-        st.i_h++;
-      }
-      if (st.i_h >= IN_HEIGHT) {
-        st.i_h = 0; // Reset the height index if we have processed all
-                    // iterations.
-      }
-    } else {
-      // If there is no data in the input stream, push a delay slot.
-      for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-        st.delayed_output_1[w_par].push(TOutputWord(), false);
-        st.delayed_output_2[w_par].push(TOutputWord(), false);
-      }
-    }
-
-    // Advance the state of the actor firings.
-    st.actor_status.advance();
-
-    // Write the output data to the output stream.
-    TOutputWord out;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      if (st.delayed_output_1[w_par].pop(out)) {
-        o_data_1[w_par].write(out);
-      }
-      if (st.delayed_output_2[w_par].pop(out)) {
-        o_data_2[w_par].write(out);
-      }
-    }
-
-    // Return the actor status.
-    return st.actor_status;
-  }
-
-private:
-  void pipeline_body(hls::stream<TInputWord> i_data[W_PAR],
-                     hls::stream<TOutputWord> o_data_1[W_PAR],
-                     hls::stream<TOutputWord> o_data_2[W_PAR], size_t i_h) {
+  void pipeline_body(hls::stream<TInputWord> i_data[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_1[DIM1_UNROLL],
+                     hls::stream<TOutputWord> o_data_2[DIM1_UNROLL],
+                     size_t i_dim0) {
 #pragma HLS inline
     Quantizer quantizer;
-    for (size_t w_par = 0; w_par < W_PAR; w_par++) {
-      TInputWord in_word = i_data[w_par].read();
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      TInputWord in_word = i_data[i_dim1_par].read();
       TOutputWord out_word;
-      for (size_t ch_par = 0; ch_par < CH_PAR; ch_par++) {
-        out_word[ch_par] = quantizer(in_word[ch_par]);
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        out_word[i_dim2_par] = quantizer(in_word[i_dim2_par]);
       }
-      if (i_h < SPLIT) {
-        o_data_1[w_par].write(out_word);
+      if (i_dim0 < SPLIT) {
+        o_data_1[i_dim1_par].write(out_word);
       } else {
-        o_data_2[w_par].write(out_word);
+        o_data_2[i_dim1_par].write(out_word);
       }
     }
   }

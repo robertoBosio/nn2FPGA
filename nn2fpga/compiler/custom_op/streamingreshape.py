@@ -5,46 +5,49 @@ from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
 from qonnx.core.modelwrapper import ModelWrapper
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from nn2fpga.compiler.core.tensor_type import require_tensor_type
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp, NodeInterface
+from nn2fpga.compiler.custom_op.op_base import DSECapable, NN2FPGAOp
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
 from onnx_ir import convenience as ir_convenience
 
 class StreamingReshape(NN2FPGAOp, DSECapable):
-    """ Node implementing the Reshape operation. """
-    
+    """Node implementing the Reshape operation. Since the reshape is changing
+    the tensor shape, it is not transparent to parallelization, this is why is
+    DSECapable. Not because we need to optimize resources."""
+
     @dataclass(frozen=True)
     class DSEPoint:
-        channel_unroll: int
-        width_unroll: int
+        dim2_unroll: int
+        dim1_unroll: int
 
         def to_dict(self) -> dict:
             return {
-                "channel_unroll": self.channel_unroll,
-                "width_unroll": self.width_unroll,
+                "dim2_unroll": self.dim2_unroll,
+                "dim1_unroll": self.dim1_unroll,
             }
 
         @staticmethod
         def from_dict(d: dict) -> "StreamingReshape.DSEPoint":
             return StreamingReshape.DSEPoint(
-                channel_unroll=d["channel_unroll"],
-                width_unroll=d["width_unroll"],
+                dim2_unroll=d["dim2_unroll"],
+                dim1_unroll=d["dim1_unroll"],
             )
 
     @staticmethod
     def pattern(op, x, shape):
         return op.Reshape(x, shape, _allow_other_attributes=True)
+
     @staticmethod
     def rewrite(op, x, shape):
-        
+
         t = ir_convenience.get_const_tensor(shape)  # handles initializer OR Constant node
         if t is None:
             raise ValueError("Shape is not a compile-time constant")
@@ -71,8 +74,8 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
             "out_word_array": ("i", False, 1),
             "shape": ("ints", False, []),
 
-            "channel_unroll": ("i", False, 1),
-            "width_unroll": ("i", False, 1),
+            "dim2_unroll": ("i", False, 1),
+            "dim1_unroll": ("i", False, 1),
         }
 
     def make_shape_compatible_op(self, model):
@@ -181,8 +184,8 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
         ):
             shift = -1 * int(np.log2(output_quant.scale) - np.log2(input_quant.scale))
             if shift == 0 and input_quant.bitwidth == output_quant.bitwidth and input_quant.signed == output_quant.signed:
-                return f"DequantQuantEqual<{get_hls_quant_type(input_quant)}>"
-            return f"DequantQuantPo2<{shift}, {get_hls_quant_type(input_quant)}, {get_hls_quant_type(output_quant)}>"
+                return f"DequantQuantEqual<{input_quant.get_hls_data_type()}>"
+            return f"DequantQuantPo2<{shift}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
         else:
             raise ValueError(
                 "Float quantization is currently not supported for StreamingReshape."
@@ -190,49 +193,40 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
 
     def __get_object_declaration(self, model) -> cpp_object:
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if (input_quant is None):
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no quantization info")
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if (output_quant is None):
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no quantization info")
-
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Input {self.onnx_node.input[0]} has no shape info")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Output {self.onnx_node.output[0]} has no shape info")
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         StreamingReshape = cpp_object(
             "StreamingReshape",
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(input_quant)}",
+                    f"{input_quant.get_hls_data_type()}",
                     f"TInput",
                 ),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{get_hls_quant_type(output_quant)}",
+                    f"{output_quant.get_hls_data_type()}",
                     f"TOutput",
                 ),
                 (
                     f"{self.__get_quantizer(input_quant, output_quant)}",
                     f"Quantizer",
                 ),
-                (f"{input_shape[2]}", "IN_HEIGHT"),
-                (f"{input_shape[3]}", "IN_WIDTH"),
-                (f"{input_shape[1]}", "IN_CH"),
-                (f"{self.get_nodeattr('width_unroll')}", "W_PAR"),
-                (f"{self.get_nodeattr('channel_unroll')}", "CH_PAR"),
+                (f"{input_shape[-3]}", "DIM0"),
+                (f"{input_shape[-2]}", "DIM1"),
+                (f"{input_shape[-1]}", "DIM2"),
+                (f"{self.get_nodeattr('dim1_unroll')}", "DIM1_UNROLL"),
+                (f"{self.get_nodeattr('dim2_unroll')}", "DIM2_UNROLL"),
             ]
         )
 
@@ -287,19 +281,22 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
     def __current_dse_point(self) -> "StreamingReshape.DSEPoint":
         """ Retrieve the current DSE point from the ONNX attributes. """
         return StreamingReshape.DSEPoint(
-            channel_unroll=self.get_nodeattr("channel_unroll"),
-            width_unroll=self.get_nodeattr("width_unroll"),
+            dim2_unroll=self.get_nodeattr("dim2_unroll"),
+            dim1_unroll=self.get_nodeattr("dim1_unroll"),
         )
+
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingReshape accepts only NHWC layout. """
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingReshape produces only NHWC layout. """
+        return (0, 2, 3, 1)
 
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
-
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
             for i in range(self.get_nodeattr("in_stream_array"))
@@ -314,7 +311,7 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -342,13 +339,10 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-
+        input_shape = self.require_4d_input_shape(model, 0)
         point = self.__current_dse_point()
 
-        return np.prod(input_shape) // (point.channel_unroll * point.width_unroll)
+        return np.prod(input_shape) // (point.dim2_unroll * point.dim1_unroll)
 
     def get_brams(self, model: ModelWrapper) -> int:
         """ Estimate the BRAM usage of the StreamingReshape operation.
@@ -367,7 +361,7 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
             int: Estimated DSP usage.
         """
         return 0
-    
+
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingReshape.DSEPoint"]:
         """ Generate the DSE points for the StreamingReshape operation.
         Args:
@@ -376,62 +370,35 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
             list[StreamingReshape.DSEPoint]: List of DSE points.
         """
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_bits = input_quant.bitwidth
-
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-
-        # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for channel_unroll in divisors(
-            [input_shape[1], output_shape[1]],
-            min(input_shape[1], output_shape[1]),
+        for dim2_unroll in self.divisors(
+            [input_shape[-1], output_shape[-1]],
+            min(input_shape[-1], output_shape[-1]),
         ):
-            for width_unroll in divisors(
-                [input_shape[3], output_shape[3]],
-                min(input_shape[3], output_shape[3]),
+            for dim1_unroll in self.divisors(
+                [input_shape[-2], output_shape[-2]],
+                min(input_shape[-2], output_shape[-2]),
             ):
                 # Check dimension of input streams
-                if (input_bits * channel_unroll) > 4096:
+                if (input_bits * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
-                if (output_bits * channel_unroll) > 4096:
+                if (output_bits * dim2_unroll) > 4096:
+                    continue
+            
+                if dim1_unroll > 4:
                     continue
 
-                DSE_points.append(
-                    self.DSEPoint(
-                        channel_unroll, width_unroll
-                    )
-                )
+                DSE_points.append(self.DSEPoint(dim2_unroll, dim1_unroll))
 
         return DSE_points
 
@@ -447,10 +414,10 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
         Args:
             point (StreamingReshape.DSEPoint): The DSE point containing the unrolling parameters.
         """
-        self.set_nodeattr("channel_unroll", point.channel_unroll)
-        self.set_nodeattr("width_unroll", point.width_unroll)
+        self.set_nodeattr("dim2_unroll", point.dim2_unroll)
+        self.set_nodeattr("dim1_unroll", point.dim1_unroll)
 
-        self.set_nodeattr("in_stream_array", point.width_unroll)
-        self.set_nodeattr("out_stream_array", point.width_unroll)
-        self.set_nodeattr("in_word_array", point.channel_unroll)
-        self.set_nodeattr("out_word_array", point.channel_unroll)
+        self.set_nodeattr("in_stream_array", point.dim1_unroll)
+        self.set_nodeattr("out_stream_array", point.dim1_unroll)
+        self.set_nodeattr("in_word_array", point.dim2_unroll)
+        self.set_nodeattr("out_word_array", point.dim2_unroll)

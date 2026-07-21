@@ -40,9 +40,9 @@ class TestStreamingMul(BaseHLSTest):
             int(ina_info.max) + 1,
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ),
             dtype=np_ina_type,
         )
@@ -58,9 +58,9 @@ class TestStreamingMul(BaseHLSTest):
             int(inb_info.max) + 1,
             size=(
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ),
             dtype=np_inb_type,
         )
@@ -71,9 +71,9 @@ class TestStreamingMul(BaseHLSTest):
             onnx_ina_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
         B = helper.make_tensor_value_info(
@@ -81,9 +81,9 @@ class TestStreamingMul(BaseHLSTest):
             onnx_inb_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
         Y = helper.make_tensor_value_info(
@@ -91,9 +91,9 @@ class TestStreamingMul(BaseHLSTest):
             onnx_out_type,
             [
                 1,
-                config_dict["IN_CH"],
-                config_dict["IN_HEIGHT"],
-                config_dict["IN_WIDTH"],
+                config_dict["DIM2"],
+                config_dict["DIM0"],
+                config_dict["DIM1"],
             ],
         )
 
@@ -194,9 +194,7 @@ class TestStreamingMul(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['MUL_DATAWIDTH']}> TMul;")
         typedef_suffix = "u" if config_dict.get("OUTPUT_IS_UNSIGNED", False) else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> Quantizer;")
-        cwr.add_line("typedef DequantQuantEqual<TMul> Activation;")
-        # cwr.add_line(f"typedef DequantQuantEqual<TAcc> Activation;")
+        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TMul, TOutput> OutputTransform;")
         cwr.add_lines(
             csnake.Variable(
                 "input_tensorA",
@@ -232,11 +230,11 @@ class TestStreamingMul(BaseHLSTest):
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "MUL_DATAWIDTH": 16,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
@@ -257,11 +255,11 @@ class TestStreamingMul(BaseHLSTest):
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "MUL_DATAWIDTH": 16,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,
@@ -282,11 +280,11 @@ class TestStreamingMul(BaseHLSTest):
             "INPUTB_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "MUL_DATAWIDTH": 17,
-            "IN_HEIGHT": 4,
-            "IN_WIDTH": 4,
-            "IN_CH": 4,
-            "CH_PAR": 2,
-            "W_PAR": 1,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 1,
             "A_SCALE": 2**-5,
             "B_SCALE": 2**-5,
             "Y_SCALE": 2**-5,

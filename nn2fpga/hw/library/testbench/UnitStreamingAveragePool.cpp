@@ -9,28 +9,28 @@
 #include <iostream>
 #include <unordered_map>
 
-using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
-using TOutputWord = std::array<test_config::TOutput, test_config::CH_PAR>;
+using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
+using TOutputWord = std::array<test_config::TOutput, test_config::DIM2_UNROLL>;
 static constexpr size_t FW_EXPAND =
-    test_config::FW + (test_config::W_PAR - 1) * test_config::STRIDE_W;
-static constexpr size_t OUT_HEIGHT =
-    1 + (test_config::IN_HEIGHT + test_config::PAD_T + test_config::PAD_B -
+    test_config::FW + (test_config::DIM1_UNROLL - 1) * test_config::STRIDE_DIM1;
+static constexpr size_t OUT_DIM0 =
+    1 + (test_config::IN_DIM0 + test_config::PAD_T + test_config::PAD_B -
          test_config::DIL_H * (test_config::FH - 1) - 1) /
-            test_config::STRIDE_H;
-static constexpr size_t OUT_WIDTH =
-    1 + (test_config::IN_WIDTH + test_config::PAD_L + test_config::PAD_R -
+            test_config::STRIDE_DIM0;
+static constexpr size_t OUT_DIM1 =
+    1 + (test_config::IN_DIM1 + test_config::PAD_L + test_config::PAD_R -
          test_config::DIL_W * (test_config::FW - 1) - 1) /
-            test_config::STRIDE_W;
+            test_config::STRIDE_DIM1;
 
 void wrap_run(hls::stream<TInputWord> i_data[test_config::FH * FW_EXPAND],
-              hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
+              hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
   // Wrapper for synthesis.
-  StreamingAveragePool<
-      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
-      test_config::Quantizer, test_config::TAcc, test_config::TDiv,
-      test_config::OUT_CH, OUT_HEIGHT, OUT_WIDTH, test_config::FH,
-      test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
-      test_config::CH_PAR, test_config::W_PAR>
+  StreamingAveragePool<TInputWord, test_config::TInput, TOutputWord,
+                       test_config::TOutput, test_config::Quantizer,
+                       test_config::TAcc, test_config::TDiv, OUT_DIM0, OUT_DIM1,
+                       test_config::OUT_DIM2, test_config::FH, test_config::FW,
+                       test_config::STRIDE_DIM0, test_config::STRIDE_DIM1,
+                       test_config::DIM2_UNROLL, test_config::DIM1_UNROLL>
       pool;
   pool.run<0>(i_data, o_data);
 }
@@ -39,30 +39,31 @@ bool test_run() {
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::FH * FW_EXPAND];
-  hls::stream<TOutputWord> out_stream[test_config::W_PAR];
+  hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
 
   // Fill input streams with test data
-  for (size_t h = 0; h < OUT_HEIGHT; h++) {
-    for (size_t w = 0; w < OUT_WIDTH; w += test_config::W_PAR) {
-      for (size_t i_ich = 0; i_ich < test_config::OUT_CH;
-           i_ich += test_config::CH_PAR) {
+  for (size_t i_dim0 = 0; i_dim0 < OUT_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < OUT_DIM1;
+         i_dim1 += test_config::DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::OUT_DIM2;
+           i_dim2 += test_config::DIM2_UNROLL) {
         for (size_t fh = 0; fh < test_config::FH; fh++) {
           for (size_t fw = 0; fw < FW_EXPAND; fw++) {
 
             size_t input_index_h =
-                (h * test_config::STRIDE_H) - test_config::PAD_T + fh;
+                (i_dim0 * test_config::STRIDE_DIM0) - test_config::PAD_T + fh;
             size_t input_index_w =
-                (w * test_config::STRIDE_W) - test_config::PAD_L + fw;
+                (i_dim1 * test_config::STRIDE_DIM1) - test_config::PAD_L + fw;
 
             TInputWord input_data;
-            for (size_t i_ch_par = 0; i_ch_par < test_config::CH_PAR;
-                 i_ch_par++) {
-              if (input_index_h < 0 || input_index_h >= test_config::IN_HEIGHT ||
-                  input_index_w < 0 || input_index_w >= test_config::IN_WIDTH) {
-                input_data[i_ch_par] = 0; // Padding with zeros
+            for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+                 i_dim2_par++) {
+              if (input_index_h < 0 || input_index_h >= test_config::IN_DIM0 ||
+                  input_index_w < 0 || input_index_w >= test_config::IN_DIM1) {
+                input_data[i_dim2_par] = 0; // Padding with zeros
               } else {
-                input_data[i_ch_par] =
-                    test_config::input_tensor[0][i_ich + i_ch_par]
+                input_data[i_dim2_par] =
+                    test_config::input_tensor[0][i_dim2 + i_dim2_par]
                                              [input_index_h][input_index_w];
               }
             }
@@ -78,25 +79,28 @@ bool test_run() {
 
   // Read and check output
   bool flag = true;
-  for (size_t h = 0; h < OUT_HEIGHT; h++) {
-    for (size_t w = 0; w < OUT_WIDTH; w += test_config::W_PAR) {
-      for (size_t i_och = 0; i_och < test_config::OUT_CH;
-           i_och += test_config::CH_PAR) {
-        for (size_t i_w_par = 0; i_w_par < test_config::W_PAR; i_w_par++) {
-          TOutputWord output_data = out_stream[i_w_par].read();
-          for (size_t i_och_par = 0; i_och_par < test_config::CH_PAR;
-               i_och_par++) {
+  for (size_t i_dim0 = 0; i_dim0 < OUT_DIM0; i_dim0++) {
+    for (size_t i_dim1 = 0; i_dim1 < OUT_DIM1;
+         i_dim1 += test_config::DIM1_UNROLL) {
+      for (size_t i_dim2 = 0; i_dim2 < test_config::OUT_DIM2;
+           i_dim2 += test_config::DIM2_UNROLL) {
+        for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+             i_dim1_par++) {
+          TOutputWord output_data = out_stream[i_dim1_par].read();
+          for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+               i_dim2_par++) {
 
             // Check if the output data matches the expected result
-            if (output_data[i_och_par] !=
-                test_config::output_tensor[0][i_och + i_och_par][h][w + i_w_par]
-                                          ) {
-              std::cerr << "Output mismatch at (" << h << ", " << w + i_w_par
-                        << ", " << i_och + i_och_par
-                        << "): " << output_data[i_och_par] << " != "
-                        << test_config::output_tensor[0][i_och + i_och_par][h]
-                                                     [w + i_w_par]
-                        << std::endl;
+            if (output_data[i_dim2_par] !=
+                test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                          [i_dim1 + i_dim1_par]) {
+              std::cerr
+                  << "Output mismatch at (" << i_dim0 << ", "
+                  << i_dim1 + i_dim1_par << ", " << i_dim2 + i_dim2_par
+                  << "): " << output_data[i_dim2_par] << " != "
+                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                               [i_dim1 + i_dim1_par]
+                  << std::endl;
               flag = false;
             }
           }
@@ -113,8 +117,9 @@ bool test_run() {
     }
   }
 
-  for (size_t i = 0; i < test_config::W_PAR; i++) {
-    if (!out_stream[i].empty()) {
+  for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+       i_dim1_par++) {
+    if (!out_stream[i_dim1_par].empty()) {
       std::cout << "Output stream not empty after run." << std::endl;
       flag = false;
     }
@@ -127,20 +132,20 @@ bool test_run() {
 bool test_step() {
 
   static constexpr size_t expectedII =
-      OUT_HEIGHT * OUT_WIDTH * test_config::OUT_CH /
-      (test_config::CH_PAR * test_config::W_PAR);
+      OUT_DIM0 * OUT_DIM1 * test_config::OUT_DIM2 /
+      (test_config::DIM2_UNROLL * test_config::DIM1_UNROLL);
 
   // Create input and output streams
   hls::stream<TInputWord> i_data[test_config::FH * FW_EXPAND];
-  hls::stream<TOutputWord> o_data[test_config::W_PAR];
+  hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL];
 
   // Run the global average pooling
-  StreamingAveragePool<
-      TInputWord, test_config::TInput, TOutputWord, test_config::TOutput,
-      test_config::Quantizer, test_config::TAcc, test_config::TDiv,
-      test_config::OUT_CH, OUT_HEIGHT, OUT_WIDTH, test_config::FH,
-      test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
-      test_config::CH_PAR, test_config::W_PAR>
+  StreamingAveragePool<TInputWord, test_config::TInput, TOutputWord,
+                       test_config::TOutput, test_config::Quantizer,
+                       test_config::TAcc, test_config::TDiv, OUT_DIM0, OUT_DIM1,
+                       test_config::OUT_DIM2, test_config::FH, test_config::FW,
+                       test_config::STRIDE_DIM0, test_config::STRIDE_DIM1,
+                       test_config::DIM1_UNROLL, test_config::DIM2_UNROLL>
       pool;
   pool.step_init(test_config::PIPELINE_DEPTH);
 

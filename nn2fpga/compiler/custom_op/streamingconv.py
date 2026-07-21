@@ -1,23 +1,32 @@
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
+from onnxscript.rewriter import pattern
 from qonnx.util.basic import qonnx_make_model
-from nn2fpga.compiler.core.tensor_quant import get_custom_tensor_datatype
+from qonnx.core.modelwrapper import ModelWrapper
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, require_tensor_type
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo
+from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
-from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, DSECapable, HasParameters, ParamDesc
+from nn2fpga.compiler.custom_op.op_base import (
+    NN2FPGAOp,
+    DSECapable,
+    HasParameters,
+    ParamDesc,
+)
 from nn2fpga.compiler.utils.codegen_utils import (
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_struct_type,
-    get_hls_quant_type,
+    get_word_type,
 )
-from nn2fpga.compiler.core.tensor_quant import TensorQuant
-from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
-from onnxscript.rewriter import pattern
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
+from nn2fpga.compiler.utils.linebuffer_utils import (
+    circular_linebuffer_compatible_or_bypassed,
+    circular_linebuffer_latency,
+    validate_circular_linebuffer_attrs,
+)
 from dataclasses import dataclass
 from typing import Iterable
 from logging import getLogger
@@ -208,7 +217,9 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             "asym_folding": ("i", False, 0),  # 0: no folding, 1: fold zeropt into bias
 
             # Custom attribute for activation function
-            "activation": ("s", False, "NoOp"),  # NoOp, ReLU
+            "activation": ("s", False, "NoOp"),  # NoOp, ReLU, LeakyReLU
+            "activation_alpha_num": ("i", False, 1),
+            "activation_alpha_den": ("i", False, 1),
 
             # Custom attribute for internal/external parameters (weights, biases) storage
             "param_storage": ("s", True, "INTERNAL"),  # INTERNAL, EXTERNAL
@@ -223,7 +234,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             input_list = [node.input[0], node.input[1]] + node.input[2:5]
         elif len(node.input) == 9:
             # Conv with bias
-            input_list = [node.input[0], node.input[1], node.input[5]] + node.input[2:5] + node.input[6:9]
+            input_list = (
+                [node.input[0], node.input[1], node.input[5]]
+                + node.input[2:5]
+                + node.input[6:9]
+            )
         else:
             raise ValueError(
                 f"Unexpected number of inputs for StreamingConv node {node.name}: {len(node.input)}"
@@ -327,14 +342,14 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         if input_quant.signed != weights_quant.signed:
             acc_bitwidth += 1  # Add extra bit for sign if input and weights have different signedness
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=acc_bitwidth,
             signed=signed,
             scale=input_quant.scale,
             zeropt=input_quant.zeropt,
         )
 
-        return f"{get_hls_quant_type(acc_quant)}"
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
         """ Returns the accumulator type for the StreamingConv operation. """
@@ -349,27 +364,14 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             acc_bitwidth += 1  # Add extra bit for sign if input and weights have different signedness
         acc_bitwidth = max(acc_bitwidth, bias_quant.bitwidth) + 1
         signed = input_quant.signed or weights_quant.signed or bias_quant.signed
-        acc_quant = TensorQuant(
+        acc_quant = QuantizedTensorType(
             bitwidth=acc_bitwidth,
             signed=signed,
             scale=input_quant.scale,
             zeropt=input_quant.zeropt,
         )
 
-        return f"{get_hls_quant_type(acc_quant)}"
-
-    def __get_activation(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
-        """ Returns the activation functor for the StreamingConv operation. """
-
-        activation = self.get_nodeattr("activation")
-        if activation == "NoOp":
-            return f"DequantQuantEqual<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
-        elif activation == "ReLU":
-            return f"ReLU<{self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}>"
-        else:
-            raise ValueError(
-                f"Unsupported activation function '{activation}' for StreamingConv."
-            )
+        return f"{acc_quant.get_hls_data_type()}"
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
@@ -398,24 +400,49 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)}, {get_hls_quant_type(output_quant)}>"
-        else:
+            accumulator = self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)
+            output_type = output_quant.get_hls_data_type()
+            activation = self.get_nodeattr("activation")
+            if activation == "NoOp":
+                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}>"
+            if activation == "ReLU":
+                return f"ReLUQuantPo2<{shift}, {accumulator}, {output_type}>"
+            if activation == "LeakyReLU":
+                alpha_num = self.get_nodeattr("activation_alpha_num")
+                alpha_den = self.get_nodeattr("activation_alpha_den")
+                if self.__is_power_of_two(alpha_den):
+                    alpha_den_shift = int(np.log2(alpha_den))
+                    return f"LeakyReLUQuantPo2<{shift}, {alpha_num}, {alpha_den_shift}, {accumulator}, {output_type}>"
+                raise ValueError(
+                    "Fused LeakyReLU currently requires a power-of-two alpha denominator."
+                )
             raise ValueError(
-                "Float quantization is currently not supported for StreamingConv.  "
+                f"Unsupported activation function '{activation}' for StreamingConv."
+            )
+        else:
+            inv_scale = output_quant.scale / (weights_scale * input_quant.scale)
+            num = int(inv_scale * (2 ** 16))  # Fixed-point representation
+            den = 2 ** 16
+            accumulator = self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)
+            output_type = output_quant.get_hls_data_type()
+            activation = self.get_nodeattr("activation")
+            if activation == "NoOp":
+                return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}>"
+            if activation in ["ReLU", "LeakyReLU"]:
+                raise ValueError(
+                    f"Fused {activation} currently requires power-of-two quantization scales."
+                )
+            raise ValueError(
+                f"Unsupported activation function '{activation}' for StreamingConv."
             )
 
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingConv operation. """
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model.")
+        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        output_type = require_tensor_type(model, self.onnx_node.output[0])
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model.")
-
-        weights_quant = TensorQuant(
+        weights_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[2]),
             zeropt=model.get_initializer(self.onnx_node.input[3]),
             bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -424,7 +451,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=self.get_nodeattr("w_rounding_mode"),
         )
 
-        bias_quant = TensorQuant(
+        bias_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[6]),
             zeropt=model.get_initializer(self.onnx_node.input[7]),
             bitwidth=model.get_initializer(self.onnx_node.input[8]),
@@ -434,16 +461,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         )
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-        weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
-        if weights_shape is None:
-            raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        weights_shape = self.require_4d_input_shape(model, 1)
 
         point = self.__current_dse_point()
 
@@ -453,36 +475,35 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_struct_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}",
                     "TInputWord",
                 ),
-                (f"{get_hls_quant_type(input_quant)}", "TInput"),
+                (f"{input_type.get_hls_data_type()}", "TInput"),
                 (
-                    f"{get_struct_type(weights_quant, self.get_nodeattr('in_channel_unroll') * self.get_nodeattr('out_channel_unroll'))}",
+                    f"{get_word_type(weights_quant, self.get_nodeattr('in_channel_unroll') * self.get_nodeattr('out_channel_unroll'))}",
                     "TWeightWord",
                 ),
-                (f"{get_hls_quant_type(weights_quant)}", "TWeight"),
+                (f"{weights_quant.get_hls_data_type()}", "TWeight"),
                 (
-                    f"{get_struct_type(bias_quant, self.get_nodeattr('out_channel_unroll'))}",
+                    f"{get_word_type(bias_quant, self.get_nodeattr('out_channel_unroll'))}",
                     "TBiasWord",
                 ),
-                (f"{get_hls_quant_type(bias_quant)}", "TBias"),
+                (f"{bias_quant.get_hls_data_type()}", "TBias"),
                 (
-                    f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     "TOutputWord",
                 ),
-                (f"{get_hls_quant_type(output_quant)}", "TOutput"),
-                (self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TSum"),
-                (self.__get_partial_accumulator(input_quant, weights_quant, bias_quant, weights_shape), "TPartialSum"),
-                (self.__get_activation(input_quant, weights_quant, bias_quant, weights_shape), "Activation"),
+                (f"{output_type.get_hls_data_type()}", "TOutput"),
+                (self.__get_accumulator(input_type, weights_quant, bias_quant, weights_shape), "TSum"),
+                (self.__get_partial_accumulator(input_type, weights_quant, bias_quant, weights_shape), "TPartialSum"),
                 (
-                    self.__get_quantizer(input_quant, weights_quant, bias_quant, output_quant, weights_shape),
-                    "Quantizer",
+                    f"{self.__get_quantizer(input_type, weights_quant, bias_quant, output_type, weights_shape)}",
+                    "OutputTransform",
                 ),
-                (output_shape[1], "OUT_CH"),
-                (input_shape[1], "IN_CH"),
-                (output_shape[2], "OUT_HEIGHT"),
-                (output_shape[3], "OUT_WIDTH"),
+                (output_shape[-1], "OUT_CH"),
+                (input_shape[-1], "IN_CH"),
+                (output_shape[-3], "OUT_HEIGHT"),
+                (output_shape[-2], "OUT_WIDTH"),
                 (self.get_nodeattr("group"), "GROUP"),
                 (self.get_nodeattr("kernel_shape")[0], "FH"),
                 (self.get_nodeattr("kernel_shape")[1], "FW"),
@@ -497,14 +518,16 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         return StreamingConv.generate_declaration()
 
     def __get_variable_declaration(self, model) -> str:
-        """ Get the internal cpp variables of the StreamingConv node.
+        """Get the internal cpp variables of the StreamingConv node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             str: A string representing the declaration of internal variables.
         """
 
-        weights_quant = TensorQuant(
+        variables_code = ""
+
+        weights_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[2]),
             zeropt=model.get_initializer(self.onnx_node.input[3]),
             bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -513,7 +536,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=self.get_nodeattr("w_rounding_mode"),
         )
 
-        bias_quant = TensorQuant(
+        bias_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[6]),
             zeropt=model.get_initializer(self.onnx_node.input[7]),
             bitwidth=model.get_initializer(self.onnx_node.input[8]),
@@ -523,16 +546,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         )
 
         # Retrieve tensor shape.
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
-        weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
-        if weights_shape is None:
-            raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        weights_shape = self.require_4d_input_shape(model, 1)
 
         # Create weights and biases variable declarations if parameters are stored internally.
         param_storage = self.get_nodeattr("param_storage")
@@ -545,14 +563,14 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             )
             weights_var = cpp_variable(
                 name=f"{self.onnx_node.name}_weights",
-                primitive=get_hls_quant_type(weights_quant),
+                primitive=weights_quant.get_hls_data_type(),
                 pragma=[
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=3 complete",
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=2 complete",
                 ],
                 value=values.reshape(
-                    output_shape[1]
-                    * input_shape[1]
+                    output_shape[-1]
+                    * input_shape[-1]
                     // (
                         self.get_nodeattr("in_channel_unroll")
                         * self.get_nodeattr("out_channel_unroll")
@@ -567,25 +585,25 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             values = np.random.randint(
                 low=0,
                 high=2 ** (bias_quant.bitwidth - 1),
-                size=output_shape[1],
+                size=output_shape[-1],
                 dtype=np.int32,
             )
 
             bias_var = cpp_variable(
                 name=f"{self.onnx_node.name}_biases",
-                primitive=get_hls_quant_type(bias_quant),
+                primitive=bias_quant.get_hls_data_type(),
                 pragma=[
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=3 complete",
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=2 complete",
                 ],
                 value=values.reshape(
-                    output_shape[1] // self.get_nodeattr("out_channel_unroll"),
+                    output_shape[-1] // self.get_nodeattr("out_channel_unroll"),
                     self.get_nodeattr("out_channel_unroll"),
                     1,
                 ),
             )
 
-            return (
+            return variables_code + (
                 weights_var.generate_declaration() 
                 + ";\n"
                 + weights_var.generate_pragma()
@@ -595,7 +613,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 + bias_var.generate_pragma()
             )
         else:
-            return ""
+            return variables_code
 
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
@@ -678,6 +696,14 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             filter_height_unroll=self.get_nodeattr("filter_height_unroll"),
         )
 
+    def accepted_input_layout(self) -> tuple | None:
+        """ StreamingConv only accepts NHWC layout."""
+        return (0, 2, 3, 1)
+
+    def produced_output_layout(self, input_layout: tuple | None) -> tuple | None:
+        """ StreamingConv produces only NHWC layout, regardless of the input layout."""
+        return (0, 2, 3, 1)
+
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         """
         Returns:
@@ -691,11 +717,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         FW = self.get_nodeattr("kernel_shape")[1]
         STRIDE_W = self.get_nodeattr("strides")[1]
         FW_EXTENDED = FW + (point.width_unroll - 1) * STRIDE_W
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -721,7 +743,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_struct_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -774,20 +796,16 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         """
         kernel_shape = self.get_nodeattr("kernel_shape")
         group = self.get_nodeattr("group")
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model.")
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0)
 
         # Retrieve current unroll attributes if not provided.
         point = self.__current_dse_point()
 
         # Compute the number of MAC operations.
         MACs_conv = (
-            input_shape[1] * np.prod(output_shape) * np.prod(kernel_shape)
+            input_shape[-1] * np.prod(output_shape) * np.prod(kernel_shape)
         ) // group
 
         # Compute the latency based on unrolling factors.
@@ -799,10 +817,15 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             * point.filter_height_unroll
         )
 
-        # Compute the latency of the line buffer in input.
-        latency_lb = np.prod(input_shape) // (
-            point.in_channel_unroll * point.width_unroll
-        )
+        # Compute the latency of the circular linebuffer's padded virtual scan.
+        latency_lb = 0
+        if self.has_linebuffer():
+            latency_lb = circular_linebuffer_latency(
+                input_shape,
+                self.get_nodeattr("pads"),
+                point.width_unroll,
+                point.in_channel_unroll,
+            )
         return max(latency_conv, latency_lb)
 
     def get_brams(self, model: ModelWrapper) -> int:
@@ -814,11 +837,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         """
 
         if self.get_nodeattr("param_storage") == "INTERNAL":
-            weights_shape = model.get_tensor_shape(self.onnx_node.input[1])
-            if weights_shape is None:
-                raise ValueError(f"Tensor shape for weights '{self.onnx_node.input[1]}' not found in model.")
-
-            weights_quant = TensorQuant(
+            weights_shape = self.require_4d_input_shape(model, 1)
+            weights_quant = QuantizedTensorType(
                 scale=model.get_initializer(self.onnx_node.input[2]),
                 zeropt=model.get_initializer(self.onnx_node.input[3]),
                 bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -845,11 +865,9 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             brams = bram_usage_evaluator(weight_bits, n_weights, unroll_factor)
 
             if len(self.onnx_node.input) > 5:
-                bias_shape = model.get_tensor_shape(self.onnx_node.input[5])
-                if bias_shape is None:
-                    raise ValueError(f"Tensor shape for bias '{self.onnx_node.input[5]}' not found in model.")
+                bias_shape = self.require_4d_input_shape(model, 5)
 
-                bias_quant = TensorQuant(
+                bias_quant = QuantizedTensorType(
                     scale=model.get_initializer(self.onnx_node.input[6]),
                     zeropt=model.get_initializer(self.onnx_node.input[7]),
                     bitwidth=model.get_initializer(self.onnx_node.input[8]),
@@ -880,7 +898,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         """
         silvia_packing = model.get_metadata_prop("silvia_packing") == "true"
 
-        weights_quant = TensorQuant(
+        weights_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[2]),
             zeropt=model.get_initializer(self.onnx_node.input[3]),
             bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -889,12 +907,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=self.get_nodeattr("w_rounding_mode"),
         )
 
-        act_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if act_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
-
+        act_quant = require_tensor_type(model, self.onnx_node.input[0])
         act_bits = act_quant.bitwidth
         weight_bits = weights_quant.bitwidth
 
@@ -914,20 +927,18 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             * point.width_unroll
         )
 
-        return MACs // mac_per_dsp
+        conv_dsp = MACs // mac_per_dsp
+        act_dsp = 0
+        if self.get_nodeattr("activation") == "LeakyReLU":
+            act_dsp = point.out_channel_unroll * point.width_unroll
+
+        return conv_dsp + act_dsp
 
     def get_dse_points(self, model: ModelWrapper) -> list["StreamingConv.DSEPoint"]:
         """Generate the list of valid DSE points for the StreamingConv operation."""
 
-        def divisors(n: list[int], clip: int) -> list[int]:
-            return [
-                i
-                for i in range(1, min(n) + 1)
-                if (all(x % i == 0 for x in n) and i <= clip)
-            ]
-
         kernel_height, kernel_width = self.get_nodeattr("kernel_shape")
-        weight_quant = TensorQuant(
+        weight_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[2]),
             zeropt=model.get_initializer(self.onnx_node.input[3]),
             bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -938,7 +949,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         weight_bits = weight_quant.bitwidth
 
         if len(self.onnx_node.input) > 5:
-            bias_quant = TensorQuant(
+            bias_quant = QuantizedTensorType(
                 scale=model.get_initializer(self.onnx_node.input[6]),
                 zeropt=model.get_initializer(self.onnx_node.input[7]),
                 bitwidth=model.get_initializer(self.onnx_node.input[8]),
@@ -950,42 +961,47 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         else:
             bias_bits = 0
 
-        input_quant = get_custom_tensor_datatype(model, self.onnx_node.input[0])
-        if input_quant is None:
-            raise ValueError(
-                f"Tensor quantization for input '{self.onnx_node.input[0]}' not found in model."
-            )
+        input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_bits = input_quant.bitwidth
 
-        output_quant = get_custom_tensor_datatype(model, self.onnx_node.output[0])
-        if output_quant is None:
-            raise ValueError(
-                f"Tensor quantization for output '{self.onnx_node.output[0]}' not found in model."
-            )
+        output_quant = require_tensor_type(model, self.onnx_node.output[0])
         output_bits = output_quant.bitwidth
 
-        input_shape = model.get_tensor_shape(self.onnx_node.input[0])
-        if input_shape is None:
-            raise ValueError(
-                f"Tensor shape for input '{self.onnx_node.input[0]}' not found in model."
-            )
-        input_shape = input_shape + [1] * (4 - len(input_shape))  # Ensure 4D shape.
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(
-                f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model."
-            )
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
+        pads = self.get_nodeattr("pads")
+        strides = self.get_nodeattr("strides")
+        dilations = self.get_nodeattr("dilations")
+        kernel_shape = self.get_nodeattr("kernel_shape")
+
+        validate_circular_linebuffer_attrs(kernel_shape, pads, dilations)
 
         # As of now, kernel height and width are completely unrolled.
         DSE_points = []
-        for in_channel_unroll in divisors([input_shape[1]], input_shape[1]):
-            # Clipping out channel unrolling factor to avoid collapsing the loop, due to a bug which forces Vitis to generate a stp pipeline.
-            for out_channel_unroll in divisors([output_shape[1]], output_shape[1] - 1):
-                for width_unroll in divisors(
-                    [output_shape[3], input_shape[3]],
-                    min(output_shape[3], input_shape[3]),
+        for in_channel_unroll in self.divisors([input_shape[-1]], input_shape[-1]):
+            # Clipping out channel unrolling factor to avoid collapsing the loop,
+            # due to a bug which forces Vitis to generate a stp pipeline.
+            for out_channel_unroll in self.divisors(
+                [output_shape[-1]], output_shape[-1] - 1
+            ):
+                for width_unroll in self.divisors(
+                    [output_shape[-2], input_shape[-2]],
+                    min(output_shape[-2], input_shape[-2]),
                 ):
+                    if not circular_linebuffer_compatible_or_bypassed(
+                        input_shape,
+                        output_shape,
+                        kernel_shape,
+                        strides,
+                        pads,
+                        width_unroll,
+                        dilations,
+                    ):
+                        continue
+
                     # Check dimension of weight streams
                     if (weight_bits * in_channel_unroll * out_channel_unroll) > 4096:
                         continue
@@ -1000,15 +1016,25 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                         continue
 
                     # Heuristic to spread unrolling across dimensions
-                    if (width_unroll > 4 or out_channel_unroll > 5 or in_channel_unroll > 40):
+                    if (
+                        width_unroll > 1
+                        or out_channel_unroll > 2
+                        or in_channel_unroll > 40
+                    ):
                         continue
 
                     DSE_points.append(
                         self.DSEPoint(
-                            out_channel_unroll, in_channel_unroll, width_unroll, kernel_height, kernel_width
+                            out_channel_unroll,
+                            in_channel_unroll,
+                            width_unroll,
+                            kernel_height,
+                            kernel_width,
                         )
                     )
 
+        # logger.info(f"Generated {len(DSE_points)} DSE points for StreamingConv node {self.onnx_node.name}")
+        # logger.info(f"DSE points: {DSE_points}")
         return DSE_points
 
     def apply_point(self, model: ModelWrapper, point: "StreamingConv.DSEPoint"):
@@ -1029,7 +1055,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
 
     def list_parameters(self, model: ModelWrapper) -> Iterable[ParamDesc]:
 
-        weights_quant = TensorQuant(
+        weights_quant = QuantizedTensorType(
             scale=model.get_initializer(self.onnx_node.input[2]),
             zeropt=model.get_initializer(self.onnx_node.input[3]),
             bitwidth=model.get_initializer(self.onnx_node.input[4]),
@@ -1040,19 +1066,15 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         data_per_word = 32 // weights_quant.bitwidth
 
         # Expand shapes to 4D if needed
-        output_shape = model.get_tensor_shape(self.onnx_node.output[0])
-        if output_shape is None:
-            raise ValueError(f"Tensor shape for output '{self.onnx_node.output[0]}' not found in model.")
-        output_shape = output_shape + [1] * (4 - len(output_shape))  # Ensure 4D shape.
+        output_layout = require_tensor_layout(model, self.onnx_node.output[0])
+        output_shape = self.require_4d_output_shape(model, 0, output_layout)
 
-        mem_shape = model.get_tensor_shape(self.onnx_node.input[1])
-        if len(mem_shape) < 4:
-            mem_shape = mem_shape + [1] * (4 - len(mem_shape))
+        mem_shape = self.require_4d_input_shape(model, 1)
 
         in_channel_unroll = self.get_nodeattr("in_channel_unroll")
         out_channel_unroll = self.get_nodeattr("out_channel_unroll")
-        width_unroll = np.prod(mem_shape[2:])
-        times = output_shape[2] * output_shape[3] // self.get_nodeattr("width_unroll")
+        width_unroll = np.prod(mem_shape[2:]) # The kernel is fully unrolled, so the width unroll factor is equal to the kernel size.
+        times = output_shape[-2] * output_shape[-3] // self.get_nodeattr("width_unroll")
 
         yield ParamDesc(
             input_index=1,
@@ -1067,7 +1089,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         )
 
         if len(self.onnx_node.input) > 5:
-            bias_quant = TensorQuant(
+            bias_quant = QuantizedTensorType(
                 scale=model.get_initializer(self.onnx_node.input[6]),
                 zeropt=model.get_initializer(self.onnx_node.input[7]),
                 bitwidth=model.get_initializer(self.onnx_node.input[8]),

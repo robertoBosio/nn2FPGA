@@ -8,28 +8,28 @@
 template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename TLUT, typename TAcc, typename TDiv,
           typename Quantizer, size_t LUT_SIZE, size_t DIM_LANES,
-          size_t DIM_REDUCTION, size_t LANE_PAR, size_t REDUCE_PAR>
+          size_t DIM_REDUCTION, size_t LANE_UNROLL, size_t REDUCTION_UNROLL>
 class StreamingOnlineSoftmax {
 
   struct StepState {
     // Loop iteration indexes.
     size_t i_lane_group = 0, i_red_group = 0, i_step = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[LANE_PAR];
-    TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR];
-    TInput max[LANE_PAR];
-    TAcc sum[LANE_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[LANE_UNROLL];
+    TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL];
+    TInput max[LANE_UNROLL];
+    TAcc sum[LANE_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < LANE_PAR; i++) {
+      for (size_t i = 0; i < LANE_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status = ActorStatus(depth, DIM_LANES * DIM_REDUCTION * 2 /
-                                            (REDUCE_PAR * LANE_PAR));
+                                            (REDUCTION_UNROLL * LANE_UNROLL));
       initialized = true;
     }
   };
@@ -46,9 +46,9 @@ class StreamingOnlineSoftmax {
     st.init(pipeline_depth);
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_data[LANE_PAR],
+  ActorStatus step(hls::stream<TInputWord> i_data[LANE_UNROLL],
                    const TLUT lut_table[LUT_SIZE],
-                   hls::stream<TOutputWord> o_data[LANE_PAR]) {
+                   hls::stream<TOutputWord> o_data[LANE_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -56,27 +56,27 @@ class StreamingOnlineSoftmax {
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
       if (st.i_step == 0 && i_data[i_lane_par].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> o_data_instant[LANE_PAR];
+      hls::stream<TOutputWord> o_data_instant[LANE_UNROLL];
       StreamingOnlineSoftmax::pipeline_body(i_data, lut_table, o_data_instant,
                                       st.i_red_group, st.i_step, st.max, st.sum,
                                       st.in_row);
 
       // Update iterators
       st.i_red_group++;
-      if (st.i_red_group == DIM_REDUCTION / REDUCE_PAR) {
+      if (st.i_red_group == DIM_REDUCTION / REDUCTION_UNROLL) {
         st.i_red_group = 0;
         st.i_step++;
         if (st.i_step == 2) {
           st.i_step = 0;
           st.i_lane_group++;
-          if (st.i_lane_group == DIM_LANES / LANE_PAR) {
+          if (st.i_lane_group == DIM_LANES / LANE_UNROLL) {
             st.i_lane_group = 0;
           }
         }
@@ -87,7 +87,7 @@ class StreamingOnlineSoftmax {
 
       // Mul the output to the delayed output buffers
       TOutputWord out_value;
-      for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+      for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
         if (!o_data_instant[i_lane_par].empty()) {
           out_value = o_data_instant[i_lane_par].read();
           st.delayed_output[i_lane_par].push(out_value, true);
@@ -97,7 +97,7 @@ class StreamingOnlineSoftmax {
       }
     } else {
       // If not firing, push invalid data to maintain pipeline timing
-      for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+      for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
         st.delayed_output[i_lane_par].push(TOutputWord(), false);
       }
     }
@@ -107,7 +107,7 @@ class StreamingOnlineSoftmax {
 
     // Read from the delayed output buffers
     TOutputWord out_value;
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
       if (st.delayed_output[i_lane_par].pop(out_value)) {
         o_data[i_lane_par].write(out_value);
       }
@@ -119,26 +119,26 @@ class StreamingOnlineSoftmax {
   StreamingOnlineSoftmax() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[LANE_PAR],
+  void run(hls::stream<TInputWord> i_data[LANE_UNROLL],
            const TLUT lut_table[LUT_SIZE],
-           hls::stream<TOutputWord> o_data[LANE_PAR]) {
+           hls::stream<TOutputWord> o_data[LANE_UNROLL]) {
     
     
-    TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR];
+    TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL];
 
     // Loop over groups of lanes.
     for (size_t i_lane_group = 0;
-         i_lane_group < DIM_LANES / LANE_PAR; i_lane_group++) {
+         i_lane_group < DIM_LANES / LANE_UNROLL; i_lane_group++) {
       
       // Tracking the max and sum for each lane in the group.
-      TInput max[LANE_PAR] = {LimitsImpl<TInput>::min()};
-      TAcc sum[LANE_PAR] = {0};
+      TInput max[LANE_UNROLL] = {LimitsImpl<TInput>::min()};
+      TAcc sum[LANE_UNROLL] = {0};
 
       // Loop over the two steps of the softmax computation for each group of lanes.
       for (size_t i_step = 0; i_step < 2; i_step++) {
 
         // Loop over the groups of unrolled operations in the lane.
-        for (size_t i_red_group = 0; i_red_group < DIM_REDUCTION / REDUCE_PAR;
+        for (size_t i_red_group = 0; i_red_group < DIM_REDUCTION / REDUCTION_UNROLL;
              i_red_group++) {
         STREAMINGSOFTMAX_RUN_LOOP:
 #pragma HLS PIPELINE II = 1
@@ -151,11 +151,11 @@ class StreamingOnlineSoftmax {
 
 private:
   static void
-  pipeline_body(hls::stream<TInputWord> i_data[LANE_PAR],
+  pipeline_body(hls::stream<TInputWord> i_data[LANE_UNROLL],
                 const TLUT lut_table[LUT_SIZE],
-                hls::stream<TOutputWord> o_data[LANE_PAR], size_t i_red_group,
-                size_t i_step, TInput max[LANE_PAR], TAcc sum[LANE_PAR],
-                TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR]) {
+                hls::stream<TOutputWord> o_data[LANE_UNROLL], size_t i_red_group,
+                size_t i_step, TInput max[LANE_UNROLL], TAcc sum[LANE_UNROLL],
+                TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL]) {
 #pragma HLS inline
 
     // Output quantizer
@@ -177,7 +177,7 @@ private:
     // but it must be unsigned.
     typedef ap_uint<TInput::width> TAddress;
 
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
     
       if (i_step == 0) {
         // Read input values for the current channel partition
@@ -187,7 +187,7 @@ private:
       TOutputWord out_value;
 
       // Perform the softmax computation for the input value and write to output
-      for (size_t i_red_par = 0; i_red_par < REDUCE_PAR; i_red_par++) {
+      for (size_t i_red_par = 0; i_red_par < REDUCTION_UNROLL; i_red_par++) {
         TInput x = (TInput)in_value[i_red_par];
         if (i_step == 0) {
           // Update max and sum for this line
@@ -258,28 +258,28 @@ private:
 template <typename TInputWord, typename TInput, typename TOutputWord,
           typename TOutput, typename TLUT, typename TAcc, typename TDiv,
           typename Quantizer, size_t LUT_SIZE, size_t DIM_LANES,
-          size_t DIM_REDUCTION, size_t LANE_PAR, size_t REDUCE_PAR>
+          size_t DIM_REDUCTION, size_t LANE_UNROLL, size_t REDUCTION_UNROLL>
 class StreamingSoftmax {
 
   struct StepState {
     // Loop iteration indexes.
     size_t i_lane_group = 0, i_red_group = 0, i_step = 0;
 
-    PipelineDelayBuffer<TOutputWord> delayed_output[LANE_PAR];
-    TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR];
-    TInput max[LANE_PAR];
-    TAcc sum[LANE_PAR];
+    PipelineDelayBuffer<TOutputWord> delayed_output[LANE_UNROLL];
+    TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL];
+    TInput max[LANE_UNROLL];
+    TAcc sum[LANE_UNROLL];
     ActorStatus actor_status{1, 1};
     bool initialized = false;
 
     void init(size_t depth) {
       if (initialized)
         return;
-      for (size_t i = 0; i < LANE_PAR; i++) {
+      for (size_t i = 0; i < LANE_UNROLL; i++) {
         delayed_output[i] = PipelineDelayBuffer<TOutputWord>(depth);
       }
       actor_status = ActorStatus(depth, DIM_LANES * DIM_REDUCTION * 3 /
-                                            (REDUCE_PAR * LANE_PAR));
+                                            (REDUCTION_UNROLL * LANE_UNROLL));
       initialized = true;
     }
   };
@@ -296,9 +296,9 @@ class StreamingSoftmax {
     st.init(pipeline_depth);
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_data[LANE_PAR],
+  ActorStatus step(hls::stream<TInputWord> i_data[LANE_UNROLL],
                    const TLUT lut_table[LUT_SIZE],
-                   hls::stream<TOutputWord> o_data[LANE_PAR]) {
+                   hls::stream<TOutputWord> o_data[LANE_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
     assert(it != registry().end() && "Instance not initialized");
@@ -306,27 +306,33 @@ class StreamingSoftmax {
 
     // Compute firing condition.
     bool firing_condition = true;
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
       if (st.i_step == 0 && i_data[i_lane_par].empty()) {
         firing_condition = false;
       }
     }
 
     if (firing_condition) {
-      hls::stream<TOutputWord> o_data_instant[LANE_PAR];
+      hls::stream<TOutputWord> o_data_instant[LANE_UNROLL];
+      if (st.i_step == 0) {
+        for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
+          st.max[i_lane_par] = LimitsImpl<TInput>::min();
+          st.sum[i_lane_par] = 0;
+        }
+      }
       StreamingSoftmax::pipeline_body(i_data, lut_table, o_data_instant,
                                       st.i_red_group, st.i_step, st.max, st.sum,
                                       st.in_row);
 
       // Update iterators
       st.i_red_group++;
-      if (st.i_red_group == DIM_REDUCTION / REDUCE_PAR) {
+      if (st.i_red_group == DIM_REDUCTION / REDUCTION_UNROLL) {
         st.i_red_group = 0;
         st.i_step++;
         if (st.i_step == 3) {
           st.i_step = 0;
           st.i_lane_group++;
-          if (st.i_lane_group == DIM_LANES / LANE_PAR) {
+          if (st.i_lane_group == DIM_LANES / LANE_UNROLL) {
             st.i_lane_group = 0;
           }
         }
@@ -337,7 +343,7 @@ class StreamingSoftmax {
 
       // Mul the output to the delayed output buffers
       TOutputWord out_value;
-      for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+      for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
         if (!o_data_instant[i_lane_par].empty()) {
           out_value = o_data_instant[i_lane_par].read();
           st.delayed_output[i_lane_par].push(out_value, true);
@@ -347,7 +353,7 @@ class StreamingSoftmax {
       }
     } else {
       // If not firing, push invalid data to maintain pipeline timing
-      for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+      for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
         st.delayed_output[i_lane_par].push(TOutputWord(), false);
       }
     }
@@ -357,7 +363,7 @@ class StreamingSoftmax {
 
     // Read from the delayed output buffers
     TOutputWord out_value;
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
       if (st.delayed_output[i_lane_par].pop(out_value)) {
         o_data[i_lane_par].write(out_value);
       }
@@ -369,26 +375,26 @@ class StreamingSoftmax {
   StreamingSoftmax() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_data[LANE_PAR],
+  void run(hls::stream<TInputWord> i_data[LANE_UNROLL],
            const TLUT lut_table[LUT_SIZE],
-           hls::stream<TOutputWord> o_data[LANE_PAR]) {
+           hls::stream<TOutputWord> o_data[LANE_UNROLL]) {
     
     
-    TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR];
+    TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL];
 
     // Loop over groups of lanes.
     for (size_t i_lane_group = 0;
-         i_lane_group < DIM_LANES / LANE_PAR; i_lane_group++) {
+         i_lane_group < DIM_LANES / LANE_UNROLL; i_lane_group++) {
       
       // Tracking the max and sum for each lane in the group.
-      TInput max[LANE_PAR] = {LimitsImpl<TInput>::min()};
-      TAcc sum[LANE_PAR] = {0};
+      TInput max[LANE_UNROLL] = {LimitsImpl<TInput>::min()};
+      TAcc sum[LANE_UNROLL] = {0};
 
       // Loop over the three steps of the softmax computation for each group of lanes.
       for (size_t i_step = 0; i_step < 3; i_step++) {
 
         // Loop over the groups of unrolled operations in the lane.
-        for (size_t i_red_group = 0; i_red_group < DIM_REDUCTION / REDUCE_PAR;
+        for (size_t i_red_group = 0; i_red_group < DIM_REDUCTION / REDUCTION_UNROLL;
              i_red_group++) {
         STREAMINGSOFTMAX_RUN_LOOP:
 #pragma HLS PIPELINE II = 1
@@ -401,11 +407,11 @@ class StreamingSoftmax {
 
 private:
   static void
-  pipeline_body(hls::stream<TInputWord> i_data[LANE_PAR],
+  pipeline_body(hls::stream<TInputWord> i_data[LANE_UNROLL],
                 const TLUT lut_table[LUT_SIZE],
-                hls::stream<TOutputWord> o_data[LANE_PAR], size_t i_red_group,
-                size_t i_step, TInput max[LANE_PAR], TAcc sum[LANE_PAR],
-                TInputWord in_row[LANE_PAR][DIM_REDUCTION / REDUCE_PAR]) {
+                hls::stream<TOutputWord> o_data[LANE_UNROLL], size_t i_red_group,
+                size_t i_step, TInput max[LANE_UNROLL], TAcc sum[LANE_UNROLL],
+                TInputWord in_row[LANE_UNROLL][DIM_REDUCTION / REDUCTION_UNROLL]) {
 #pragma HLS inline
 
     // Output quantizer
@@ -419,7 +425,7 @@ private:
     // but it must be unsigned.
     typedef ap_uint<TInput::width> TAddress;
 
-    for (size_t i_lane_par = 0; i_lane_par < LANE_PAR; i_lane_par++) {
+    for (size_t i_lane_par = 0; i_lane_par < LANE_UNROLL; i_lane_par++) {
 
       if (i_step == 0) {
         // Read input values for the current channel partition
@@ -429,7 +435,7 @@ private:
       TOutputWord out_value;
 
       // Perform the softmax computation for the input value and write to output
-      for (size_t i_red_par = 0; i_red_par < REDUCE_PAR; i_red_par++) {
+      for (size_t i_red_par = 0; i_red_par < REDUCTION_UNROLL; i_red_par++) {
         TInput x = (TInput)in_value[i_red_par];
         if (i_step == 0) {
           // Find the max value for this lane across the reduction dimension
@@ -465,6 +471,9 @@ private:
           // exponential. The sum is also in Q0.16 format, so the division
           // result is in Q0.32 format. The quantizer will then convert this to
           // the output format.
+          if (sum[i_lane_par] == 0) {
+            std::cout << "Warning: sum is zero in softmax computation, setting output to zero to avoid division by zero." << std::endl;
+          }
           TDiv div_result = ((TDiv)exp << div_precision) / sum[i_lane_par];
           out_value[i_red_par] = quantizer(div_result);
         }
