@@ -103,7 +103,7 @@ def test_object_declaration_supports_float_asymmetric_add():
     assert "ap_int<10>" in declaration
     assert "DequantAlignFloat<15, 8, 91, ap_uint<8>, ap_int<10>>" in declaration
     assert "DequantAlignEqual<-17, ap_int<8>, ap_int<10>>" in declaration
-    assert "DequantQuantFloat<2, 3, ap_int<10>, ap_uint<8>, 109>" in declaration
+    assert "DequantQuantFloatShift<341, 9, ap_int<10>, ap_uint<8>, 109>" in declaration
 
 
 def test_object_declaration_supports_float_relu_add():

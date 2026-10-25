@@ -24,6 +24,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
 from nn2fpga.compiler.utils.quantization import quant_array
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 from nn2fpga.compiler.utils.linebuffer_utils import (
     circular_linebuffer_compatible_or_bypassed,
     circular_linebuffer_latency,
@@ -445,6 +446,10 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             output_type = output_quant.get_hls_data_type()
             activation = self.get_nodeattr("activation")
             if activation == "NoOp":
+                shift_form = ratio_to_shift_form(ratio)
+                if shift_form is not None:
+                    n, s = shift_form
+                    return f"DequantQuantFloatShift<{n}, {s}, {accumulator}, {output_type}, {output_zeropt}>"
                 return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation in ["ReLU", "LeakyReLU"]:
                 raise ValueError(

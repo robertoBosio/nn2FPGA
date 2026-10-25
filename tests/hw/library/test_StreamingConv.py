@@ -554,4 +554,4 @@ class TestStreamingConv(BaseHLSTest):
             "Y_ZP": 0,    
             "PIPELINE_DEPTH": 5,
         }
-        self.run(config_dict, hls_steps)
+        self.run(config_dict, hls_steps, clean=False)

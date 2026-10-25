@@ -29,6 +29,10 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import (
+    ratio_to_fraction,
+    ratio_to_shift_form,
+)
 
 
 class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
@@ -455,6 +459,12 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         else:
             weights_scale = weights_quant.scale
 
+        accumulator = self.__get_accumulator(
+            input_quant, weights_quant, bias_quant, weights_shape
+        )
+        output_type = output_quant.get_hls_data_type()
+        activation = self.get_nodeattr("activation")
+
         if (
             self.__is_power_of_two(input_quant.scale)
             and self.__is_power_of_two(output_quant.scale)
@@ -465,11 +475,6 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            accumulator = self.__get_accumulator(
-                input_quant, weights_quant, bias_quant, weights_shape
-            )
-            output_type = output_quant.get_hls_data_type()
-            activation = self.get_nodeattr("activation")
             if activation == "NoOp":
                 return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation == "ReLU":
@@ -487,8 +492,20 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
             )
         else:
+            ratio = (weights_scale * input_quant.scale) / output_quant.scale
+            num, den = ratio_to_fraction(ratio)
+            if activation == "NoOp":
+                shift_form = ratio_to_shift_form(ratio)
+                if shift_form is not None:
+                    n, s = shift_form
+                    return f"DequantQuantFloatShift<{n}, {s}, {accumulator}, {output_type}, {output_zeropt}>"
+                return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}, {output_zeropt}>"
+            if activation in ["ReLU", "LeakyReLU"]:
+                raise ValueError(
+                    f"Fused {activation} currently requires power-of-two quantization scales."
+                )
             raise ValueError(
-                "Float quantization is currently not supported for StreamingDepthwiseConv.  "
+                f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
             )
 
     def __current_dse_point(self) -> "StreamingDepthwiseConv.DSEPoint":

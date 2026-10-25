@@ -19,6 +19,10 @@ from dataclasses import dataclass
 from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 from nn2fpga.compiler.utils.board_util import packing_feature
+from nn2fpga.compiler.utils.scale_ratio import (
+    ratio_to_fraction,
+    ratio_to_shift_form,
+)
 
 class StreamingMul(NN2FPGAOp, DSECapable):
     """Node implementing the Mul operation."""
@@ -171,6 +175,10 @@ class StreamingMul(NN2FPGAOp, DSECapable):
     def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
         """ Returns the quantizer type for the Mul operation. """
 
+        multiplier = self.__get_multiplier(input_quantA, input_quantB)
+        output_type = output_quant.get_hls_data_type()
+        activation = self.get_nodeattr("activation")
+
         if (
             self.__is_power_of_two(input_quantA.scale)
             and self.__is_power_of_two(input_quantB.scale)
@@ -181,9 +189,6 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                 + int(np.log2(input_quantB.scale))
                 - int(np.log2(output_quant.scale))
             )
-            multiplier = self.__get_multiplier(input_quantA, input_quantB)
-            output_type = output_quant.get_hls_data_type()
-            activation = self.get_nodeattr("activation")
             if activation == "NoOp":
                 return f"DequantQuantPo2<{shift}, {multiplier}, {output_type}>"
             if activation == "ReLU":
@@ -192,6 +197,21 @@ class StreamingMul(NN2FPGAOp, DSECapable):
                 f"Unsupported activation function '{activation}' for StreamingMul."
             )
         else:
+            ratio = (
+                input_quantA.scale * input_quantB.scale
+            ) / output_quant.scale
+            if activation == "ReLU":
+                num, den = ratio_to_fraction(ratio)
+                return f"ReLUQuantFloat<{num}, {den}, {multiplier}, {output_type}>"
+            if activation == "NoOp":
+                shift_form = ratio_to_shift_form(ratio)
+                if shift_form is not None:
+                    n, s = shift_form
+                    return f"DequantQuantFloatShift<{n}, {s}, {multiplier}, {output_type}>"
+            else:
+                raise ValueError(
+                    f"Unsupported activation function '{activation}' for StreamingMul."
+                )
             raise ValueError(
                 "Float quantization is currently not supported for StreamingMul."
             )

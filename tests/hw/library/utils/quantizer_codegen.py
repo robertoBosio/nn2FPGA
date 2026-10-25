@@ -2,8 +2,18 @@ from fractions import Fraction
 
 import numpy as np
 
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
-def classify_linear_quantizer(acc_scale, out_scale, same_type, max_den=1 << 20, atol=1e-12):
+
+def classify_linear_quantizer(
+    acc_scale,
+    out_scale,
+    same_type,
+    max_den=1 << 20,
+    atol=1e-12,
+    shift_rel_tol=1e-3,
+    max_shift=31,
+):
     ratio = float(acc_scale) / float(out_scale)
 
     if np.isclose(ratio, 1.0, atol=atol) and same_type:
@@ -16,7 +26,15 @@ def classify_linear_quantizer(acc_scale, out_scale, same_type, max_den=1 << 20, 
         return "po2", shift
 
     frac = Fraction(ratio).limit_denominator(max_den)
-    return "float", (int(frac.numerator), int(frac.denominator))
+    num, den = int(frac.numerator), int(frac.denominator)
+
+    approx = ratio_to_shift_form(
+        ratio, max_den=max_den, rel_tol=shift_rel_tol, max_shift=max_shift
+    )
+    if approx is not None:
+        return "float_shift", approx
+
+    return "float", (num, den)
 
 
 def emit_linear_quantizer_typedef(
@@ -30,6 +48,8 @@ def emit_linear_quantizer_typedef(
     zero_point=0,
     max_den=1 << 20,
     atol=1e-12,
+    shift_rel_tol=1e-3,
+    max_shift=31,
 ):
     mode, params = classify_linear_quantizer(
         acc_scale,
@@ -37,6 +57,8 @@ def emit_linear_quantizer_typedef(
         same_type,
         max_den=max_den,
         atol=atol,
+        shift_rel_tol=shift_rel_tol,
+        max_shift=max_shift,
     )
 
     if mode == "equal" and zero_point != 0:
@@ -49,6 +71,13 @@ def emit_linear_quantizer_typedef(
         cwr.add_line(f"const int {alias}_SHIFT = {int(params)};")
         cwr.add_line(
             f"typedef DequantQuantPo2<{alias}_SHIFT, {acc_type}, {out_type}, {int(zero_point)}> {alias};"
+        )
+    elif mode == "float_shift":
+        num, shift = params
+        cwr.add_line(f"const int {alias}_NUM = {num};")
+        cwr.add_line(f"const int {alias}_SHIFT = {shift};")
+        cwr.add_line(
+            f"typedef DequantQuantFloatShift<{alias}_NUM, {alias}_SHIFT, {acc_type}, {out_type}, {int(zero_point)}> {alias};"
         )
     else:
         num, den = params

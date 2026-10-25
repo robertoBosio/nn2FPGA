@@ -25,6 +25,8 @@ from onnx_ir import convenience as ir_convenience
 from onnxscript.rewriter import pattern
 import logging
 
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
+
 logger = logging.getLogger(__name__)
 
 EXP_PRECISION = 12  # Number of bits for LUT output (Q0.12 format for max precision)
@@ -348,6 +350,11 @@ class StreamingYoloHeadSoftmax(NN2FPGAOp, DSECapable):
             shift = ((DIV_PRECISION - EXP_PRECISION) + int(np.log2(output_quant.scale)))
             return f"DequantQuantPo2<{shift}, {self.__get_division_type()}, {output_quant.get_hls_data_type()}>"
         else:
+            ratio = 2.0 ** (EXP_PRECISION - DIV_PRECISION) / float(output_quant.scale)
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {self.__get_division_type()}, {output_quant.get_hls_data_type()}>"
             raise ValueError(
                 "Float quantization is currently not supported for StreamingSoftmax."
             )

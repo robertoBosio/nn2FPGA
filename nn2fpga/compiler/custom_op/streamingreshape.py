@@ -17,6 +17,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 from onnx_ir import convenience as ir_convenience
 
 class StreamingReshape(NN2FPGAOp, DSECapable):
@@ -211,6 +212,13 @@ class StreamingReshape(NN2FPGAOp, DSECapable):
 
         num, den = self.__ratio_to_fraction(ratio)
         if input_zeropt == 0:
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return (
+                    f"DequantQuantFloatShift<{n}, {s}, {input_type}, {output_type}, "
+                    f"{output_zeropt}>"
+                )
             return (
                 f"DequantQuantFloat<{num}, {den}, {input_type}, {output_type}, "
                 f"{output_zeropt}>"

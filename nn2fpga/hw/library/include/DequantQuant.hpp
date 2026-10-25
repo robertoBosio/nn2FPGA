@@ -26,6 +26,7 @@ template <typename T> struct is_ap_signed {
                    _AP_ROOT_TYPE<T::Base::width, true>>::value;
 };
 
+/* A utility function to compute the number of bits needed to represent a value. */
 constexpr int const_bit_width(unsigned x) {
   int bits = 0;
   do {
@@ -122,30 +123,125 @@ private:
   }
 };
 
+// ---------------------------------------------------------------------------
+// DequantQuantFloat
+//
+// Despite the name there is no floating point arithmetic in here: the functor
+// evaluates an exact integer rational scaling of the accumulator,
+//
+//     y = clamp( round_half_even( acc * Num / Den ) + ZeroPoint )
+//
+// where Num / Den is the (already quantised) ratio of the surrounding
+// dequantize/quantize scales,
+//
+//     Num / Den ~= input_scale * weights_scale / output_scale
+//
+// Pipeline:
+//   1. abs(acc) and fold the sign out, so the division runs on magnitudes.
+//   2. prod = |acc| * Num            (constant multiply -> shift/add tree)
+//   3. quotient / remainder wrt Den  (constant divide/modulo -> expensive)
+//   4. round half to even on the rational quotient
+//   5. restore the sign, add ZeroPoint, saturate to TOut
+//
+// Cost note: steps 3 and 4 are the reason this functor is far from free.
+// For a non-power-of-two Den, Vitis HLS strength-reduces `prod / Den` into a
+// constant multiply of width ProductBits x bits(ceil(2^k / Den)), which maps
+// onto ceil(P/27) * ceil(D/18) DSP48E2 slices, and keeps `prod % Den` as a
+// dedicated (DSP-free but LUT/FF heavy) divider core. A power-of-two Den
+// would collapse both into a shift and a mask.
+// ---------------------------------------------------------------------------
 template <int Num, int Den, typename TAcc, typename TOut, int ZeroPoint = 0>
 struct DequantQuantFloat {
-
   static_assert(Num > 0, "Num must be positive");
   static_assert(Den > 0, "Den must be positive");
 
   TOut operator()(TAcc acc) const {
 #pragma HLS inline
+
+    // Bit widths: NumBits = ceil(log2(Num)) + 1, ProductBits holds the full
+    // |acc| * Num product, WideBits adds headroom for the negation, the zero
+    // point and the subsequent saturation comparisons.
     constexpr int NumBits = const_bit_width(Num);
     constexpr int ProductBits = TAcc::width + NumBits;
     constexpr int WideBits = ProductBits + 2;
+
+    // Sign is handled separately: everything up to step 4 works on the
+    // magnitude, which lets the divide/modulo below be unsigned.
+    const bool neg = acc.sign();
+    ap_uint<TAcc::width> uacc = hls::abs(acc);
+    ap_uint<ProductBits> prod = ap_uint<ProductBits>(uacc) * ap_uint<NumBits>(Num);
+
+    // Exact rational division by the constant Den. HLS turns the division into
+    // a constant multiply (the DSP cost) and keeps the modulo as a divider.
+    ap_uint<ProductBits> quotient = prod / Den;
+    ap_uint<ProductBits> remainder = prod % Den;
+
+    // Round half to even on remainder/Den: compare 2*remainder against Den so
+    // no division is needed for the tie test itself.
+    ap_uint<ProductBits + 1> double_remainder = ap_uint<ProductBits + 1>(remainder) << 1;
+    ap_uint<ProductBits> rounded_mag = quotient;
+    if (double_remainder > Den || (double_remainder == Den && (quotient & 1))) {
+      rounded_mag = quotient + 1;
+    }
+
+    // Restore the sign on the rounded magnitude and re-apply the output zero
+    // point. WideBits keeps both steps wrap-around free.
+    ap_int<WideBits> shifted;
+    if (is_ap_signed<TAcc>::value && neg) {
+      shifted = -ap_int<WideBits>(rounded_mag);
+    } else {
+      shifted = ap_int<WideBits>(rounded_mag);
+    }
+    shifted += ap_int<WideBits>(ZeroPoint);
+
+    // Saturate (never wrap) to the output type's range before casting down.
+    const ap_int<WideBits> lo = ap_int<WideBits>(LimitsImpl<TOut>::min());
+    const ap_int<WideBits> hi = ap_int<WideBits>(LimitsImpl<TOut>::max());
+    if (shifted < lo)
+      shifted = lo;
+    if (shifted > hi)
+      shifted = hi;
+
+    return TOut(shifted);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// DequantQuantFloatShift
+//
+// Same contract as DequantQuantFloat, but the scale ratio is restricted to a
+// power-of-two denominator:
+//
+//     y = clamp( round_half_even( acc * Num / 2^Shift ) + ZeroPoint )
+//
+// Num / 2^Shift still approximates input_scale * weights_scale / output_scale.
+// Here only the denominator is forced to a power of two, so the division
+// collapses to a shift while the numerator keeps the scale accurate.
+//
+// Relative to DequantQuantFloat this removes both expensive operations:
+//     prod / Den  ->  prod >> Shift
+//     prod % Den  ->  prod & (2^Shift - 1)
+// The rounding rule, sign handling, zero point and saturation are identical to
+// DequantQuantFloat, so the two are directly comparable element by element.
+// ---------------------------------------------------------------------------
+template <int Num, int Shift, typename TAcc, typename TOut, int ZeroPoint = 0>
+struct DequantQuantFloatShift {
+  static_assert(Num > 0, "Num must be positive");
+  static_assert(Shift >= 0, "Shift must be non-negative");
+
+  static constexpr int NumBits = const_bit_width(Num);
+  static constexpr int ProductBits = TAcc::width + NumBits;
+  static constexpr int WideBits = ProductBits + 2;
+
+  TOut operator()(TAcc acc) const {
+#pragma HLS inline
 
     const bool neg = acc.sign();
     ap_uint<TAcc::width> uacc = hls::abs(acc);
     ap_uint<ProductBits> prod = ap_uint<ProductBits>(uacc) * ap_uint<NumBits>(Num);
 
-    ap_uint<ProductBits> quotient = prod / Den;
-    ap_uint<ProductBits> remainder = prod % Den;
-    ap_uint<ProductBits + 1> double_remainder = ap_uint<ProductBits + 1>(remainder) << 1;
-
-    ap_uint<ProductBits> rounded_mag = quotient;
-    if (double_remainder > Den || (double_remainder == Den && (quotient & 1))) {
-      rounded_mag = quotient + 1;
-    }
+    const ap_uint<ProductBits> rounded_mag =
+        rounded_magnitude(prod, std::integral_constant<bool, (Shift > 0)>{});
 
     ap_int<WideBits> shifted;
     if (is_ap_signed<TAcc>::value && neg) {
@@ -155,6 +251,7 @@ struct DequantQuantFloat {
     }
     shifted += ap_int<WideBits>(ZeroPoint);
 
+    // Saturate (never wrap) to the output type's range before casting down.
     const ap_int<WideBits> lo = ap_int<WideBits>(LimitsImpl<TOut>::min());
     const ap_int<WideBits> hi = ap_int<WideBits>(LimitsImpl<TOut>::max());
     if (shifted < lo)
@@ -163,6 +260,32 @@ struct DequantQuantFloat {
       shifted = hi;
 
     return TOut(shifted);
+  }
+
+private:
+  // Round half to even on prod / 2^Shift. Deliberately the same test shape as
+  // DequantQuantFloat uses for 2*remainder vs Den: compare the Shift low bits
+  // against half of 2^Shift, break ties towards an even quotient.
+  static ap_uint<ProductBits> rounded_magnitude(ap_uint<ProductBits> prod,
+                                                std::true_type) {
+    // Truncating to Shift bits yields exactly the low-order remainder, and it
+    // also degrades safely to the full product once Shift exceeds ProductBits.
+    const ap_uint<Shift> rem = prod;
+    const ap_uint<Shift> half = ap_uint<Shift>(1) << (Shift - 1);
+    const ap_uint<ProductBits> trunc =
+        (Shift >= ProductBits) ? ap_uint<ProductBits>(0)
+                               : ap_uint<ProductBits>(prod >> Shift);
+
+    if (rem > half || (rem == half && (trunc & 1))) {
+      return ap_uint<ProductBits>(trunc + 1);
+    }
+    return trunc;
+  }
+
+  // Shift == 0 means the ratio is a whole number; prod is already exact.
+  static ap_uint<ProductBits> rounded_magnitude(ap_uint<ProductBits> prod,
+                                                std::false_type) {
+    return prod;
   }
 };
 
