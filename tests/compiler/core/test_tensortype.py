@@ -274,7 +274,7 @@ def test_float_hashable():
     assert len(s) == 1
 
 def test_hls_data_type_float():
-    assert FloatTensorType().get_hls_data_type() == "float"
+    assert FloatTensorType().get_hls_data_type() == "ap_float<32, 8>"
 
 def test_cpp_quant_type_float():
     assert FloatTensorType().get_cpp_quant_type() == "float"

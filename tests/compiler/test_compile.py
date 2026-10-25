@@ -262,7 +262,6 @@ def test_compile_only_saves_mid_pipeline_artifacts_when_enabled(tmp_path, fake_c
     assert not (prj_root / "nn2fpga_model.onnx").exists()
     assert not (prj_root / "hls_model.onnx").exists()
     assert not (prj_root / "final_model_before_sim.onnx").exists()
-    assert not (prj_root / "original_model_for_sim.onnx").exists()
     assert not (prj_root / "original_model_qcdq_for_sim.onnx").exists()
 
 
@@ -277,10 +276,9 @@ def test_compile_saves_mid_pipeline_artifacts_when_enabled(tmp_path, fake_compil
     assert (prj_root / "nn2fpga_model.onnx").exists()
     assert (prj_root / "hls_model.onnx").exists()
     assert (prj_root / "final_model_before_sim.onnx").exists()
-    assert (prj_root / "original_model_for_sim.onnx").exists()
     assert (prj_root / "original_model_qcdq_for_sim.onnx").exists()
 
-    saved_original = FakeModel.registry[str(prj_root / "original_model_for_sim.onnx")]
+    saved_original = FakeModel.registry[str(prj_root / "original_model_qcdq_for_sim.onnx")]
     assert saved_original.metadata["silvia_packing"] == "true"
 
 

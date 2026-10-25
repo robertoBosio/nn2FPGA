@@ -244,13 +244,16 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
 
-        alpha_den = int(config_dict["LEAKY_ALPHA_DEN"])
-        if alpha_den <= 0 or alpha_den & (alpha_den - 1):
-            raise ValueError("Direct StreamingLeakyReLU requires a power-of-two alpha denominator")
-        alpha_den_shift = int(np.log2(alpha_den))
-        cwr.add_line(
-            f"typedef LeakyReLUQuantPo2<{shift}, LEAKY_ALPHA_NUM, {alpha_den_shift}, TInput, TOutput> OutputTransform;"
-        )
+        if "LEAKY_ALPHA_NUM" in config_dict and "LEAKY_ALPHA_DEN" in config_dict:
+            alpha_den = int(config_dict["LEAKY_ALPHA_DEN"])
+            if alpha_den <= 0 or alpha_den & (alpha_den - 1):
+                raise ValueError(
+                    "Direct StreamingLeakyReLU requires a power-of-two alpha denominator"
+                )
+            alpha_den_shift = int(np.log2(alpha_den))
+            cwr.add_line(
+                f"typedef LeakyReLUQuantPo2<{shift}, LEAKY_ALPHA_NUM, {alpha_den_shift}, TInput, TOutput> OutputTransform;"
+            )
 
         cwr.add_lines(
             csnake.Variable(
@@ -379,7 +382,15 @@ class TestStreamingLeakyReLU(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TInput, TOutput> Quantizer;")
+        alpha_den = int(config_dict["LEAKY_ALPHA_DEN"])
+        if alpha_den <= 0 or alpha_den & (alpha_den - 1):
+            raise ValueError(
+                "Direct StreamingLeakyReLU requires a power-of-two alpha denominator"
+            )
+        alpha_den_shift = int(np.log2(alpha_den))
+        cwr.add_line(
+            f"typedef LeakyReLUQuantPo2<{shift}, LEAKY_ALPHA_NUM, {alpha_den_shift}, TInput, TOutput> OutputTransform;"
+        )
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
