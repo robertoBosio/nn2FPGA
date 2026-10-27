@@ -24,13 +24,17 @@ class StreamingUpsample(NN2FPGAOp):
     @staticmethod
     def pattern_resize(op, x, roi, scales):
         return op.Resize(x, roi, scales, _allow_other_inputs=True, _allow_other_attributes=True)
+    
+    @staticmethod
+    def pattern_resize_empty_roi(op, x, scales):
+        return op.Resize(x, None, scales, _allow_other_inputs=True, _allow_other_attributes=True)
 
     @staticmethod
     def pattern_upsample(op, x, scales):
         return op.Upsample(x, scales, _allow_other_attributes=True)
     
     @staticmethod
-    def rewrite(op, x, roi, scales, **kwargs):
+    def rewrite(op, x, roi=None, scales=None, **kwargs):
 
         # Get only the scale factor for height/width
         scale = scales.const_value.numpy()[-1]
@@ -46,6 +50,9 @@ class StreamingUpsample(NN2FPGAOp):
         return [
             pattern.RewriteRule(
                 StreamingUpsample.pattern_resize, StreamingUpsample.rewrite
+            ),
+            pattern.RewriteRule(
+                StreamingUpsample.pattern_resize_empty_roi, StreamingUpsample.rewrite
             ),
             pattern.RewriteRule(
                 StreamingUpsample.pattern_upsample, StreamingUpsample.rewrite
