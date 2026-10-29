@@ -61,10 +61,11 @@ class SetDynamicBatchSize(Transformation):
                 getCustomOp(partition_node).get_nodeattr("accelerator_package")
             )
             for output in partition_node.output:
-                output_tensor_shape = ap.output_map[output]["shape"]
+                _, output_port = ap.get_output_by_internal_name(output)
+                output_tensor_shape = output_port["shape"]
                 dynamic_output_shape = [self.batch_size] + output_tensor_shape[1:]
                 output_type = TensorType.from_canonical_name(
-                    ap.output_map[output]["quant"]
+                    output_port["quant"]
                 )
                 model.set_tensor_shape(
                     output, dynamic_output_shape, dtype=output_type.get_tensorproto_dtype()

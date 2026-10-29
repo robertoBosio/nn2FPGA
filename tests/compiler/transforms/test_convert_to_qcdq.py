@@ -7,6 +7,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import qonnx_make_model
 
+from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 
 
@@ -207,3 +208,59 @@ def test_convert_to_qcdq_constant_quant_preserves_nonzero_zero_point():
         numpy_helper.to_array(zero_point_tensor),
         np.array(3, dtype=np.int8),
     )
+
+
+def test_convert_to_qcdq_keeps_public_port_names():
+    input_tensor = helper.make_tensor_value_info(
+        "internal_input", TensorProto.FLOAT, [1, 2, 3, 4]
+    )
+    output_tensor = helper.make_tensor_value_info(
+        "internal_output", TensorProto.FLOAT, [1, 2, 3, 4]
+    )
+    package = AcceleratorPackage(
+        input_map={
+            "public_input": {
+                "new_name": "internal_input",
+                "index": 0,
+                "shape": [1, 2, 3, 4],
+                "layout": "L[0,2,3,1]",
+                "quant": "float32",
+                "value": None,
+                "mode": "axis",
+            }
+        },
+        output_map={
+            "public_output": {
+                "new_name": "internal_output",
+                "index": 0,
+                "shape": [1, 2, 3, 4],
+                "layout": "L[0,2,3,1]",
+                "quant": "float32",
+                "value": None,
+                "mode": "axis",
+            }
+        },
+    )
+    partition_node = helper.make_node(
+        "nn2fpgaPartition",
+        ["internal_input"],
+        ["internal_output"],
+        domain="nn2fpga.compiler.custom_op",
+        accelerator_package=package.to_json(),
+    )
+    model = _wrap_model([partition_node], [input_tensor], [output_tensor], [])
+
+    transformed_model = model.transform(ConvertToQCDQ())
+    transformed_partition = transformed_model.get_nodes_by_op_type("nn2fpgaPartition")[0]
+    transformed_package = AcceleratorPackage.from_json(
+        next(
+            attribute.s.decode()
+            for attribute in transformed_partition.attribute
+            if attribute.name == "accelerator_package"
+        )
+    )
+
+    assert list(transformed_package.input_map) == ["public_input"]
+    assert list(transformed_package.output_map) == ["public_output"]
+    assert transformed_package.input_map["public_input"]["new_name"] == transformed_partition.input[0]
+    assert transformed_package.output_map["public_output"]["new_name"] == transformed_partition.output[0]

@@ -68,6 +68,19 @@ Base64-encoded Vivado hardware handoff (`.hwh`) content. The value is text encod
 
 ### Tensor Interface Metadata
 
+#### Port Name Mapping Invariant
+
+`input_map` and `output_map` bridge the public wrapper-model interface and the
+current internal accelerator graph. Their dictionary keys are stable public
+ONNX names, used by runtime callers and simulation contexts. Each entry's
+`new_name` is the current internal boundary tensor name, used for generated
+HLS ports and streams.
+
+Transforms that rewire a boundary tensor must retain the dictionary key and
+update `new_name`. Code that starts from an internal tensor name must resolve
+the entry with `get_input_by_internal_name()` or
+`get_output_by_internal_name()` instead of indexing the map directly.
+
 #### Input Map Schema
 
 Input tensors are described with the following structure:
@@ -75,13 +88,13 @@ Input tensors are described with the following structure:
 ```python
 input_map = {
     "<onnx_input_name>": {
-        "name": "<original_or_internal_name>",
-        "new_name": "<dma_and_stream_name>",
+        "new_name": "<internal_boundary_name>",
         "index": 0,
         "shape": [1, 3, 224, 224],
         "layout": None,
         "quant": "Q[8,0,1.0,0,0,ROUND]",
         "value": None,
+        "mode": "axis",
         "axi_offset": 0x1000,
     }
 }
@@ -94,13 +107,13 @@ Output tensors follow the same convention:
 ```python
 output_map = {
     "<onnx_output_name>": {
-        "name": "<original_or_internal_name>",
-        "new_name": "<dma_and_stream_name>",
+        "new_name": "<internal_boundary_name>",
         "index": 0,
         "shape": [1, 1000],
         "layout": None,
         "quant": "Q[8,0,1.0,0,0,ROUND]",
         "value": None,
+        "mode": "axis",
         "axi_offset": 0x2000,
     }
 }
@@ -129,22 +142,23 @@ Dictionary describing input tensors. Since names of the inputs may change during
 
 Common fields are:
 
-* `name`: Original or intermediate tensor name retained for traceability.
-* `new_name`: Internal accelerator name used for generated streams, DMA instances, and driver references.
+* The dictionary key: Stable public ONNX input name used by the wrapper model and runtime context.
+* `new_name`: Current internal accelerator boundary name used for generated HLS ports, streams, and simulation files.
 * `index`: Input order in the original ONNX interface.
 * `shape`: Tensor shape, including batch dimension when present.
 * `layout`: Tensor layout metadata.
 * `quant`: Data type in TensorQuant format.
 * `value`: Static input value for parameters, or `None` for runtime inputs.
-* `axi_offset`: Vivado AXI-Lite window offset of the input DMA control interface.
+* `mode`: Boundary interface mode: `axis` for an AXIS/DMA-connected port or `m_axi` for a direct AXI memory-mapped port.
+* `axi_offset`: Vivado AXI-Lite window offset of the input DMA control interface, present for DMA-backed ports.
 
-For runtime inputs, generated drivers allocate a DMA input buffer and program the DMA mapped at `axi_offset`. For static inputs, the same metadata identifies initialization data that can be loaded before normal inference.
+For AXIS runtime inputs, generated drivers allocate a DMA input buffer and program the DMA mapped at `axi_offset`. For static inputs, the same metadata identifies initialization data that can be loaded before normal inference.
 
 #### `output_map`
 
 Dictionary describing output tensors.
 
-The structure mirrors `input_map`, but each entry describes an output DMA interface. `axi_offset` is the Vivado AXI-Lite window offset of the output DMA control interface.
+The structure mirrors `input_map`. For AXIS outputs, `axi_offset` is the Vivado AXI-Lite window offset of the output DMA control interface.
 
 #### `buffer_map`
 
@@ -296,6 +310,25 @@ Raises:
 
 ---
 
+## Port Lookup API
+
+### `get_input_by_internal_name(internal_name)`
+
+Returns `(public_name, port_metadata)` for an input whose `new_name` matches
+`internal_name`. Raises `KeyError` when no input entry matches.
+
+### `get_output_by_internal_name(internal_name)`
+
+Returns `(public_name, port_metadata)` for an output whose `new_name` matches
+`internal_name`. Raises `KeyError` when no output entry matches.
+
+```python
+public_name, port = pkg.get_output_by_internal_name("global_out")
+assert public_name == "out0"
+```
+
+---
+
 ## Base64 Helper API
 
 ### `set_hls_code(code)`
@@ -337,25 +370,25 @@ from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 pkg = AcceleratorPackage(
     input_map={
         "in0": {
-            "name": "input_0",
             "new_name": "global_in",
             "index": 0,
             "shape": [1, 3, 224, 224],
             "layout": None,
             "quant": "Q[8,0,1.0,0,0,ROUND]",
             "value": None,
+            "mode": "axis",
             "axi_offset": 0x1000,
         }
     },
     output_map={
         "out0": {
-            "name": "output_0",
             "new_name": "global_out",
             "index": 0,
             "shape": [1, 1000],
             "layout": None,
             "quant": "Q[8,0,1.0,0,0,ROUND]",
             "value": None,
+            "mode": "axis",
             "axi_offset": 0x2000,
         }
     },
@@ -392,7 +425,8 @@ json_blob = pkg.to_json()
 
 ### AXI-Lite Offsets
 
-* Input and output `axi_offset` values identify Vivado AXI-Lite windows for DMA control interfaces
+* AXIS/DMA input and output `axi_offset` values identify Vivado AXI-Lite windows for DMA control interfaces
+* Direct `m_axi` ports do not have per-port DMA control windows
 * `read_axi_offset` and `write_axi_offset` are offsets relative to the HLS `s_axi_control` register map
 * Generated drivers should not assume a fixed distance between read and write pointer registers
 

@@ -232,3 +232,4 @@ def patch_qonnx_ops():
 
     PartitionFromLambda.apply = custom_partition_from_lambda_apply
     ModelWrapper.rename_tensor = custom_rename_tensor
+    ModelWrapper.rename_tensor = custom_rename_tensor
