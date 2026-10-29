@@ -5,7 +5,10 @@ from qonnx.transformation.general import SortGraph
 from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_variable, NewCodeWriter
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.core.tensor_fifo import TensorFifo, get_custom_tensor_fifo_metadata
+from nn2fpga.compiler.core.tensor_type import TensorType
 from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
+from nn2fpga.compiler.utils.axi import get_axi_word_count
+from nn2fpga.compiler.utils.board_util import read_board_info
 from onnx import NodeProto
 import base64
 import os
@@ -60,6 +63,14 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     else:
         function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
+    axi_bitwidth = None
+    if any(port["mode"] == "m_axi" for port in ap.input_map.values()) or any(
+        port["mode"] == "m_axi" for port in ap.output_map.values()
+    ):
+        axi_bitwidth = read_board_info(
+            model.get_metadata_prop("board_name")
+        )["axi_bitwidth"]
+
     for input in ap.input_map.values():
         input_name = input['new_name']
         mode = input['mode']
@@ -71,11 +82,15 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                 pragma=[f"#pragma HLS INTERFACE axis port={input_name}"],
             )
         elif mode == "m_axi":
+            tensor_type = TensorType.from_canonical_name(input["quant"])
+            depth = get_axi_word_count(
+                input["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
             var = cpp_variable(
                 input_name,
                 f"{tensor_fifo.hls_type}*",
                 pragma=[
-                    f"#pragma HLS INTERFACE m_axi port={input_name} bundle={input_name}_bundle",
+                    f"#pragma HLS INTERFACE m_axi port={input_name} bundle={input_name}_bundle depth={depth}",
                 ],
             )
         else:
@@ -95,11 +110,15 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                 pragma=[f"#pragma HLS INTERFACE axis port={output_name}"],
         )
         elif mode == "m_axi":
+            tensor_type = TensorType.from_canonical_name(output["quant"])
+            depth = get_axi_word_count(
+                output["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
             var = cpp_variable(
                 output_name,
                 f"{tensor_fifo.hls_type}*",
                 pragma=[
-                    f"#pragma HLS INTERFACE m_axi port={output_name} bundle={output_name}_bundle",
+                    f"#pragma HLS INTERFACE m_axi port={output_name} bundle={output_name}_bundle depth={depth}",
                 ],
             )
         else:

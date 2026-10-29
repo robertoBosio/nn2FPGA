@@ -3,6 +3,7 @@ import base64
 import os
 import subprocess
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
+from nn2fpga.compiler.utils.axi import get_axi_word_count
 from nn2fpga.compiler.utils.board_util import read_board_info
 from nn2fpga.compiler.utils.codegen_utils import (
     NewCodeWriter,
@@ -165,7 +166,9 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
         tensor_type = TensorType.from_canonical_name(value["quant"])
         data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
         if value["mode"] == "m_axi":
-            words = int(np.ceil(np.prod(value["shape"]) / data_per_word))
+            words = get_axi_word_count(
+                value["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
             var = cpp_variable(
                 value["new_name"], f"ap_uint<{axi_bitwidth}>", array=words
             )
@@ -183,7 +186,9 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
         tensor_type = TensorType.from_canonical_name(value["quant"])
         data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
         if value["mode"] == "m_axi":
-            words = int(np.ceil(np.prod(value["shape"]) / data_per_word))
+            words = get_axi_word_count(
+                value["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
             var = cpp_variable(
                 value["new_name"], f"ap_uint<{axi_bitwidth}>", array=words
             )
