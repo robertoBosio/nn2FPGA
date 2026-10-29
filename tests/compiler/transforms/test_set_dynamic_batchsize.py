@@ -7,12 +7,12 @@ from nn2fpga.compiler.transforms.set_dynamic_batchsize import SetDynamicBatchSiz
 
 
 def test_set_dynamic_batchsize_resolves_internal_output_name():
-    input_info = helper.make_tensor_value_info("internal_input", TensorProto.FLOAT, [1, 4])
-    output_info = helper.make_tensor_value_info("internal_output", TensorProto.FLOAT, [1, 4])
+    input_info = helper.make_tensor_value_info("public_input", TensorProto.FLOAT, [1, 4])
+    output_info = helper.make_tensor_value_info("public_output", TensorProto.FLOAT, [1, 4])
     package = AcceleratorPackage(
         output_map={
             "public_output": {
-                "new_name": "internal_output",
+                "new_name": "global_out",
                 "index": 0,
                 "shape": [1, 4],
                 "layout": "L[0,1]",
@@ -24,8 +24,8 @@ def test_set_dynamic_batchsize_resolves_internal_output_name():
     )
     partition_node = helper.make_node(
         "nn2fpgaPartition",
-        ["internal_input"],
-        ["internal_output"],
+        ["public_input"],
+        ["public_output"],
         domain="nn2fpga.compiler.custom_op",
         accelerator_package=package.to_json(),
     )
@@ -35,4 +35,4 @@ def test_set_dynamic_batchsize_resolves_internal_output_name():
 
     transformed_model = model.transform(SetDynamicBatchSize(batch_size=3))
 
-    assert transformed_model.get_tensor_shape("internal_output") == [3, 4]
+    assert transformed_model.get_tensor_shape("public_output") == [3, 4]

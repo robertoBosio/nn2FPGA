@@ -70,15 +70,18 @@ Base64-encoded Vivado hardware handoff (`.hwh`) content. The value is text encod
 
 #### Port Name Mapping Invariant
 
-`input_map` and `output_map` bridge the public wrapper-model interface and the
-current internal accelerator graph. Their dictionary keys are stable public
-ONNX names, used by runtime callers and simulation contexts. Each entry's
-`new_name` is the current internal boundary tensor name, used for generated
-HLS ports and streams.
+`input_map` and `output_map` bridge the wrapper-model partition interface and
+the generated HLS accelerator. Their dictionary keys name the tensors directly
+connected to `nn2fpgaPartition`; initially these are public ONNX names. QCDQ
+insertion can replace them with quantized or transposed partition-boundary
+names. Each entry's `new_name` is the HLS top-level port name and remains
+independent of wrapper-side rewiring.
 
-Transforms that rewire a boundary tensor must retain the dictionary key and
-update `new_name`. Code that starts from an internal tensor name must resolve
-the entry with `get_input_by_internal_name()` or
+Wrapper-side transforms such as QCDQ insertion must rekey the maps and update
+the stored shape to match the rewritten partition boundary, while preserving
+`new_name`. Internal accelerator-graph transforms that rename HLS ports must
+update `new_name`. Code that starts from an HLS port name must resolve the
+entry with `get_input_by_internal_name()` or
 `get_output_by_internal_name()` instead of indexing the map directly.
 
 #### Input Map Schema
@@ -142,8 +145,8 @@ Dictionary describing input tensors. Since names of the inputs may change during
 
 Common fields are:
 
-* The dictionary key: Stable public ONNX input name used by the wrapper model and runtime context.
-* `new_name`: Current internal accelerator boundary name used for generated HLS ports, streams, and simulation files.
+* The dictionary key: Current input tensor name connected to `nn2fpgaPartition`.
+* `new_name`: Internal HLS top-level port name used for generated HLS ports, streams, and simulation files.
 * `index`: Input order in the original ONNX interface.
 * `shape`: Tensor shape, including batch dimension when present.
 * `layout`: Tensor layout metadata.
