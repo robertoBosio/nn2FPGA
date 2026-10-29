@@ -210,17 +210,17 @@ def test_convert_to_qcdq_constant_quant_preserves_nonzero_zero_point():
     )
 
 
-def test_convert_to_qcdq_keeps_public_port_names():
+def test_convert_to_qcdq_updates_partition_boundary_names():
     input_tensor = helper.make_tensor_value_info(
-        "internal_input", TensorProto.FLOAT, [1, 2, 3, 4]
+        "public_input", TensorProto.FLOAT, [1, 2, 3, 4]
     )
     output_tensor = helper.make_tensor_value_info(
-        "internal_output", TensorProto.FLOAT, [1, 2, 3, 4]
+        "public_output", TensorProto.FLOAT, [1, 2, 3, 4]
     )
     package = AcceleratorPackage(
         input_map={
             "public_input": {
-                "new_name": "internal_input",
+                "new_name": "global_in",
                 "index": 0,
                 "shape": [1, 2, 3, 4],
                 "layout": "L[0,2,3,1]",
@@ -231,7 +231,7 @@ def test_convert_to_qcdq_keeps_public_port_names():
         },
         output_map={
             "public_output": {
-                "new_name": "internal_output",
+                "new_name": "global_out",
                 "index": 0,
                 "shape": [1, 2, 3, 4],
                 "layout": "L[0,2,3,1]",
@@ -243,8 +243,8 @@ def test_convert_to_qcdq_keeps_public_port_names():
     )
     partition_node = helper.make_node(
         "nn2fpgaPartition",
-        ["internal_input"],
-        ["internal_output"],
+        ["public_input"],
+        ["public_output"],
         domain="nn2fpga.compiler.custom_op",
         accelerator_package=package.to_json(),
     )
@@ -260,7 +260,9 @@ def test_convert_to_qcdq_keeps_public_port_names():
         )
     )
 
-    assert list(transformed_package.input_map) == ["public_input"]
-    assert list(transformed_package.output_map) == ["public_output"]
-    assert transformed_package.input_map["public_input"]["new_name"] == transformed_partition.input[0]
-    assert transformed_package.output_map["public_output"]["new_name"] == transformed_partition.output[0]
+    assert list(transformed_package.input_map) == [transformed_partition.input[0]]
+    assert list(transformed_package.output_map) == [transformed_partition.output[0]]
+    assert transformed_package.input_map[transformed_partition.input[0]]["new_name"] == "global_in"
+    assert transformed_package.output_map[transformed_partition.output[0]]["new_name"] == "global_out"
+    assert transformed_package.input_map[transformed_partition.input[0]]["shape"] == [1, 3, 4, 2]
+    assert transformed_package.output_map[transformed_partition.output[0]]["shape"] == [1, 3, 4, 2]

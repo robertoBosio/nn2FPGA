@@ -311,7 +311,7 @@ class ConvertToQCDQ(Transformation):
                 if inp_shape is None:
                     continue
 
-                _, input_port = ap.get_input_by_internal_name(inp)
+                input_port = ap.input_map[inp]
                 input_layout = TensorLayout.from_canonical_name(input_port.get("layout"))
                 assert len(input_layout.perm) == len(
                     inp_shape
@@ -371,17 +371,19 @@ class ConvertToQCDQ(Transformation):
                 new_inputs_map[inp] = (i, f"{tensor_name}")
 
             if new_inputs_map:
-                for old_name, (index, new_name) in new_inputs_map.items():
+                for _, (index, new_name) in new_inputs_map.items():
                     partition_node.input[index] = new_name
 
-                for old_name, (_, new_name) in new_inputs_map.items():
-                    _, input_port = ap.get_input_by_internal_name(old_name)
-                    input_port["new_name"] = new_name
+                rename = {old: new for old, (_, new) in new_inputs_map.items()}
+                ap.input_map = {rename.get(k, k): v for k, v in ap.input_map.items()}
+
+                for _, (_, new_name) in new_inputs_map.items():
+                    input_port = ap.input_map[new_name]
                     input_layout = TensorLayout.from_canonical_name(
                         input_port.get("layout")
                     )
                     inp_shape = input_port["shape"]
-                    inp_perm     = [dim for dim in input_layout.perm if dim < len(inp_shape)]
+                    inp_perm = [dim for dim in input_layout.perm if dim < len(inp_shape)]
                     input_port["shape"] = [inp_shape[dim] for dim in inp_perm]
 
             # ── Outputs: Transpose(int8) → DequantizeLinear(int8→float) ──
@@ -398,7 +400,7 @@ class ConvertToQCDQ(Transformation):
                 if out_shape is None:
                     continue
 
-                _, output_port = ap.get_output_by_internal_name(out)
+                output_port = ap.output_map[out]
                 output_layout = TensorLayout.from_canonical_name(output_port.get("layout"))
                 assert len(output_layout.perm) == len(
                     out_shape
@@ -456,17 +458,19 @@ class ConvertToQCDQ(Transformation):
                 new_outputs_map[out] = (i, f"{tensor_name}")
 
             if new_outputs_map:
-                for old_name, (index, new_name) in new_outputs_map.items():
+                for _, (index, new_name) in new_outputs_map.items():
                     partition_node.output[index] = new_name
 
-                for old_name, (_, new_name) in new_outputs_map.items():
-                    _, output_port = ap.get_output_by_internal_name(old_name)
-                    output_port["new_name"] = new_name
+                rename = {old: new for old, (_, new) in new_outputs_map.items()}
+                ap.output_map = {rename.get(k, k): v for k, v in ap.output_map.items()}
+
+                for _, (_, new_name) in new_outputs_map.items():
+                    output_port = ap.output_map[new_name]
                     output_layout = TensorLayout.from_canonical_name(
                         output_port.get("layout")
                     )
                     out_shape = output_port["shape"]
-                    out_perm   = [dim for dim in output_layout.perm if dim < len(out_shape)]
+                    out_perm = [dim for dim in output_layout.perm if dim < len(out_shape)]
                     output_port["shape"] = [out_shape[dim] for dim in out_perm]
 
             getCustomOp(partition_node).set_nodeattr(
