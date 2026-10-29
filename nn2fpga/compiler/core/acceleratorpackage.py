@@ -79,6 +79,29 @@ class AcceleratorPackage:
         """Dump to JSON string."""
         return json.dumps(asdict(self))
 
+    @staticmethod
+    def _get_port_by_internal_name(
+        port_map: Dict[str, Any], internal_name: str, port_kind: str
+    ) -> tuple[str, Dict[str, Any]]:
+        for external_name, port in port_map.items():
+            if port["new_name"] == internal_name:
+                return external_name, port
+        raise KeyError(
+            f"No {port_kind} port maps to internal tensor '{internal_name}'."
+        )
+
+    def get_input_by_internal_name(self, internal_name: str) -> tuple[str, Dict[str, Any]]:
+        """Return the public name and metadata for an internal input tensor."""
+        return self._get_port_by_internal_name(
+            self.input_map, internal_name, "input"
+        )
+
+    def get_output_by_internal_name(self, internal_name: str) -> tuple[str, Dict[str, Any]]:
+        """Return the public name and metadata for an internal output tensor."""
+        return self._get_port_by_internal_name(
+            self.output_map, internal_name, "output"
+        )
+
     # --- Base64 helpers ---
     def get_hls_code(self) -> str:
         """Get decoded HLS code as text."""

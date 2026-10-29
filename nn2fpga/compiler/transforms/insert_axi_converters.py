@@ -43,7 +43,8 @@ class InsertAXIConverters(Transformation):
                 getCustomOp(consumers[0]).set_nodeattr(
                     "interface_type", interface_type
                 )
-                ap.input_map[inp.name]["mode"] = port_mode
+                _, input_port = ap.get_input_by_internal_name(inp.name)
+                input_port["mode"] = port_mode
                 continue
 
             orig_input_name = inp.name
@@ -76,7 +77,8 @@ class InsertAXIConverters(Transformation):
                         node.input[j] = produce_stream_output
 
             new_nodes.append(produce_node)
-            ap.input_map[orig_input_name]["mode"] = port_mode
+            _, input_port = ap.get_input_by_internal_name(orig_input_name)
+            input_port["mode"] = port_mode
             logger.info(f"Inserted AXIToStream node for input {orig_input_name}")
 
         # Insert all new nodes at the beginning
@@ -90,7 +92,8 @@ class InsertAXIConverters(Transformation):
                 continue
             if producer.op_type == "StreamToAXI":
                 getCustomOp(producer).set_nodeattr("interface_type", interface_type)
-                ap.output_map[out.name]["mode"] = port_mode
+                _, output_port = ap.get_output_by_internal_name(out.name)
+                output_port["mode"] = port_mode
                 continue
 
             orig_output_name = out.name
@@ -119,7 +122,8 @@ class InsertAXIConverters(Transformation):
             if tq is not None:
                 set_custom_tensor_datatype(model, consume_stream_output, tq)
             new_nodes.append(consume_node)
-            ap.output_map[orig_output_name]["mode"] = port_mode
+            _, output_port = ap.get_output_by_internal_name(orig_output_name)
+            output_port["mode"] = port_mode
             logger.info(f"Inserted StreamToAXI node for output {orig_output_name}")
 
         # Insert all new nodes at the beginning
