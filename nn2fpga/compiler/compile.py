@@ -86,7 +86,7 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
 
 
 def _apply_frontend_transforms(
-    model: ModelWrapper, prj_root: str, steps: dict
+    model: ModelWrapper, prj_root: str, steps: dict, use_dma: bool = True
 ) -> ModelWrapper:
     model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
@@ -104,7 +104,9 @@ def _apply_frontend_transforms(
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
-    nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
+    nn2fpga_model = nn2fpga_model.transform(
+        transformation.InsertAXIConverters(use_dma=use_dma)
+    )
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
@@ -280,7 +282,9 @@ def nn2fpga_compile(config_dict: dict):
         _artifact_path(prj_root, "nn2FPGA_compile.log")
     ) as logger:
         original_model, model = _load_and_prepare_model(compile_config)
-        nn2fpga_model = _apply_frontend_transforms(model, prj_root, steps)
+        nn2fpga_model = _apply_frontend_transforms(
+            model, prj_root, steps, use_dma=compile_config.get("use_dma", True)
+        )
         nn2fpga_model = _apply_backend_transforms(nn2fpga_model, prj_root)
 
         if steps.get("GenerateLightningSim", False):

@@ -47,6 +47,8 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
+            # Input interface: AXI Stream via DMA or direct AXI master.
+            "interface_type": ("s", False, "s_axis"),
         }
 
     def make_shape_compatible_op(self, model):
@@ -105,8 +107,22 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         Returns:
             str: The AXIToStream as cpp_object.
         """
-        # The input has to be an AXI Lite interface, the bitwidth is defined by the board used.
-        input_bitwidth = self.get_nodeattr("axi_bitwidth")
+        interface_type = self.get_nodeattr("interface_type")
+        if interface_type not in ["m_axi", "s_axis"]:
+            raise ValueError(
+                f"Invalid interface_type '{interface_type}' for AXIToStream node "
+                f"'{self.onnx_node.name}'. Supported values are 'm_axi' and "
+                "'s_axis'."
+            )
+
+        if interface_type == "m_axi":
+            function_name = "MAXIToStream"
+            input_word_type = f"ap_uint<{self.get_nodeattr('axi_bitwidth')}>"
+        else:
+            function_name = "AXISToStream"
+            input_word_type = (
+                f"ap_axiu<{self.get_nodeattr('axi_bitwidth')}, 0, 0, 0>"
+            )
 
         # Input and output quantization are the same, since the AXIToStream node
         # does not change the data type of the input tensor.
@@ -119,11 +135,11 @@ class AXIToStream(DSECapable, NN2FPGAOp):
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
-        AXIToStream = cpp_object(
-            "AXIToStream",
+        adapter = cpp_object(
+            function_name,
             f"{self.onnx_node.name}",
             [
-                (f"ap_axiu<{input_bitwidth}, 0, 0, 0>", "TInputWord"),
+                (input_word_type, "TInputWord"),
                 (
                     f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     "TOutputWord",
@@ -142,18 +158,23 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             ]
         )
 
-        return AXIToStream.generate_declaration()
+        return adapter.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
         """ Generates the C++ code necessary to run the AXIToStream node. """
 
+        input_type = (
+            "TInputWord*"
+            if self.get_nodeattr("interface_type") == "m_axi"
+            else "hls::stream<TInputWord>"
+        )
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    input_type,
                 ),
                 (
                     f"o_data",
@@ -170,6 +191,9 @@ class AXIToStream(DSECapable, NN2FPGAOp):
 
     def __get_step_call(self) -> str:
         """ Generates the C++ code necessary to run the AXIToStream node in step mode. """
+
+        if self.get_nodeattr("interface_type") == "m_axi":
+            return ""
 
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",

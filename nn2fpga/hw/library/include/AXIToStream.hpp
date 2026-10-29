@@ -7,10 +7,10 @@
 #include <cstddef>
 
 /**
- * @brief AXIToStream is a templated class for converting AXI streams to the
+ * @brief AXISToStream converts AXI Stream words to the nn2FPGA data format.
  * nn2FPGA data format based on the parallelism selected.
  *
- * This class reads AXI input words from an input stream, processes
+ * This class reads AXI Stream input words, processes
  * them in parallel according to the specified template parameters, and writes
  * the results to output streams. The main point is to transform a AXI stream
  * into the nn2FPGA data format.
@@ -29,7 +29,6 @@
  * word).
  *
  * @note
- * - DATA_PER_WORD must be a multiple of DIM2_UNROLL * DIM1_UNROLL.
  * - If DIM1_UNROLL > 1, DIM2 must be equal to DIM2_UNROLL, this is to preserve
  * the correct order of the data flowing.
  * - DIM2 must be a multiple of DIM2_UNROLL.
@@ -58,7 +57,7 @@ template <typename TInputWord, typename TOutputWord,
           typename TOutput, typename Quantizer, size_t DATA_PER_WORD,
           size_t DIM0, size_t DIM1, size_t DIM2, size_t DIM1_UNROLL,
           size_t DIM2_UNROLL, bool ONLY_ONCE = false>
-class AXIToStream {
+class AXISToStream {
   static constexpr size_t ITER =
       DIM0 * DIM1 * DIM2 / (DIM1_UNROLL * DIM2_UNROLL);
 
@@ -69,8 +68,7 @@ public:
                 "DIM2 must be a multiple of DIM2_UNROLL");
   static_assert(DIM1 % DIM1_UNROLL == 0,
                 "DIM1 must be a multiple of DIM1_UNROLL");
-
-  AXIToStream() = default;
+  AXISToStream() = default;
 
   template <size_t HLS_TAG>
   void run(hls::stream<TInputWord> &i_data,
@@ -88,8 +86,8 @@ public:
     NHWC_TO_STREAM_MAINLOOP:
       for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
 #pragma HLS pipeline II = 1
-        AXIToStream::pipeline_body(i_data, o_data, circular_buffer, head, size,
-                                   tail);
+        AXISToStream::pipeline_body(i_data, o_data, circular_buffer, head,
+                                    size, tail);
       }
     }
     if (ONLY_ONCE)
@@ -118,8 +116,9 @@ public:
 
     if (firing_condition) {
       hls::stream<TOutputWord> instant_output_stream[DIM1_UNROLL];
-      AXIToStream::pipeline_body(i_data, instant_output_stream,
-                                 st.circular_buffer, st.head, st.size, st.tail);
+      AXISToStream::pipeline_body(i_data, instant_output_stream,
+                                   st.circular_buffer, st.head, st.size,
+                                   st.tail);
       st.i_output_word++;
       if (st.i_output_word >= ITER) {
         st.i_output_word = 0;
@@ -223,6 +222,104 @@ private:
         tail = (tail + 1) % (DATA_PER_WORD * 2);
       }
       // Write the output word to the output stream.
+      o_data[i_dim1_par].write(out_word);
+    }
+    size -= DIM2_UNROLL * DIM1_UNROLL;
+  }
+};
+
+/**
+ * @brief MAXIToStream converts AXI memory-mapped words to the nn2FPGA data
+ * format.
+ *
+ * The input pointer is synthesized as an m_axi port by the caller. TInputWord
+ * is a packed memory word (for example, ap_uint<AXI_DATAWIDTH>), rather than
+ * an AXI Stream word with sideband signals.
+ *
+ * @tparam TInputWord      The packed memory word type.
+ * @tparam TOutputWord     The type of the output word.
+ * @tparam TOutput         The type of the output data.
+ * @tparam Quantizer       The quantizer functor used for quantization.
+ * @tparam DATA_PER_WORD   Number of data elements per input word.
+ * @tparam DIM0            Input tensor dimension 0.
+ * @tparam DIM1            Input tensor dimension 1.
+ * @tparam DIM2            Input tensor dimension 2.
+ * @tparam DIM1_UNROLL     Number of parallel output streams.
+ * @tparam DIM2_UNROLL     Number of data items in an output word.
+ */
+template <typename TInputWord, typename TOutputWord, typename TOutput,
+          typename Quantizer, size_t DATA_PER_WORD, size_t DIM0, size_t DIM1,
+          size_t DIM2, size_t DIM1_UNROLL, size_t DIM2_UNROLL,
+          bool ONLY_ONCE = false>
+class MAXIToStream {
+  static constexpr size_t ITER =
+      DIM0 * DIM1 * DIM2 / (DIM1_UNROLL * DIM2_UNROLL);
+  static constexpr size_t TOTAL_INPUT_ELEMS = DIM0 * DIM1 * DIM2;
+  static constexpr size_t INPUT_WORDS =
+      (TOTAL_INPUT_ELEMS + DATA_PER_WORD - 1) / DATA_PER_WORD;
+
+public:
+  static_assert(DIM1_UNROLL == 1 || DIM2 == DIM2_UNROLL,
+                "DIM2 must be equal to DIM2_UNROLL when DIM1_UNROLL > 1");
+  static_assert(DIM2 % DIM2_UNROLL == 0,
+                "DIM2 must be a multiple of DIM2_UNROLL");
+  static_assert(DIM1 % DIM1_UNROLL == 0,
+                "DIM1 must be a multiple of DIM1_UNROLL");
+  MAXIToStream() = default;
+
+  template <size_t HLS_TAG>
+  void run(TInputWord *i_data,
+           hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
+    TOutput circular_buffer[DATA_PER_WORD * 2];
+    ap_uint<1> head = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2)> tail = 0;
+    ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> size = 0;
+    ap_uint<bits_for(DIM0 * DIM1 * DIM2 / DATA_PER_WORD) + 1> input_pointer =
+        0;
+    static bool only_once_flag = false;
+
+    if (!only_once_flag) {
+    NHWC_TO_STREAM_MAINLOOP:
+      for (size_t i_output_word = 0; i_output_word < ITER; i_output_word++) {
+#pragma HLS pipeline II = 1
+        MAXIToStream::pipeline_body(i_data, o_data, circular_buffer, head,
+                                    size, tail, input_pointer);
+      }
+    }
+    if (ONLY_ONCE)
+      only_once_flag = true;
+  }
+
+private:
+  static void pipeline_body(
+      TInputWord *i_data, hls::stream<TOutputWord> o_data[DIM1_UNROLL],
+      TOutput circular_buffer[DATA_PER_WORD * 2], ap_uint<1> &head_bank,
+      ap_uint<bits_for(DATA_PER_WORD * 2 + 1)> &size,
+      ap_uint<bits_for(DATA_PER_WORD * 2)> &tail,
+      ap_uint<bits_for(DIM0 * DIM1 * DIM2 / DATA_PER_WORD) + 1>
+          &input_pointer) {
+#pragma HLS inline
+    Quantizer quantizer;
+
+    if (size < DIM2_UNROLL * DIM1_UNROLL) {
+      TInputWord input_data = i_data[input_pointer++];
+      ap_uint<bits_for(DATA_PER_WORD * 2)> head =
+          head_bank ? DATA_PER_WORD : 0;
+      for (size_t i = 0; i < DATA_PER_WORD; i++) {
+        circular_buffer[head + i] =
+            input_data.range(TOutput::width * (i + 1) - 1,
+                             TOutput::width * i);
+      }
+      head_bank ^= ap_uint<1>(1);
+      size += DATA_PER_WORD;
+    }
+
+    for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
+      TOutputWord out_word;
+      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+        out_word[i_dim2_par] = quantizer(circular_buffer[tail]);
+        tail = (tail + 1) % (DATA_PER_WORD * 2);
+      }
       o_data[i_dim1_par].write(out_word);
     }
     size -= DIM2_UNROLL * DIM1_UNROLL;

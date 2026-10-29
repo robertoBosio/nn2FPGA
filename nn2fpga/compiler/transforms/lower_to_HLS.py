@@ -359,10 +359,16 @@ def _set_boundary_fifo_metadata(
             raise ValueError(f"Input '{inp.name}' has no consumer.")
         if consumer.op_type != "AXIToStream":
             raise ValueError(f"Input '{inp.name}' consumer is not AXIToStream.")
-        axi_word = getCustomOp(consumer).get_nodeattr("axi_bitwidth")
+        converter = getCustomOp(consumer)
+        axi_word = converter.get_nodeattr("axi_bitwidth")
+        hls_type = (
+            f"ap_axiu<{axi_word}, 0, 0, 0>"
+            if converter.get_nodeattr("interface_type") == "s_axis"
+            else f"ap_uint<{axi_word}>"
+        )
         set_custom_tensor_fifo_metadata(
             hls_model, inp.name,
-            TensorFifo(depth=0, hls_type=f"ap_axiu<{axi_word}, 0, 0, 0>", n_array=1),
+            TensorFifo(depth=0, hls_type=hls_type, n_array=1),
         )
 
     for out in hls_model.graph.output:
@@ -371,10 +377,16 @@ def _set_boundary_fifo_metadata(
             raise ValueError(f"Output '{out.name}' has no producer.")
         if producer.op_type != "StreamToAXI":
             raise ValueError(f"Output '{out.name}' producer is not StreamToAXI.")
-        axi_word = getCustomOp(producer).get_nodeattr("axi_bitwidth")
+        converter = getCustomOp(producer)
+        axi_word = converter.get_nodeattr("axi_bitwidth")
+        hls_type = (
+            f"ap_axiu<{axi_word}, 0, 0, 0>"
+            if converter.get_nodeattr("interface_type") == "s_axis"
+            else f"ap_uint<{axi_word}>"
+        )
         set_custom_tensor_fifo_metadata(
             hls_model, out.name,
-            TensorFifo(depth=0, hls_type=f"ap_axiu<{axi_word}, 0, 0, 0>", n_array=1),
+            TensorFifo(depth=0, hls_type=hls_type, n_array=1),
         )
 
 
@@ -440,6 +452,13 @@ class LowerToHLS(Transformation):
         """Lower a deep-copied model with DMA throttlers/sinks for Self-Timed
         Execution, then run FIFO depth inference."""
         ste_model = copy.deepcopy(model)
+
+        # FIFO-depth simulation models external traffic with stream DMA actors.
+        # Keep direct-memory ports in the real design, but use AXIS adapters in
+        # this isolated STE copy so boundary actors provide step() methods.
+        for op_type in ("AXIToStream", "StreamToAXI"):
+            for node in ste_model.get_nodes_by_op_type(op_type):
+                getCustomOp(node).set_nodeattr("interface_type", "s_axis")
 
         # Insert throttler/sinks in place of graph inputs/outputs.
         ap = AcceleratorPackage.from_json(

@@ -15,7 +15,7 @@ void wrap_run(hls::stream<test_config::TInputWord> &in_stream,
               hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL]) {
 #pragma HLS INTERFACE axis port = in_stream
 
-  AXIToStream<test_config::TInputWord, TOutputWord,
+  AXISToStream<test_config::TInputWord, TOutputWord,
               test_config::TOutput, test_config::Quantizer,
               test_config::DATA_PER_WORD, test_config::DIM0, test_config::DIM1,
               test_config::DIM2, test_config::DIM1_UNROLL,
@@ -83,15 +83,60 @@ bool test_run() {
   return flag;
 }
 
+bool test_maxi_run() {
+  static constexpr size_t TOTAL_ELEMS =
+      test_config::DIM0 * test_config::DIM1 * test_config::DIM2;
+  static constexpr size_t INPUT_WORDS =
+      (TOTAL_ELEMS + test_config::DATA_PER_WORD - 1) /
+      test_config::DATA_PER_WORD;
+  using TMAXIWord = ap_uint<test_config::AXI_DATAWIDTH>;
+
+  TMAXIWord input_words[INPUT_WORDS] = {};
+  hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
+  for (size_t i = 0; i < TOTAL_ELEMS; i++) {
+    const size_t word = i / test_config::DATA_PER_WORD;
+    const size_t lane = i % test_config::DATA_PER_WORD;
+    input_words[word].range(test_config::TOutput::width * (lane + 1) - 1,
+                            test_config::TOutput::width * lane) = i;
+  }
+
+  MAXIToStream<TMAXIWord, TOutputWord, test_config::TOutput,
+               test_config::Quantizer, test_config::DATA_PER_WORD,
+               test_config::DIM0, test_config::DIM1, test_config::DIM2,
+               test_config::DIM1_UNROLL, test_config::DIM2_UNROLL>
+      producer;
+  producer.run<0>(input_words, out_stream);
+
+  bool flag = true;
+  for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
+       i_dim01 += test_config::DIM1_UNROLL) {
+    for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+         i_dim2 += test_config::DIM2_UNROLL) {
+      for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+           i_dim1_par++) {
+        TOutputWord out_word = out_stream[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+             i_dim2_par++) {
+          flag &= (out_word[i_dim2_par] ==
+                   (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 +
+                       i_dim2_par);
+        }
+      }
+    }
+  }
+
+  return flag;
+}
+
   bool test_step() {
-    // This function tests the step() method of AXIToStream.
+    // This function tests the step() method of AXISToStream.
 
     static constexpr size_t expectedII =
         test_config::DIM0 * test_config::DIM1 * test_config::DIM2 /
         (test_config::DIM2_UNROLL * test_config::DIM1_UNROLL);
 
     // Instantiate the operator
-    AXIToStream<test_config::TInputWord, TOutputWord,
+    AXISToStream<test_config::TInputWord, TOutputWord,
                 test_config::TOutput, test_config::Quantizer,
                 test_config::DATA_PER_WORD, test_config::DIM0,
                 test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
@@ -144,7 +189,8 @@ bool test_run() {
 
     bool all_passed = true;
 
-    all_passed &= test_run();
+  all_passed &= test_run();
+  all_passed &= test_maxi_run();
 
     // Testing the pipeline with csim only, as it is only relevant for fifo
     // depth estimations

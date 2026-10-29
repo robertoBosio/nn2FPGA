@@ -1,11 +1,13 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from nn2fpga.compiler.utils.board_util import read_board_info
 from onnx import helper
 from nn2fpga.compiler.core.tensor_type import (
     get_custom_tensor_datatype,
     set_custom_tensor_datatype,
 )
+from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 import logging
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,19 @@ class InsertAXIConverters(Transformation):
     This will convert the input/output tensor from/to AXI format.
     """
 
+    def __init__(self, use_dma: bool = True):
+        super().__init__()
+        self.use_dma = use_dma
+
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
         board_res = read_board_info(
             board=model.get_metadata_prop("board_name"),
+        )
+        interface_type = "s_axis" if self.use_dma else "m_axi"
+        port_mode = "axis" if self.use_dma else "m_axi"
+        ap = AcceleratorPackage.from_json(
+            model.get_metadata_prop("accelerator_package")
         )
 
         new_nodes = []
@@ -29,7 +40,10 @@ class InsertAXIConverters(Transformation):
                 and len(consumers) == 1
                 and consumers[0].op_type == "AXIToStream"
             ):
-                # This input is already transformed, skip it.
+                getCustomOp(consumers[0]).set_nodeattr(
+                    "interface_type", interface_type
+                )
+                ap.input_map[inp.name]["mode"] = port_mode
                 continue
 
             orig_input_name = inp.name
@@ -43,6 +57,7 @@ class InsertAXIConverters(Transformation):
                 outputs=[produce_stream_output],
                 normalize=0,
                 axi_bitwidth=board_res["axi_bitwidth"],
+                interface_type=interface_type,
                 name=f"AXIToStream_{i}",
             )
 
@@ -61,6 +76,7 @@ class InsertAXIConverters(Transformation):
                         node.input[j] = produce_stream_output
 
             new_nodes.append(produce_node)
+            ap.input_map[orig_input_name]["mode"] = port_mode
             logger.info(f"Inserted AXIToStream node for input {orig_input_name}")
 
         # Insert all new nodes at the beginning
@@ -70,8 +86,11 @@ class InsertAXIConverters(Transformation):
         new_nodes = []
         for i, out in enumerate(model.graph.output):
             producer = model.find_producer(out.name)
-            if producer is None or producer.op_type == "StreamToAXI":
-                # This output is already transformed, skip it.
+            if producer is None:
+                continue
+            if producer.op_type == "StreamToAXI":
+                getCustomOp(producer).set_nodeattr("interface_type", interface_type)
+                ap.output_map[out.name]["mode"] = port_mode
                 continue
 
             orig_output_name = out.name
@@ -84,6 +103,7 @@ class InsertAXIConverters(Transformation):
                 inputs=[consume_stream_output],
                 outputs=[orig_output_name],
                 axi_bitwidth=board_res["axi_bitwidth"],
+                interface_type=interface_type,
                 name=f"StreamToAXI_{i}",
             )
 
@@ -99,10 +119,12 @@ class InsertAXIConverters(Transformation):
             if tq is not None:
                 set_custom_tensor_datatype(model, consume_stream_output, tq)
             new_nodes.append(consume_node)
+            ap.output_map[orig_output_name]["mode"] = port_mode
             logger.info(f"Inserted StreamToAXI node for output {orig_output_name}")
 
         # Insert all new nodes at the beginning
         for node in new_nodes:
             model.graph.node.append(node)
         
+        model.set_metadata_prop("accelerator_package", ap.to_json())
         return (model, False)
