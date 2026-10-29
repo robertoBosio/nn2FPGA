@@ -50,7 +50,15 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
     function.add_code("#pragma HLS TOP")
     function.add_code("#pragma HLS DATAFLOW disable_start_propagation")
-    function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
+    has_direct_memory = (
+        any(port["mode"] == "m_axi" for port in ap.input_map.values())
+        or any(port["mode"] == "m_axi" for port in ap.output_map.values())
+        or bool(ap.buffer_map)
+    )
+    if has_direct_memory:
+        function.add_code("#pragma HLS INTERFACE s_axilite port=return bundle=control")
+    else:
+        function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
     for input in ap.input_map.values():
         input_name = input['new_name']

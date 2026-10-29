@@ -88,14 +88,17 @@ class AddStreamingParams(Transformation):
     streaming the parameters to the node.
     """
 
-    def __init__(self, nn2fpga_root: str = "/tmp"):
+    def __init__(self, nn2fpga_root: str = "/tmp", use_dma: bool = True):
         """
         Initializes the AddStreamingParams transformation.
         Args:
             nn2fpga_root (str): The root directory of nn2FPGA.
+            use_dma (bool): Use AXIS/DMA instead of direct m_axi for the
+                parameter-upload boundary.
         """
         super().__init__()
         self.nn2fpga_root = nn2fpga_root
+        self.use_dma = use_dma
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
@@ -149,6 +152,7 @@ class AddStreamingParams(Transformation):
         # The 'const_' string in the name is mandatory to recognize the initializer
         # as a special in the simulation flow.
         index = len(ap.input_map)
+        interface_type = "s_axis" if self.use_dma else "m_axi"
         ap.input_map["const_param_stream"] = {
             "new_name": "const_param_stream",
             "index": index,
@@ -156,7 +160,7 @@ class AddStreamingParams(Transformation):
             "quant": params_quant.get_canonical_name(),
             "layout": TensorLayout.identity(len(grouped_initializer.shape)).get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
-            "mode": "axis",
+            "mode": "axis" if self.use_dma else "m_axi",
         }
         param_stream_input = helper.make_tensor_value_info(
             "const_param_stream", TensorProto.INT32, grouped_initializer.shape
@@ -182,6 +186,7 @@ class AddStreamingParams(Transformation):
             in_word_array=1,
             out_word_array=1,
             axi_bitwidth=board_res["axi_bitwidth"],
+            interface_type=interface_type,
             name=f"AXIToStream_const_param_stream",
         )
 

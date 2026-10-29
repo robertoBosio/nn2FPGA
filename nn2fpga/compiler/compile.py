@@ -162,11 +162,13 @@ def _generate_lightningsim_artifacts(
 
 
 def _finalize_nn2fpga_model(
-    model: ModelWrapper, prj_root: str, steps: dict
+    model: ModelWrapper, prj_root: str, steps: dict, use_dma: bool = True
 ) -> ModelWrapper:
     if steps.get("AddStreamingParams", True):
         model = model.transform(
-            transformation.AddStreamingParams(nn2fpga_root=prj_root)
+            transformation.AddStreamingParams(
+                nn2fpga_root=prj_root, use_dma=use_dma
+            )
         )
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
@@ -294,7 +296,12 @@ def nn2fpga_compile(config_dict: dict):
                 store_intermediate,
             )
 
-        nn2fpga_model = _finalize_nn2fpga_model(nn2fpga_model, prj_root, steps)
+        nn2fpga_model = _finalize_nn2fpga_model(
+            nn2fpga_model,
+            prj_root,
+            steps,
+            use_dma=compile_config.get("use_dma", True),
+        )
         _save_intermediate(
             nn2fpga_model,
             store_intermediate,
