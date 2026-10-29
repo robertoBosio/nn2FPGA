@@ -32,7 +32,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
 
-    base_include_dir = "/workspace/NN2FPGA/nn2fpga/hw/library/include"
+    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
 
     if os.path.isdir(base_include_dir):
         for root, _, files in os.walk(base_include_dir):

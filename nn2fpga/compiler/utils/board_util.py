@@ -3,7 +3,7 @@ import math
 
 def read_board_info(board):
     """ Read the board json file and returns a dictionary with the available resources"""
-    file_path = f"/workspace/NN2FPGA/nn2fpga/hw/boards/{board}.json"
+    file_path = f"/workspace/nn2FPGA/nn2fpga/hw/boards/{board}.json"
 
     # Opening JSON file with board resources
     with open(file_path) as f:

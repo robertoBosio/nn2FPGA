@@ -45,18 +45,48 @@ class FifoCandidate:
     burst_length: int
 
 
-def choose_axiword_bits(dtype_bitwidth: int, dim2_unroll: int) -> int:
+def choose_axiword_bits(dtype_bitwidth: int, dim2_unroll: int, total_bits: int) -> int:
+    """Choose the AXI word width for a DDR buffer.
+
+    The chosen width must respect all of the following constraints:
+    1. It is a multiple of lane_bits (= dtype_bitwidth * dim2_unroll), so each
+       AXI word holds a whole number of parallel lanes and no lane is ever
+       split across two words.
+    2. It does not exceed MAX_AXIWORD_BITS, the hardware AXI data bus width.
+    3. It divides total_bits (the full tensor size), so the DDR buffer is a
+       whole number of ap_uint<axiword> words with no partial trailing word.
+
+    Candidates are evaluated from the widest (most bandwidth-efficient) down,
+    and the first one satisfying all constraints is returned. Returns None if
+    no valid width exists; the caller must then exclude the FIFO from DDR
+    offload instead of failing mid-compilation.
+    """
     lane_bits = dtype_bitwidth * dim2_unroll
     if lane_bits <= 0:
         raise ValueError(f"Invalid lane_bits: {lane_bits}")
 
-    axiword_bits = (MAX_AXIWORD_BITS // lane_bits) * lane_bits
-    if axiword_bits == 0:
+    # Widest multiple of lane_bits that fits the AXI bus, descending by lane.
+    widest = (MAX_AXIWORD_BITS // lane_bits) * lane_bits
+    if widest == 0:
         logger.warning(
-            f"lane_bits ({lane_bits}) exceeds MAX_AXIWORD_BITS ({MAX_AXIWORD_BITS}), cannot choose a valid AXI word width. Defaulting to 0."
+            f"lane_bits ({lane_bits}) exceeds MAX_AXIWORD_BITS ({MAX_AXIWORD_BITS}), cannot choose a valid AXI word width."
         )
-        return 0
-    return axiword_bits
+        return None
+
+    for axiword_bits in range(widest, 0, -lane_bits):
+        if total_bits % axiword_bits == 0:
+            if axiword_bits < widest:
+                logger.info(
+                    f"AXI word width {axiword_bits} is narrower than the max feasible {widest} "
+                    f"because the tensor size ({total_bits} bits) is not divisible by {widest}."
+                )
+            return axiword_bits
+
+    logger.warning(
+        f"No multiple of lane_bits ({lane_bits}) up to {MAX_AXIWORD_BITS} divides "
+        f"total_bits ({total_bits}); no valid AXI word width exists."
+    )
+    return None
 
 def compute_baseline_bandwidth_requirements(model: ModelWrapper) -> float:
     """Compute the baseline bandwidth requirements for inputs/outputs of the model"""
@@ -174,6 +204,7 @@ class OptimizeFifo(Transformation):
             dim1_unroll = interface.out_stream_array
             dim2_unroll = interface.out_word_array
             memory_bits = depth * dtype.bitwidth * dim2_unroll
+            total_bits = int(np.prod(shape) * dtype.bitwidth)
 
             if dim1_unroll != 1:
                 continue
@@ -181,7 +212,8 @@ class OptimizeFifo(Transformation):
             if memory_bits < MIN_FIFO_BITS:
                 continue
         
-            if choose_axiword_bits(dtype.bitwidth, dim2_unroll) == 0:
+            axiword_bits = choose_axiword_bits(dtype.bitwidth, dim2_unroll, total_bits)
+            if axiword_bits is None:
                 continue
 
             candidates.append(
@@ -194,7 +226,7 @@ class OptimizeFifo(Transformation):
                     fifo_depth=depth,
                     dim2_unroll=dim2_unroll,
                     memory_bits=memory_bits,
-                    axiword_bits=choose_axiword_bits(dtype.bitwidth, dim2_unroll),
+                    axiword_bits=axiword_bits,
                     burst_length=DEFAULT_DDR_BURST_LENGTH,
                 )
             )
@@ -250,6 +282,9 @@ class OptimizeFifo(Transformation):
 
     def _add_buffer_map_entry(self, ap: AcceleratorPackage, candidate: FifoCandidate) -> None:
         # Shapes include batch; at this stage batch is fixed to 1.
+        # choose_axiword_bits already guarantees divisibility of total_bits by
+        # the AXI word width during candidate discovery, so these checks are
+        # internal assertions rather than policy decisions.
         total_bits = int(np.prod(candidate.shape) * candidate.dtype.bitwidth)
         if total_bits % candidate.axiword_bits != 0:
             raise ValueError(

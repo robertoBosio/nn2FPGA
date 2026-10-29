@@ -33,7 +33,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     cwr.include("<chrono>")
 
     # Include files from the nn2FPGA library
-    base_include_dir = "/workspace/NN2FPGA/nn2fpga/hw/library/include"
+    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
 
     if os.path.isdir(base_include_dir):
         for root, _, files in os.walk(base_include_dir):
@@ -279,8 +279,8 @@ def generate_tcl_script(top_name, part_name, frequency, hls_version):
 
     lines.extend(
         [
-            'add_files fifo_depth.cpp -cflags "-O2 -I/workspace/NN2FPGA/nn2fpga/hw/library/include"',
-            'add_files -tb testbench.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include"',
+            'add_files fifo_depth.cpp -cflags "-O2 -I/workspace/nn2FPGA/nn2fpga/hw/library/include"',
+            'add_files -tb testbench.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include"',
             'set_top "{top_name}"',
             'set_part {part_name}',
             'create_clock -period {t_clk}',

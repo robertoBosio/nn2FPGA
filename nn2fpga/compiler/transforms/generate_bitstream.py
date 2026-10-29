@@ -193,8 +193,8 @@ def dump_tcl_script(
     lines.append("")
 
     if silvia_packing:
-        lines.append('source "/workspace/NN2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
-        lines.append('set SILVIA::ROOT "/workspace/NN2FPGA/deps/SILVIA"')
+        lines.append('source "/workspace/nn2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
+        lines.append('set SILVIA::ROOT "/workspace/nn2FPGA/deps/SILVIA"')
         lines.append('set SILVIA::LLVM_ROOT "${SILVIA::ROOT}/llvm-project/install"')
         lines.append('set SILVIA::PASSES [list [dict create OP "muladd" MAX_CHAIN_LEN 3 OP_SIZE 4] [dict create OP "muladd" INLINE 1 MAX_CHAIN_LEN 3] [dict create OP "muladd" MUL_ONLY 1 INLINE 1]]')
         lines.append('set SILVIA::DEBUG 1')
@@ -215,7 +215,7 @@ def dump_tcl_script(
 
     lines.extend(
         [
-            f'add_files kernel.cpp -cflags " -I/workspace/NN2FPGA/nn2fpga/hw/library/include"',
+            f'add_files kernel.cpp -cflags " -I/workspace/nn2FPGA/nn2fpga/hw/library/include"',
             f'set_top {top_name}',
             f'set_part {part_name}',
             f'create_clock -period {t_clk}',
