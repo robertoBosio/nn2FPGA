@@ -120,7 +120,7 @@ def remove_boundary_adapters(text: str) -> tuple[str, list[str]]:
     params = []
     offset = 0
     while True:
-        block = find_object_block(text, "AXIToStream", offset)
+        block = find_object_block(text, "AXISToStream", offset)
         if block is None:
             break
         obj_start, obj_end, obj_name, template_args = block
@@ -141,7 +141,7 @@ def remove_boundary_adapters(text: str) -> tuple[str, list[str]]:
 
     offset = 0
     while True:
-        block = find_object_block(text, "StreamToAXI", offset)
+        block = find_object_block(text, "StreamToAXIS", offset)
         if block is None:
             break
         obj_start, obj_end, obj_name, template_args = block

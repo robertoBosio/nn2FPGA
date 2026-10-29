@@ -15,8 +15,8 @@ using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
 void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::DIM1_UNROLL],
               hls::stream<test_config::TOutputWord> &output_data_stream) {
 #pragma HLS INTERFACE axis port = output_data_stream
-  // Wrapper function to call the run() method of StreamToAXI, for synthesis.
-  StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
+  // Wrapper function to call the run() method of StreamToAXIS, for synthesis.
+  StreamToAXIS<TInputWord, test_config::TInput, test_config::TOutputWord,
               test_config::Quantizer, test_config::ITER,
               test_config::DATA_PER_WORD, test_config::DIM0,
               test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
@@ -26,7 +26,7 @@ void wrap_run(hls::stream<TInputWord> input_data_stream[test_config::DIM1_UNROLL
 }
 
 bool test_run() {
-  // This function tests the run() method of StreamToAXI.
+  // This function tests the run() method of StreamToAXIS.
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
@@ -122,8 +122,59 @@ bool test_run() {
   return flag;
 }
 
+bool test_maxi_run() {
+  constexpr size_t total_elems = test_config::DIM0 * test_config::DIM1 *
+                                 test_config::DIM2;
+  constexpr size_t output_words =
+      (total_elems + test_config::DATA_PER_WORD - 1) /
+      test_config::DATA_PER_WORD;
+  using TMAXIWord = ap_uint<test_config::AXI_DATAWIDTH>;
+
+  hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
+  TMAXIWord output_words_maxi[output_words] = {};
+  for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
+       i_dim01 += test_config::DIM1_UNROLL) {
+    for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2;
+         i_dim2 += test_config::DIM2_UNROLL) {
+      for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+           i_dim1_par++) {
+        TInputWord input_word;
+        for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
+             i_dim2_par++) {
+          const size_t index =
+              (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 +
+              i_dim2_par;
+          input_word[i_dim2_par] = test_config::TInput(index);
+        }
+        in_stream[i_dim1_par].write(input_word);
+      }
+    }
+  }
+
+  StreamToMAXI<TInputWord, test_config::TInput, TMAXIWord,
+               test_config::Quantizer, test_config::ITER,
+               test_config::DATA_PER_WORD, test_config::DIM0,
+               test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
+               test_config::DIM2_UNROLL>
+      consumer;
+  consumer.run<0>(in_stream, output_words_maxi);
+
+  bool flag = true;
+  constexpr size_t W = data_width_v<test_config::TInput>;
+  for (size_t i = 0; i < total_elems; i++) {
+    const size_t word = i / test_config::DATA_PER_WORD;
+    const size_t lane = i % test_config::DATA_PER_WORD;
+    ap_uint<W> bits_read = output_words_maxi[word].range(W * (lane + 1) - 1,
+                                                          W * lane);
+    ap_uint<W> expected_bits = get_raw_bits(test_config::TInput(i));
+    flag &= (bits_read == expected_bits);
+  }
+
+  return flag;
+}
+
 bool test_step() {
-  // This function tests the step() method of StreamToAXI
+  // This function tests the step() method of StreamToAXIS
 
   size_t expectedII = test_config::DIM0 * test_config::DIM1 *
                       test_config::DIM2 /
@@ -135,7 +186,7 @@ bool test_step() {
   }
 
   // Instantiate the operator
-  StreamToAXI<TInputWord, test_config::TInput, test_config::TOutputWord,
+  StreamToAXIS<TInputWord, test_config::TInput, test_config::TOutputWord,
               test_config::Quantizer, test_config::ITER,
               test_config::DATA_PER_WORD, test_config::DIM0, test_config::DIM1,
               test_config::DIM2, test_config::DIM1_UNROLL,
@@ -189,6 +240,7 @@ int main(int argc, char **argv) {
   bool all_passed = true;
 
   all_passed &= test_run();
+  all_passed &= test_maxi_run();
   
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
   // estimations

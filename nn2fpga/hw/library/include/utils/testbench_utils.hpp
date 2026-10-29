@@ -60,3 +60,43 @@ void npy_to_hls_stream(const std::string &input_path, hls::stream<TAxi> &stream,
     stream.write(word);
   }
 }
+
+template <typename TWord, typename TData, typename TDataNumpy>
+void npy_to_maxi(const std::string &input_path, TWord *memory,
+                 int data_per_word) {
+  cnpy::NpyArray input_array = cnpy::npy_load(input_path);
+  TDataNumpy *input_data = input_array.data<TDataNumpy>();
+  size_t num_elements = 1;
+  for (size_t dim : input_array.shape)
+    num_elements *= dim;
+
+  const size_t bits_per_data = data_width_v<TData>;
+  for (size_t i = 0; i < num_elements; i += data_per_word) {
+    TWord word = 0;
+    for (int j = 0; j < data_per_word && i + j < num_elements; j++) {
+      word.range((j + 1) * bits_per_data - 1, j * bits_per_data) =
+          get_raw_bits(static_cast<TData>(input_data[i + j]));
+    }
+    memory[i / data_per_word] = word;
+  }
+}
+
+template <typename TWord, typename TData, typename TDataNumpy>
+void maxi_to_npy(const std::string &output_path, const TWord *memory,
+                 int data_per_word, const std::vector<size_t> &shape) {
+  size_t num_elements = 1;
+  for (size_t dim : shape)
+    num_elements *= dim;
+
+  const size_t bits_per_data = data_width_v<TData>;
+  std::vector<TDataNumpy> output_data;
+  output_data.reserve(num_elements);
+  for (size_t i = 0; i < num_elements; i++) {
+    const TWord word = memory[i / data_per_word];
+    const size_t lane = i % data_per_word;
+    TData value = set_raw_bits<TData>(
+        word.range((lane + 1) * bits_per_data - 1, lane * bits_per_data));
+    output_data.push_back(static_cast<TDataNumpy>(value));
+  }
+  cnpy::npy_save(output_path, output_data.data(), shape, "w");
+}

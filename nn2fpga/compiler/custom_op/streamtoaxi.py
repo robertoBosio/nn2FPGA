@@ -39,7 +39,8 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
 
     def get_nodeattr_types(self):
         return {
-            "axi_bitwidth": ("i", False, 128),  # Bitwidth of the AXI interface
+            # Bitwidth of the AXI interface
+            "axi_bitwidth": ("i", False, 128),
             # Custom attributes for unroll factors
             "dim2_unroll": ("i", False, 1),
             "dim1_unroll": ("i", False, 1),
@@ -48,6 +49,8 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             "out_stream_array": ("i", False, 1),
             "in_word_array": ("i", False, 1),
             "out_word_array": ("i", False, 1),
+            # Output interface: AXI Stream via DMA or direct AXI master.
+            "interface_type": ("s", False, "s_axis"),
         }
 
     def make_shape_compatible_op(self, model):
@@ -107,8 +110,22 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         Returns:
             str: The StreamToAXI as cpp_object.
         """
-        # The output has to be an AXI Lite interface, the bitwidth is defined by the board used.
+        # The output bitwidth is defined by the target board.
         output_bitwidth = self.get_nodeattr("axi_bitwidth")
+
+        # Both master AXI and AXI Stream interfaces are supported.
+        interface_type = self.get_nodeattr("interface_type")
+        if interface_type not in ["m_axi", "s_axis"]:
+            raise ValueError(
+                f"Invalid interface_type '{interface_type}' for StreamToAXI node '{self.onnx_node.name}'. "
+                "Supported values are 'm_axi' and 's_axis'."
+            )
+        if interface_type == "m_axi":
+            function_name = "StreamToMAXI"
+            output_word_type = f"ap_uint<{output_bitwidth}>"
+        else:
+            function_name = "StreamToAXIS"
+            output_word_type = f"ap_axiu<{output_bitwidth}, 0, 0, 0>"
 
         # The output quant is the same as the input quant, since the StreamToAXI node
         # does not change the data type of the input tensor.
@@ -127,9 +144,9 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         if np.prod(input_shape) % self.__get_data_per_word(model) != 0:
             iter += 1
 
-        # Create the StreamToAXI object.
-        StreamToAXI = cpp_object(
-            "StreamToAXI",
+        # Create the selected output adapter.
+        adapter = cpp_object(
+            function_name,
             f"{self.onnx_node.name}",
             [
                 (
@@ -137,7 +154,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
                     "TInputWord",
                 ),
                 (f"{input_quant.get_hls_data_type()}", "TInput"),
-                (f"ap_axiu<{output_bitwidth}, 0, 0, 0>", "TOutputWord"),
+                (output_word_type, "TOutputWord"),
                 (
                     f"DequantQuantEqual<{input_quant.get_hls_data_type()}>",
                     "Quantizer",
@@ -152,12 +169,16 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             ],
         )
 
-        return StreamToAXI.generate_declaration()
+        return adapter.generate_declaration()
 
     def __get_run_call(self, hls_tag: int) -> str:
         """Generates the C++ code necessary to run the StreamToAXI node."""
 
-        # Generate the call to the StreamToAXI run method.
+        output_type = (
+            "TOutputWord*"
+            if self.get_nodeattr("interface_type") == "m_axi"
+            else "hls::stream<TOutputWord>"
+        )
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
             return_type="void",
@@ -168,7 +189,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
                 ),
                 (
                     f"output_data_stream",
-                    f"hls::stream<TOutputWord>",
+                    output_type,
                 ),
             ),
         )
@@ -181,6 +202,9 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
 
     def __get_step_call(self) -> str:
         """Generates the C++ code necessary to step the StreamToAXI node."""
+
+        if self.get_nodeattr("interface_type") == "m_axi":
+            return ""
 
         # Generate the call to the StreamToAXI step method.
         step = cpp_function(
