@@ -160,6 +160,17 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     function.add_code("CompactState compact = make_compact_state(current_state);")
     function.add_code("StateSig sig = make_signature(compact);")
     function.add_code("auto &bucket = visited_states[sig];")
+    # Only the candidate cycles need to consult the disk. Flushing here keeps the
+    # transient flush-free while making the previously appended states visible to
+    # the (separately buffered) read stream. The reader must also be cleared,
+    # otherwise a single failed probe (eof/fail bit) would poison every later
+    # comparison.
+    function.add_code("if (!bucket.empty()) {")
+    function.codewriter.indent()
+    function.add_code("states_out.flush();")
+    function.add_code("states_in.clear();")
+    function.codewriter.dedent()
+    function.add_code("}")
     function.add_code("for (const auto &ref : bucket) {")
     function.codewriter.indent()
     function.add_code("if (states_equal_on_disk(ref.offset, compact.data)) {")

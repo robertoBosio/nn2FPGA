@@ -59,6 +59,12 @@ bool test_run() {
       }
     }
   }
+  
+  if (data_in_word > 0) {
+    // If there are remaining pixels that didn't fill a complete word, write them
+      input_axi_struct.last = true;
+      in_stream.write(input_axi_struct);
+  }
 
   // Run producer
   wrap_run(in_stream, out_stream);
@@ -72,9 +78,15 @@ bool test_run() {
       for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL; i_dim1_par++) {
         TOutputWord out_word = out_stream[i_dim1_par].read();
         for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL; i_dim2_par++) {
-          // Each channel should have the average value of 1
-          flag &= (out_word[i_dim2_par] ==
-                   (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par);
+          test_config::TOutput expected_value = (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par;
+          flag &= (out_word[i_dim2_par] == expected_value);
+                   if (!flag) {
+                       std::cout << "Mismatch at DIM01: " << (i_dim01 + i_dim1_par)
+                                 << ", DIM2: " << (i_dim2 + i_dim2_par)
+                                 << ". Expected: "
+                                 << expected_value
+                                 << ", Got: " << out_word[i_dim2_par] << std::endl;
+                   }
         }
       }
     }
@@ -117,9 +129,8 @@ bool test_maxi_run() {
         TOutputWord out_word = out_stream[i_dim1_par].read();
         for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
              i_dim2_par++) {
-          flag &= (out_word[i_dim2_par] ==
-                   (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 +
-                       i_dim2_par);
+          test_config::TOutput expected_value = (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par;
+          flag &= (out_word[i_dim2_par] == expected_value);
         }
       }
     }
@@ -189,8 +200,8 @@ bool test_maxi_run() {
 
     bool all_passed = true;
 
-  all_passed &= test_run();
-  all_passed &= test_maxi_run();
+    all_passed &= test_run();
+    all_passed &= test_maxi_run();
 
     // Testing the pipeline with csim only, as it is only relevant for fifo
     // depth estimations
