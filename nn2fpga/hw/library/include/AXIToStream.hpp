@@ -122,6 +122,9 @@ public:
       st.i_output_word++;
       if (st.i_output_word >= ITER) {
         st.i_output_word = 0;
+        st.head = 0;
+        st.tail = 0;
+        st.size = 0;
       }
 
       // Insert the firing status for the current step.
