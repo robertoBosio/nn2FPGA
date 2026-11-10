@@ -187,6 +187,7 @@ class AddStreamingParams(Transformation):
             out_word_array=1,
             axi_bitwidth=board_res["axi_bitwidth"],
             interface_type=interface_type,
+            only_once=1,
             name=f"AXIToStream_const_param_stream",
         )
 

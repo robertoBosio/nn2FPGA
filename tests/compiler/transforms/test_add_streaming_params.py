@@ -47,3 +47,4 @@ def test_add_streaming_params_uses_maxi_without_dma(monkeypatch):
 
     assert package.input_map["const_param_stream"]["mode"] == "m_axi"
     assert next(attr.s.decode() for attr in converter.attribute if attr.name == "interface_type") == "m_axi"
+    assert next(attr.i for attr in converter.attribute if attr.name == "only_once") == 1

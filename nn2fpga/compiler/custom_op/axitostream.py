@@ -49,6 +49,8 @@ class AXIToStream(DSECapable, NN2FPGAOp):
             "out_word_array": ("i", False, 1),
             # Input interface: AXI Stream via DMA or direct AXI master.
             "interface_type": ("s", False, "s_axis"),
+            # Read this input only during accelerator startup.
+            "only_once": ("i", False, 0),
         }
 
     def make_shape_compatible_op(self, model):
@@ -155,6 +157,10 @@ class AXIToStream(DSECapable, NN2FPGAOp):
                 (input_shape[3], "DIM2"),
                 (point.dim1_unroll, "DIM1_UNROLL"),
                 (point.dim2_unroll, "DIM2_UNROLL"),
+                (
+                    str(bool(self.get_nodeattr("only_once"))).lower(),
+                    "ONLY_ONCE",
+                ),
             ]
         )
 
