@@ -17,8 +17,7 @@ The project is open-source and released under the MIT license.
 
 This video compares YOLOv10n inference running on CPU only (top) and with nn2FPGA CPU + FPGA acceleration (bottom).
 
-![YOLOv10n CPU-only (top) and CPU + FPGA (bottom) inference comparison](comparison.webp)
-
+https://github.com/user-attachments/assets/dd230ebc-ec80-49e1-8382-fc4057970b1d
 ---
 
 ## Installation
