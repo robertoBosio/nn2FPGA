@@ -257,6 +257,63 @@ def _build_concat_pattern_model(
     )
 
 
+def _build_focus_pattern_model():
+    input_tensor = helper.make_tensor_value_info("source", TensorProto.FLOAT, [1, 3, 8, 8])
+    output_tensor = helper.make_tensor_value_info("focus_out", TensorProto.FLOAT, [1, 12, 4, 4])
+    initializers = [
+        helper.make_tensor("even", TensorProto.INT64, [1], [0]),
+        helper.make_tensor("odd", TensorProto.INT64, [1], [1]),
+        helper.make_tensor("end", TensorProto.INT64, [1], [2147483647]),
+        helper.make_tensor("height_axis", TensorProto.INT64, [1], [2]),
+        helper.make_tensor("width_axis", TensorProto.INT64, [1], [3]),
+        helper.make_tensor("step", TensorProto.INT64, [1], [2]),
+    ]
+
+    def slice_node(name, data, start, axis):
+        return helper.make_node(
+            "Slice", [data, start, "end", axis, "step"], [name], name=f"slice_{name}"
+        )
+
+    quant_initializers = []
+    quant_nodes = []
+    for output, source in (
+        ("q_source", "source"),
+        ("q_h_even", "h_even"),
+        ("q_h_odd", "h_odd"),
+        ("q_ee", "ee"),
+        ("q_eo", "eo"),
+        ("q_oe", "oe"),
+        ("q_oo", "oo"),
+        ("focus_out", "focus_concat"),
+    ):
+        inits, node = _build_quant_node(source, output, 1.0, -128, 8, output)
+        quant_initializers.extend(inits)
+        quant_nodes.append(node)
+
+    nodes = [
+        quant_nodes[0],
+        slice_node("h_even", "q_source", "even", "height_axis"),
+        slice_node("h_odd", "q_source", "odd", "height_axis"),
+        quant_nodes[1],
+        quant_nodes[2],
+        slice_node("ee", "q_h_even", "even", "width_axis"),
+        slice_node("eo", "q_h_even", "odd", "width_axis"),
+        slice_node("oe", "q_h_odd", "even", "width_axis"),
+        slice_node("oo", "q_h_odd", "odd", "width_axis"),
+        *quant_nodes[3:7],
+        helper.make_node("Concat", ["q_ee", "q_oe", "q_eo", "q_oo"], ["focus_concat"], axis=1, name="focus_concat"),
+        quant_nodes[7],
+    ]
+    graph = helper.make_graph(
+        nodes,
+        name="focus_pattern_graph",
+        inputs=[input_tensor],
+        outputs=[output_tensor],
+        initializer=[*initializers, *quant_initializers],
+    )
+    return ModelWrapper(qonnx_make_model(graph, producer_name="test_producer"))
+
+
 def _build_resize_pattern_model(
     *,
     roi_name: str,
@@ -966,3 +1023,30 @@ def test_leakyrelu_pattern_rejects_non_quantized_non_fusable_input():
 
     assert match.ok is False
     assert any("LeakyRelu must be quantized or fusable into Conv/Gemm/Add" in reason for reason in match.reasons)
+
+
+def test_focus_pattern_matches_int32_end_sentinel():
+    model = _build_focus_pattern_model()
+    anchor_node = next(node for node in model.graph.node if node.name == "focus_concat")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Focus Slice/Quant/Concat"
+    assert match.covered == {
+        "slice_h_even",
+        "slice_h_odd",
+        "slice_ee",
+        "slice_eo",
+        "slice_oe",
+        "slice_oo",
+        "q_source",
+        "q_h_even",
+        "q_h_odd",
+        "q_ee",
+        "q_eo",
+        "q_oe",
+        "q_oo",
+        "focus_concat",
+        "focus_out",
+    }

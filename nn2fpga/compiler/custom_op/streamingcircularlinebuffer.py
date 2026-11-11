@@ -189,6 +189,7 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.input[0]),
             output_name,
         )
+        pads = self._normalize_pads(self.get_nodeattr("pads"))
 
         circular_linebuffer = cpp_object(
             "StreamingCircularLineBuffer",
@@ -205,10 +206,10 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
                 (self.get_nodeattr("strides")[1], "STRIDE_W"),
                 (self.get_nodeattr("dilation")[0], "DILATION_H"),
                 (self.get_nodeattr("dilation")[1], "DILATION_W"),
-                (self.get_nodeattr("pads")[0], "PAD_T"),
-                (self.get_nodeattr("pads")[1], "PAD_L"),
-                (self.get_nodeattr("pads")[2], "PAD_B"),
-                (self.get_nodeattr("pads")[3], "PAD_R"),
+                (pads[0], "PAD_T"),
+                (pads[1], "PAD_L"),
+                (pads[2], "PAD_B"),
+                (pads[3], "PAD_R"),
                 (width_unroll, "W_PAR"),
                 (self.get_nodeattr("channel_unroll"), "CH_PAR"),
                 (
@@ -241,7 +242,7 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
-        pads = self.get_nodeattr("pads")
+        pads = self._normalize_pads(self.get_nodeattr("pads"))
         padded_height = input_shape[-3] + pads[0] + pads[2]
         padded_width = input_shape[-2] + pads[1] + pads[3]
         width_unroll = self.get_nodeattr("width_unroll")

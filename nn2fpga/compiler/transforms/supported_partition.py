@@ -730,6 +730,109 @@ class AddQuant(Pattern):
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
 
+
+class FocusSliceQuantConcat(Pattern):
+    name = "Focus Slice/Quant/Concat"
+    anchor_op = "Concat"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+        if len(anchor_node.input) != 4 or not check_attribute(anchor_node, "axis", 1, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        output_consumers = model.find_consumers(anchor_node.output[0])
+        if len(output_consumers) != 1 or not check_act_quant(model, output_consumers[0], reasons):
+            return Match(False, self.name, covered, reasons)
+        output_quant = output_consumers[0]
+
+        q_ee, q_oe, q_eo, q_oo = [model.find_producer(name) for name in anchor_node.input]
+        branch_quants = [q_ee, q_oe, q_eo, q_oo]
+        if not all(check_act_quant(model, quant, reasons) for quant in branch_quants):
+            return Match(False, self.name, covered, reasons)
+
+        ee, oe, eo, oo = [model.find_producer(quant.input[0]) for quant in branch_quants]
+        if any(
+            node is None or node.op_type != "Slice" or not node.input
+            for node in (ee, oe, eo, oo)
+        ):
+            return Match(False, self.name, covered, ["Focus branch input is not produced by Slice"])
+        h_even_quant = model.find_producer(ee.input[0])
+        h_odd_quant = model.find_producer(oe.input[0])
+        if h_even_quant is None or h_odd_quant is None:
+            return Match(False, self.name, covered, ["Focus height Quant nodes are missing"])
+        if eo.input[0] != h_even_quant.output[0] or oo.input[0] != h_odd_quant.output[0]:
+            return Match(False, self.name, covered, ["Focus width slices do not share height branches"])
+        if not check_act_quant(model, h_even_quant, reasons) or not check_act_quant(model, h_odd_quant, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        h_even = model.find_producer(h_even_quant.input[0])
+        h_odd = model.find_producer(h_odd_quant.input[0])
+        if (
+            h_even is None
+            or h_odd is None
+            or h_even.op_type != "Slice"
+            or h_odd.op_type != "Slice"
+            or not h_even.input
+            or not h_odd.input
+        ):
+            return Match(False, self.name, covered, ["Focus height Slices are missing"])
+        if h_even.input[0] != h_odd.input[0]:
+            return Match(False, self.name, covered, ["Focus height slices do not share an input"])
+        input_quant = model.find_producer(h_even.input[0])
+        if not check_act_quant(model, input_quant, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        slices = ((h_even, 0, 2), (h_odd, 1, 2), (ee, 0, 3), (oe, 0, 3), (eo, 1, 3), (oo, 1, 3))
+        for node, start, axis in slices:
+            if node is None or node.op_type != "Slice" or len(node.input) < 5:
+                return Match(False, self.name, covered, ["Expected a five-input Focus Slice"])
+            values = []
+            for tensor_name in node.input[1:5]:
+                initializer = get_by_name(model.graph.initializer, tensor_name)
+                producer = model.find_producer(tensor_name)
+                if initializer is None and (producer is None or producer.op_type != "Constant"):
+                    return Match(False, self.name, covered, ["Focus Slice parameters must be constants"])
+                if initializer is not None:
+                    values.append(numpy_helper.to_array(initializer).reshape(-1).tolist())
+                else:
+                    value = get_by_name(producer.attribute, "value")
+                    if value is None:
+                        return Match(False, self.name, covered, ["Focus Constant has no value"])
+                    values.append(numpy_helper.to_array(value.t).reshape(-1).tolist())
+                    covered.add(producer.name)
+            starts, ends, axes, steps = values
+            if starts != [start] or len(ends) != 1 or ends[0] not in {2147483647, 9223372036854775807} or axes != [axis] or steps != [2]:
+                return Match(False, self.name, covered, [f"{node.name}: invalid Focus Slice"])
+
+        expected_consumers = {
+            input_quant.name: {h_even.name, h_odd.name},
+            h_even.name: {h_even_quant.name},
+            h_odd.name: {h_odd_quant.name},
+            h_even_quant.name: {ee.name, eo.name},
+            h_odd_quant.name: {oe.name, oo.name},
+            ee.name: {q_ee.name},
+            eo.name: {q_eo.name},
+            oe.name: {q_oe.name},
+            oo.name: {q_oo.name},
+            q_ee.name: {anchor_node.name},
+            q_oe.name: {anchor_node.name},
+            q_eo.name: {anchor_node.name},
+            q_oo.name: {anchor_node.name},
+            anchor_node.name: {output_quant.name},
+        }
+        nodes = [input_quant, h_even, h_odd, h_even_quant, h_odd_quant, ee, oe, eo, oo, *branch_quants, anchor_node]
+        for node in nodes:
+            consumers = {consumer.name for consumer in model.find_consumers(node.output[0])}
+            if consumers != expected_consumers[node.name]:
+                reasons.append(f"{node.name}: unexpected consumers {sorted(consumers)}")
+                return Match(False, self.name, covered, reasons)
+
+        covered.update(node.name for node in nodes)
+        covered.add(output_quant.name)
+        return Match(True, self.name, covered, [])
+
+
 class ConcatQuantAxis(Pattern):
     """
     Matches Concat where all inputs come from activation Quant/IntQuant
@@ -1660,7 +1763,7 @@ class YoloAttentionFromInputReshape(Pattern):
 
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
-    "Concat": [ConcatQuantAxis()],
+    "Concat": [FocusSliceQuantConcat(), ConcatQuantAxis()],
     "Flatten": [FlattenFCOnly()],
     "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "HardSigmoid": [HardSigmoidQuant()],

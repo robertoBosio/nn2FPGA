@@ -20,7 +20,6 @@ This video compares YOLOv10n inference running on CPU only (top) and with nn2FPG
 <video src="https://github.com/user-attachments/assets/dd230ebc-ec80-49e1-8382-fc4057970b1d" controls muted playsinline>
   YOLOv10n CPU-only (top) and CPU + FPGA (bottom) inference comparison.
 </video>
----
 
 ## Installation
 
