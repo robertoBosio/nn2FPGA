@@ -42,9 +42,12 @@ def quant_array(inp_tensor, scale, zeropt, bitwidth, signed, narrow, rounding_mo
         rounding_mode=rounding_mode,
     )
 
+    # int_quant has already rounded the integer code. Dividing its rescaled
+    # output by scale can leave a value infinitesimally below that integer;
+    # recover the code by rounding instead of truncating toward zero.
     quantized_tensor = quantized_tensor / scale
     quantized_tensor = quantized_tensor + zeropt
-    return quantized_tensor.astype(np.int32)
+    return np.rint(quantized_tensor).astype(np.int32)
 
 
 def quant_array_no_clipping(inp_tensor, scale, zeropt, bitwidth, signed, rounding_mode):

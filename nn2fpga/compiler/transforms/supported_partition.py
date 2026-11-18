@@ -123,9 +123,16 @@ def check_attribute(
 
     return True
 
-def check_params_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list) -> bool: 
-    """ Check params Quant node. Right now, it is only supported symmetric quantization, 
-    with full range of values (narrow=0).
+def check_params_quant(
+    model: ModelWrapper,
+    node: onnx.NodeProto,
+    reasons: list,
+    allow_asymmetric: bool = False,
+) -> bool:
+    """Check a parameter Quant node for partitioning.
+
+    Asymmetric quantization is accepted only for scalar weight parameters that
+    will be centered in the extracted FPGA partition.
     Args:
         model (ModelWrapper): The ONNX model to check, wrapped in QONNX ModelWrapper.
         node (onnx.NodeProto): The node to check for activation quantization.
@@ -146,11 +153,24 @@ def check_params_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list)
         return False
 
     # Get scale and zero_point initializers
+    scale_name = node.input[1]
     zeropt_name = node.input[2]
+    scale = numpy_helper.to_array(get_by_name(graph.initializer, scale_name))
     zeropt = numpy_helper.to_array(get_by_name(graph.initializer, zeropt_name))
 
-    # Check symmetric quantization
-    if not np.allclose(zeropt, 0):
+    # Asymmetric weights are normalized after FPGA partitioning. Other
+    # parameters, including biases, still need a zero point of zero.
+    if allow_asymmetric and (
+        np.asarray(scale).size != 1 or np.asarray(zeropt).size != 1
+    ):
+        reasons.append("Parameters Quant with unsupported per-channel quantization")
+        return False
+    if allow_asymmetric and not float(
+        np.asarray(zeropt).reshape(()).item()
+    ).is_integer():
+        reasons.append("Parameters Quant with unsupported floating zero point")
+        return False
+    if not allow_asymmetric and not np.allclose(zeropt, 0):
         reasons.append(f"Parameters Quant with unsupported asymmetric quantization")
         return False
 
@@ -418,7 +438,9 @@ class ConvQuantPattern(Pattern):
 
         # weight quant (params)
         w_q = model.find_producer(anchor_node.input[1])
-        if w_q is None or not check_params_quant(model, w_q, reasons):
+        if w_q is None or not check_params_quant(
+            model, w_q, reasons, allow_asymmetric=True
+        ):
             reasons.append("Conv weights must be produced by supported params Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 
@@ -487,7 +509,9 @@ class GemmQuantPattern(Pattern):
 
         # weight quant (params)
         w_q = model.find_producer(anchor_node.input[1])
-        if w_q is None or not check_params_quant(model, w_q, reasons):
+        if w_q is None or not check_params_quant(
+            model, w_q, reasons, allow_asymmetric=True
+        ):
             reasons.append("Gemm weights must be produced by supported params Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 

@@ -9,6 +9,7 @@ from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from nn2fpga.compiler.transforms.custom_infershape import CustomInferShapes
 from nn2fpga.compiler.transforms.embed_hls_code import EmbedHLSCode
 from nn2fpga.compiler.transforms.fold_asymmetric_act_quant import FoldAsymmetricActQuant
+from nn2fpga.compiler.transforms.normalize_asymmetric_weight_quant import NormalizeAsymmetricWeightQuant
 from nn2fpga.compiler.transforms.fold_quant import FoldQuant
 from nn2fpga.compiler.transforms.fold_reshape_into_initializer import (
     FoldReshapeIntoInitializer,

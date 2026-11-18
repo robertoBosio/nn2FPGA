@@ -92,6 +92,9 @@ def _apply_frontend_transforms(
     model = model.transform(transformation.PropagateQuant())
 
     nn2fpga_model = model.transform(transformation.SupportedPartition(prj_root))
+    nn2fpga_model = nn2fpga_model.transform(
+        transformation.NormalizeAsymmetricWeightQuant()
+    )
     nn2fpga_model = nn2fpga_model.transform(transformation.SplitConcat())
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
