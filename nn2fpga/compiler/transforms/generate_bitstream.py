@@ -544,6 +544,7 @@ class GenerateBitstream(Transformation):
         axilite_size = int(model.get_metadata_prop("axilite_size"))
         axilite_address = int(model.get_metadata_prop("axilite_address"))
         silvia_packing = str(model.get_metadata_prop("silvia_packing")).lower() == "true"
+        use_dma = str(model.get_metadata_prop("use_dma")).lower() == "true"
         design_id = model.get_metadata_prop("design_id")
         interface_width = read_board_info(board)["axi_bitwidth"]
         part_name = read_board_info(board)["part"]
@@ -605,9 +606,11 @@ class GenerateBitstream(Transformation):
             # Patch the Verilog files to optimize RAM usage
             process_verilog_files(hls_output_dir / "impl/verilog")
             process_verilog_files(hls_output_dir / "impl/ip/hdl/verilog")
-            buffer_names = list(ap.buffer_map.keys())
-            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/verilog", top_name, buffer_names)
-            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/ip/hdl/verilog", top_name, buffer_names)
+            if use_dma and ap.buffer_map:
+                # Gate the entry process on the configured buffers
+                buffer_names = list(ap.buffer_map.keys())
+                gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/verilog", top_name, buffer_names)
+                gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/ip/hdl/verilog", top_name, buffer_names)
 
         # Save the design ID in a constant register of the BD,
         # and reserve the axilite space.

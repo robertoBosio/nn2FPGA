@@ -174,6 +174,7 @@ def fake_compile(monkeypatch):
         "FoldAsymmetricActQuant",
         "InferLayouts",
         "AdjustStreamingCommunication",
+        "AllocateStreamingMemoryURAM",
         "InsertStreamingLineBuffer",
         "InferQuant",
         "ConvertToQCDQ",

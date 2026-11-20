@@ -69,6 +69,7 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
+    model.set_metadata_prop("use_dma", _metadata_bool(config_dict.get("use_dma", True)))
     model.set_metadata_prop(
         "silvia_packing", _metadata_bool(config_dict["silvia_packing"])
     )
@@ -86,12 +87,13 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
 
 
 def _apply_frontend_transforms(
-    model: ModelWrapper, prj_root: str, steps: dict, use_dma: bool = True
+    model: ModelWrapper, prj_root: str, steps: dict
 ) -> ModelWrapper:
     model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
 
     nn2fpga_model = model.transform(transformation.SupportedPartition(prj_root))
+    nn2fpga_model = nn2fpga_model.transform(transformation.FuseSPPMaxPool())
     nn2fpga_model = nn2fpga_model.transform(
         transformation.NormalizeAsymmetricWeightQuant()
     )
@@ -107,9 +109,7 @@ def _apply_frontend_transforms(
     nn2fpga_model = nn2fpga_model.transform(transformation.AdjustConvScale())
     nn2fpga_model = nn2fpga_model.transform(transformation.LowerToNN2FPGALayers())
     nn2fpga_model = nn2fpga_model.transform(transformation.InsertTensorDuplicator())
-    nn2fpga_model = nn2fpga_model.transform(
-        transformation.InsertAXIConverters(use_dma=use_dma)
-    )
+    nn2fpga_model = nn2fpga_model.transform(transformation.InsertAXIConverters())
     nn2fpga_model = nn2fpga_model.transform(transformation.PropagateQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.RemoveRedundantQuant())
     nn2fpga_model = nn2fpga_model.transform(transformation.CustomInferShapes())
@@ -165,14 +165,15 @@ def _generate_lightningsim_artifacts(
 
 
 def _finalize_nn2fpga_model(
-    model: ModelWrapper, prj_root: str, steps: dict, use_dma: bool = True
+    model: ModelWrapper, prj_root: str, steps: dict
 ) -> ModelWrapper:
     if steps.get("AddStreamingParams", True):
         model = model.transform(
             transformation.AddStreamingParams(
-                nn2fpga_root=prj_root, use_dma=use_dma
+                nn2fpga_root=prj_root
             )
         )
+    model = model.transform(transformation.AllocateStreamingMemoryURAM())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(transformation.InferLayouts())
@@ -288,7 +289,7 @@ def nn2fpga_compile(config_dict: dict):
     ) as logger:
         original_model, model = _load_and_prepare_model(compile_config)
         nn2fpga_model = _apply_frontend_transforms(
-            model, prj_root, steps, use_dma=compile_config.get("use_dma", True)
+            model, prj_root, steps
         )
         nn2fpga_model = _apply_backend_transforms(nn2fpga_model, prj_root)
 
@@ -303,7 +304,6 @@ def nn2fpga_compile(config_dict: dict):
             nn2fpga_model,
             prj_root,
             steps,
-            use_dma=compile_config.get("use_dma", True),
         )
         _save_intermediate(
             nn2fpga_model,

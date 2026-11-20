@@ -53,16 +53,13 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     function = cpp_function(model.get_metadata_prop("top_name"), "void")
     function.add_code("#pragma HLS TOP")
     function.add_code("#pragma HLS DATAFLOW disable_start_propagation")
-    has_direct_memory = (
-        any(port["mode"] == "m_axi" for port in ap.input_map.values())
-        or any(port["mode"] == "m_axi" for port in ap.output_map.values())
-        or bool(ap.buffer_map)
-    )
-    if has_direct_memory:
+
+    use_dma = str(model.get_metadata_prop("use_dma")).lower() == "true"
+    if not use_dma:
         function.add_code("#pragma HLS INTERFACE s_axilite port=return bundle=control")
     else:
         function.add_code("#pragma HLS INTERFACE ap_ctrl_none port=return")
-
+        
     axi_bitwidth = None
     if any(port["mode"] == "m_axi" for port in ap.input_map.values()) or any(
         port["mode"] == "m_axi" for port in ap.output_map.values()

@@ -17,17 +17,17 @@ class InsertAXIConverters(Transformation):
     This will convert the input/output tensor from/to AXI format.
     """
 
-    def __init__(self, use_dma: bool = True):
+    def __init__(self):
         super().__init__()
-        self.use_dma = use_dma
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
         board_res = read_board_info(
             board=model.get_metadata_prop("board_name"),
         )
-        interface_type = "s_axis" if self.use_dma else "m_axi"
-        port_mode = "axis" if self.use_dma else "m_axi"
+        use_dma = str(model.get_metadata_prop("use_dma")).lower() == "true"
+        interface_type = "s_axis" if use_dma else "m_axi"
+        port_mode = "axis" if use_dma else "m_axi"
         ap = AcceleratorPackage.from_json(
             model.get_metadata_prop("accelerator_package")
         )

@@ -88,23 +88,21 @@ class AddStreamingParams(Transformation):
     streaming the parameters to the node.
     """
 
-    def __init__(self, nn2fpga_root: str = "/tmp", use_dma: bool = True):
+    def __init__(self, nn2fpga_root: str = "/tmp"):
         """
         Initializes the AddStreamingParams transformation.
         Args:
             nn2fpga_root (str): The root directory of nn2FPGA.
-            use_dma (bool): Use AXIS/DMA instead of direct m_axi for the
-                parameter-upload boundary.
         """
         super().__init__()
         self.nn2fpga_root = nn2fpga_root
-        self.use_dma = use_dma
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
 
         board_res = read_board_info(
             board=model.get_metadata_prop("board_name"),
         )
+        use_dma = str(model.get_metadata_prop("use_dma")).lower() == "true"
         sequential_streaming = list()
         grouped_initializer = np.array([], dtype=np.uint32)
         params_quant = QuantizedTensorType(
@@ -152,7 +150,7 @@ class AddStreamingParams(Transformation):
         # The 'const_' string in the name is mandatory to recognize the initializer
         # as a special in the simulation flow.
         index = len(ap.input_map)
-        interface_type = "s_axis" if self.use_dma else "m_axi"
+        interface_type = "s_axis" if use_dma else "m_axi"
         ap.input_map["const_param_stream"] = {
             "new_name": "const_param_stream",
             "index": index,
@@ -160,7 +158,7 @@ class AddStreamingParams(Transformation):
             "quant": params_quant.get_canonical_name(),
             "layout": TensorLayout.identity(len(grouped_initializer.shape)).get_canonical_name(),
             "value": base64.b64encode(grouped_initializer.tobytes()).decode("ascii"),
-            "mode": "axis" if self.use_dma else "m_axi",
+            "mode": "axis" if use_dma else "m_axi",
         }
         param_stream_input = helper.make_tensor_value_info(
             "const_param_stream", TensorProto.INT32, grouped_initializer.shape
