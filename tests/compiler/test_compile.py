@@ -158,6 +158,8 @@ def fake_compile(monkeypatch):
         "SplitConcat",
         "RemoveNoopNodes",
         "PropagateQuant",
+        "FuseSPPMaxPool",
+        "NormalizeAsymmetricWeightQuant",
         "SlicesToSplitTree",
         "FullyConnectedToPointwise",
         "FoldReshapeIntoInitializer",

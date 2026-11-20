@@ -15,7 +15,7 @@ def test_add_streaming_params_uses_maxi_without_dma(monkeypatch):
         ["weights_stream"],
         domain="nn2fpga.compiler.custom_op",
         times=1,
-        data_per_word=1,
+        data_per_word=4,
         mem_shape=[1, 1],
     )
     graph = helper.make_graph(
@@ -27,6 +27,7 @@ def test_add_streaming_params_uses_maxi_without_dma(monkeypatch):
     )
     model = ModelWrapper(qonnx_make_model(graph))
     model.set_metadata_prop("board_name", "test")
+    model.set_metadata_prop("use_dma", "false")
     model.set_metadata_prop("accelerator_package", AcceleratorPackage().to_json())
     set_custom_tensor_datatype(
         model,
@@ -39,7 +40,7 @@ def test_add_streaming_params_uses_maxi_without_dma(monkeypatch):
         lambda **_: {"axi_bitwidth": 128},
     )
 
-    transformed_model = model.transform(AddStreamingParams(use_dma=False))
+    transformed_model = model.transform(AddStreamingParams())
     package = AcceleratorPackage.from_json(
         transformed_model.get_metadata_prop("accelerator_package")
     )

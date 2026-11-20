@@ -7,18 +7,6 @@ from nn2fpga.compiler.core.tensor_type import QuantizedTensorType
 from nn2fpga.compiler.utils.quantization import quant_array
 
 
-def _scalar_initializer(model: ModelWrapper, name: str, description: str):
-    value = model.get_initializer(name)
-    if value is None:
-        raise ValueError(f"{description} initializer '{name}' is missing.")
-    value = np.asarray(value)
-    if value.size != 1:
-        raise ValueError(
-            f"{description} must be per-tensor (one value); got shape {value.shape}."
-        )
-    return value.reshape(()).item()
-
-
 def _required_signed_bitwidth(i_min: int, i_max: int) -> int:
     for bitwidth in range(1, 33):
         if -(1 << (bitwidth - 1)) <= i_min and i_max <= (1 << (bitwidth - 1)) - 1:

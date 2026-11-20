@@ -31,6 +31,7 @@ def test_insert_axi_converters_resolves_internal_port_names(monkeypatch):
         output_map={"public_output": _port("internal_output")},
     )
     model.set_metadata_prop("board_name", "test")
+    model.set_metadata_prop("use_dma", "false")
     model.set_metadata_prop("accelerator_package", package.to_json())
     monkeypatch.setattr(
         insert_axi_converters,
@@ -38,7 +39,7 @@ def test_insert_axi_converters_resolves_internal_port_names(monkeypatch):
         lambda **_: {"axi_bitwidth": 128},
     )
 
-    transformed_model = model.transform(InsertAXIConverters(use_dma=False))
+    transformed_model = model.transform(InsertAXIConverters())
     transformed_package = AcceleratorPackage.from_json(
         transformed_model.get_metadata_prop("accelerator_package")
     )

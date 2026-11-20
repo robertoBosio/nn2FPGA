@@ -159,5 +159,5 @@ def test_rejects_per_channel_weight_quantization():
     model = _build_model(zeropt=1, raw_weights=[-1.0, 254.0])
     model.set_initializer("weight_scale", np.array([1.0, 1.0], dtype=np.float32))
 
-    with pytest.raises(ValueError, match="per-tensor"):
+    with pytest.raises(ValueError, match="scalar or single-element array"):
         NormalizeAsymmetricWeightQuant().apply(model)

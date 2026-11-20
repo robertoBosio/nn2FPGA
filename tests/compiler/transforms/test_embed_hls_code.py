@@ -35,8 +35,10 @@ def _port(name, mode):
 
 
 def test_generate_hls_code_uses_ap_ctrl_none_for_axis_ports():
+    model = _model_with_ports()
+    model.set_metadata_prop("use_dma", "true")
     code = generate_hls_code(
-        _model_with_ports(),
+        model,
         AcceleratorPackage(
             input_map={"input": _port("global_in", "axis")},
             output_map={"output": _port("global_out", "axis")},
@@ -53,8 +55,10 @@ def test_generate_hls_code_uses_axilite_for_maxi_ports(monkeypatch):
         "read_board_info",
         lambda _: {"axi_bitwidth": 128},
     )
+    model = _model_with_ports()
+    model.set_metadata_prop("use_dma", "false")
     code = generate_hls_code(
-        _model_with_ports(),
+        model,
         AcceleratorPackage(
             input_map={
                 "input": {
@@ -76,9 +80,9 @@ def test_generate_hls_code_uses_axilite_for_maxi_ports(monkeypatch):
     assert "#pragma HLS INTERFACE ap_ctrl_none port=return" not in code
     assert "#pragma HLS INTERFACE s_axilite port=return bundle=control" in code
     assert "#pragma HLS INTERFACE m_axi port=global_in bundle=global_in_bundle depth=2" in code
-    assert "#pragma HLS INTERFACE s_axilite port=global_in bundle=control" in code
+    assert "#pragma HLS INTERFACE s_axilite port=global_in bundle=control" not in code
     assert "#pragma HLS INTERFACE m_axi port=global_out bundle=global_out_bundle depth=2" in code
-    assert "#pragma HLS INTERFACE s_axilite port=global_out bundle=control" in code
+    assert "#pragma HLS INTERFACE s_axilite port=global_out bundle=control" not in code
 
     driver_code = generate_hls_driver(
         "test_top",
