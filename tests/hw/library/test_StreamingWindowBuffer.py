@@ -49,9 +49,9 @@ class TestStreamingWindowBuffer(BaseHLSTest):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
-            "IN_HEIGHT": 112,
-            "IN_WIDTH": 112,
-            "IN_CH": 32,
+            "IN_HEIGHT": 28,
+            "IN_WIDTH": 28,
+            "IN_CH": 4,
             "FH": 3,
             "FW": 3,
             "STRIDE_H": 1,

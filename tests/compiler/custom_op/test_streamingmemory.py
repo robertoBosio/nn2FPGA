@@ -17,6 +17,8 @@ def _get_streaming_memory(storage_impl: str, data_to_shift: int):
         name="streaming_memory",
         storage_impl=storage_impl,
         data_to_shift=data_to_shift,
+        data_per_word=1,
+        times=1,
     )
     graph = helper.make_graph(
         [node],
