@@ -241,8 +241,11 @@ implied by early streaming support.
 Each milestone adds the smallest appropriate test layer:
 
 - Python configuration and generated-source tests without licensed tools.
-- Catapult C simulation tests for each newly ported operator.
+- Native C++/`ac_channel` simulation tests for each newly ported operator.
 - Catapult synthesis smoke tests when the toolchain is available.
+- SCVerify RTL co-simulation for each newly ported operator. This is run with
+  `--hls-steps cosim`; choose the installed RTL simulator with
+  `SCVERIFY_SIMULATOR` (`ncsim`, `msim`, or `vcs`).
 - RTL simulation of the generated AXIS wrapper, including backpressure and
   partial final words.
 - Vivado DMA integration tests after M4.

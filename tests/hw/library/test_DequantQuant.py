@@ -1,7 +1,9 @@
 import numpy as np
 import onnxruntime as ort
 import csnake
+import pytest
 from onnx import TensorProto, helper
+from .base_catapult_test import BaseCatapultTest
 from .base_vitis_test import BaseVitisTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
@@ -22,10 +24,10 @@ class TestDequantQuant(BaseVitisTest):
         acc_bits = int(config_dict["ACC_DATAWIDTH"])
         out_bits = int(config_dict["OUT_DATAWIDTH"])
 
-        onnx_in_type = self.get_tensorproto_dtype(acc_bits, acc_unsigned)
-        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
-        np_in_type = self.get_numpy_dtype(acc_bits, acc_unsigned)
-        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+        onnx_in_type = BaseVitisTest.get_tensorproto_dtype(acc_bits, acc_unsigned)
+        onnx_out_type = BaseVitisTest.get_tensorproto_dtype(out_bits, out_unsigned)
+        np_in_type = BaseVitisTest.get_numpy_dtype(acc_bits, acc_unsigned)
+        np_out_type = BaseVitisTest.get_numpy_dtype(out_bits, out_unsigned)
 
         input_tensor = np.array([int(config_dict["INPUT"])], dtype=np_in_type)
 
@@ -78,7 +80,8 @@ class TestDequantQuant(BaseVitisTest):
         cwr.include("<cstdint>")
         cwr.include("<array>")
         cwr.include("<iostream>")
-        cwr.include("<ap_int.h>")
+        catapult = isinstance(self, BaseCatapultTest)
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
 
@@ -91,11 +94,14 @@ class TestDequantQuant(BaseVitisTest):
                 else:
                     cwr.add_line(f"const int {key} = {int(value)};")
 
-        typedef_suffix = "u" if acc_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{acc_bits}> TAcc;")
-
-        typedef_suffix = "u" if out_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOut;")
+        if catapult:
+            cwr.add_line(f"using TAcc = ac_int<{acc_bits}, {'false' if acc_unsigned else 'true'}>;")
+            cwr.add_line(f"using TOut = ac_int<{out_bits}, {'false' if out_unsigned else 'true'}>;")
+        else:
+            typedef_suffix = "u" if acc_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{acc_bits}> TAcc;")
+            typedef_suffix = "u" if out_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOut;")
 
         emit_linear_quantizer_typedef(
             cwr,
@@ -433,3 +439,43 @@ class TestDequantQuant(BaseVitisTest):
             config_dict,
             hls_steps,
         )
+
+
+class TestCatapultDequantQuant(BaseCatapultTest):
+    generate_config_file = TestDequantQuant.generate_config_file
+
+    @property
+    def unit_filename(self) -> str:
+        return "DequantQuant"
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            TestDequantQuant.test_basic_shift,
+            TestDequantQuant.test_zero_shift,
+            TestDequantQuant.test_negative_shift,
+            TestDequantQuant.test_rounddown_to_even,
+            TestDequantQuant.test_roundup_to_even,
+            TestDequantQuant.test_rounddown_to_even_negative,
+            TestDequantQuant.test_roundup_to_even_negative,
+            TestDequantQuant.test_clamp_positive,
+            TestDequantQuant.test_clamp_negative,
+            TestDequantQuant.test_clamp_unsigned_positive_input,
+            TestDequantQuant.test_clamp_unsigned_negative_input,
+            TestDequantQuant.test_clip_signed_negative_shift,
+            TestDequantQuant.test_clip_signed_negative_shift_min_limit_bug_extreme,
+            TestDequantQuant.test_clip_signed_negative_shift_min_limit_bug_near_boundary,
+            TestDequantQuant.test_unsigned_to_signed_no_shift,
+            TestDequantQuant.test_mixed_1,
+            TestDequantQuant.test_mixed_2,
+            TestDequantQuant.test_simple_float_ratio,
+            TestDequantQuant.test_nontrivial_float_ratio,
+            TestDequantQuant.test_po2_asymmetric,
+        ],
+    )
+    def test_quantizer(self, case, hls_steps, tmp_path):
+        self._workdir = tmp_path
+        case(self, hls_steps)
+
+    def run(self, config_dict, hls_steps):
+        super().run(config_dict, hls_steps, str(self._workdir))

@@ -1,6 +1,7 @@
 #ifdef NN2FPGA_CATAPULT
 #include "catapult/StreamingReLU.hpp"
 #include <ac_channel.h>
+#include <mc_scverify.h>
 
 template <typename T>
 using TestStream = ac_channel<T>;
@@ -68,8 +69,12 @@ bool test_run() {
     }
   }
 
-  // Run the operator
+  // SCVerify substitutes the extracted RTL model when CCS_SCVERIFY is set.
+#ifdef NN2FPGA_CATAPULT
+  CCS_DESIGN(wrap_run)(in_stream, out_stream);
+#else
   wrap_run(in_stream, out_stream);
+#endif
 
   // Check output
   bool flag = true;
@@ -169,7 +174,11 @@ bool test_step() {
 }
 #endif
 
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
 
   bool all_passed = true;
 
@@ -189,5 +198,9 @@ int main(int argc, char **argv) {
     std::cout << "Passed." << std::endl;
   }
 
+#ifdef NN2FPGA_CATAPULT
+  CCS_RETURN(all_passed ? 0 : 1);
+#else
   return all_passed ? 0 : 1;
+#endif
 }

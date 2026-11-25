@@ -15,14 +15,23 @@ class BaseCatapultTest(ABC):
     def unit_filename(self) -> str:
         ...
 
-    def generate_hls_script(self, workdir: str) -> str:
+    def generate_hls_script(
+        self, workdir: str, verify: bool = False, simulator: str = "ncsim"
+    ) -> str:
         include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
         testbench = (
             f"/workspace/nn2FPGA/nn2fpga/hw/library/testbench/"
             f"Unit{self.unit_filename}.cpp"
         )
+        scverify_options = (
+            [f"flow package option set /SCVerify/USE_{simulator.upper()} true"]
+            if verify
+            else []
+        )
         lines = [
             "project new",
+            "flow package require /SCVerify",
+            *scverify_options,
             "solution options set Input/CppStandard c++11",
             (
                 "solution options set Input/CompilerFlags "
@@ -40,21 +49,32 @@ class BaseCatapultTest(ABC):
             "directive set /wrap_run/core/main -PIPELINE_INIT_INTERVAL 1",
             "directive set /wrap_run/core/main -PIPELINE_STALL_MODE bubble",
             "go extract",
-            "quit",
         ]
+        if verify:
+            lines.append(
+                "flow run /SCVerify/launch_make "
+                f"./scverify/Verify_rtl_v_{simulator}.mk {{}} SIMTOOL={simulator}"
+            )
+        lines.append("quit")
         return "\n".join(lines)
 
     def run(self, config_dict: dict, hls_steps: str, workdir: str):
         os.makedirs(workdir, exist_ok=True)
+        steps = {step.strip() for step in hls_steps.split(",")}
+        simulator = os.environ.get("SCVERIFY_SIMULATOR", "ncsim")
+        if "cosim" in steps and simulator not in {"msim", "ncsim", "vcs"}:
+            raise ValueError("SCVERIFY_SIMULATOR must be one of: msim, ncsim, vcs")
         config_path = os.path.join(workdir, "test_config.hpp")
         tcl_path = os.path.join(workdir, "script.tcl")
 
         with open(config_path, "w") as f:
             f.write(self.generate_config_file(config_dict))
         with open(tcl_path, "w") as f:
-            f.write(self.generate_hls_script(workdir))
-
-        steps = {step.strip() for step in hls_steps.split(",")}
+            f.write(
+                self.generate_hls_script(
+                    workdir, verify="cosim" in steps, simulator=simulator
+                )
+            )
         include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
         testbench = (
             f"/workspace/nn2FPGA/nn2fpga/hw/library/testbench/"
@@ -89,7 +109,7 @@ class BaseCatapultTest(ABC):
             assert result.returncode == 0, f"C simulation failed: {result.stderr}"
             assert "Passed." in result.stdout, f"Test did not pass: {result.stdout}"
 
-        if "csynth" in steps:
+        if "csynth" in steps or "cosim" in steps:
             catapult_home = os.environ.get("CATAPULT_HOME", os.environ.get("MGC_HOME"))
             if not catapult_home:
                 raise EnvironmentError("CATAPULT_HOME or MGC_HOME must be set for Catapult tests.")
@@ -104,3 +124,12 @@ class BaseCatapultTest(ABC):
             assert "Completed transformation 'extract'" in result.stdout, (
                 f"RTL extraction did not complete: {result.stdout}"
             )
+            if "cosim" in steps:
+                makefile = os.path.join(
+                    workdir,
+                    "Catapult",
+                    "wrap_run.v1",
+                    "scverify",
+                    f"Verify_rtl_v_{simulator}.mk",
+                )
+                assert os.path.isfile(makefile), f"SCVerify makefile was not generated: {makefile}"

@@ -1789,7 +1789,7 @@ PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
     "AveragePool": [AveragePoolQuantPattern()],
     "Concat": [FocusSliceQuantConcat(), ConcatQuantAxis()],
-    "Conv": [ConvQuantPattern(debug_allowlist={f"Conv_{i}" for i in range(29, 36)})],
+    "Conv": [ConvQuantPattern()],
     "Flatten": [FlattenFCOnly()],
     "Gemm": [GemmQuantPattern()],
     "GlobalMaxPool": [GlobalMaxPoolQuantPattern()],
