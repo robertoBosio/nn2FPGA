@@ -5,6 +5,7 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
 
@@ -73,17 +74,10 @@ def _emit_input_aligner_typedef(cwr, alias, in_type, acc_type, in_scale, acc_sca
             f"typedef DequantAlignFloat<{alias}_NUM, {alias}_DEN, {int(zero_point)}, {in_type}, {acc_type}> {alias};"
         )
 
-class TestStreamingAdd(BaseVitisTest):
-
-    @property
-    def operator_filename(self) -> str:
-        return "StreamingAdd"
-
-    @property
-    def unit_filename(self) -> str:
-        return "StreamingAdd"
+class StreamingAddTestData:
 
     def generate_config_file(self, config_dict):
+        catapult = self.backend == "catapult"
         ina_unsigned = bool(config_dict.get("INPUTA_IS_UNSIGNED", False))
         inb_unsigned = bool(config_dict.get("INPUTB_IS_UNSIGNED", False))
         out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
@@ -92,12 +86,12 @@ class TestStreamingAdd(BaseVitisTest):
         inb_bits = int(config_dict["INPUTB_DATAWIDTH"])
         out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
 
-        onnx_ina_type = self.get_tensorproto_dtype(ina_bits, ina_unsigned)
-        onnx_inb_type = self.get_tensorproto_dtype(inb_bits, inb_unsigned)
-        onnx_out_type = self.get_tensorproto_dtype(out_bits, out_unsigned)
-        np_ina_type = self.get_numpy_dtype(ina_bits, ina_unsigned)
-        np_inb_type = self.get_numpy_dtype(inb_bits, inb_unsigned)
-        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+        onnx_ina_type = BaseVitisTest.get_tensorproto_dtype(ina_bits, ina_unsigned)
+        onnx_inb_type = BaseVitisTest.get_tensorproto_dtype(inb_bits, inb_unsigned)
+        onnx_out_type = BaseVitisTest.get_tensorproto_dtype(out_bits, out_unsigned)
+        np_ina_type = BaseVitisTest.get_numpy_dtype(ina_bits, ina_unsigned)
+        np_inb_type = BaseVitisTest.get_numpy_dtype(inb_bits, inb_unsigned)
+        np_out_type = BaseVitisTest.get_numpy_dtype(out_bits, out_unsigned)
 
         acc_scale = float(config_dict.get("ACC_SCALE", min(config_dict["A_SCALE"], config_dict["B_SCALE"])))
 
@@ -245,7 +239,7 @@ class TestStreamingAdd(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -257,13 +251,19 @@ class TestStreamingAdd(BaseVitisTest):
                     cwr.add_line(f"const bool {key} = {value_str};")
                 else:
                     cwr.add_line(f"const int {key} = {value};")
-        typedef_suffix = "u" if ina_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{ina_bits}> TInputA;")
-        typedef_suffix = "u" if inb_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{inb_bits}> TInputB;")
-        cwr.add_line(f"typedef ap_int<{tacc_bits}> TAcc;")
-        typedef_suffix = "u" if out_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
+        if catapult:
+            cwr.add_line(f"using TInputA = ac_int<{ina_bits}, {'false' if ina_unsigned else 'true'}>;")
+            cwr.add_line(f"using TInputB = ac_int<{inb_bits}, {'false' if inb_unsigned else 'true'}>;")
+            cwr.add_line(f"using TAcc = ac_int<{tacc_bits}, true>;")
+            cwr.add_line(f"using TOutput = ac_int<{out_bits}, {'false' if out_unsigned else 'true'}>;")
+        else:
+            typedef_suffix = "u" if ina_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{ina_bits}> TInputA;")
+            typedef_suffix = "u" if inb_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{inb_bits}> TInputB;")
+            cwr.add_line(f"typedef ap_int<{tacc_bits}> TAcc;")
+            typedef_suffix = "u" if out_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
 
         _emit_input_aligner_typedef(
             cwr,
@@ -486,3 +486,29 @@ class TestStreamingAdd(BaseVitisTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps, clean = False)
+
+
+class TestStreamingAdd(StreamingAddTestData, BaseVitisTest):
+    backend = "vitis"
+
+    @property
+    def operator_filename(self) -> str:
+        return "StreamingAdd"
+
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingAdd"
+
+
+class TestCatapultStreamingAdd(StreamingAddTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self):
+        return "StreamingAdd"
+
+    def generate_hls_script(self, workdir, verify=False, simulator="ncsim"):
+        script = super().generate_hls_script(workdir, verify, simulator)
+        # The two input channels add a loop-controller feedback path. Reserve
+        # the full requested period for it while retaining the 3.33 ns clock.
+        return script.replace("go extract", "directive set -CLOCK_OVERHEAD 0\ngo extract")

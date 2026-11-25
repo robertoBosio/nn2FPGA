@@ -1,4 +1,5 @@
 #ifdef NN2FPGA_CATAPULT
+#include "catapult/DequantQuant.hpp"
 #include "catapult/StreamingReLU.hpp"
 #include <ac_channel.h>
 #include <mc_scverify.h>

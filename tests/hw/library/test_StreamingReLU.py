@@ -70,17 +70,6 @@ class StreamingReLUTestData:
             "PIPELINE_DEPTH": 5,
         }
 
-
-class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
-
-    @property
-    def operator_filename(self):
-        return "StreamingReLU"
-
-    @property
-    def unit_filename(self):
-        return "StreamingReLU"
-
     def generate_config_file(self, config_dict):
         in_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
         out_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
@@ -88,13 +77,14 @@ class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
         in_bits = int(config_dict["INPUT_DATAWIDTH"])
         out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
 
-        np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+        np_out_type = BaseVitisTest.get_numpy_dtype(out_bits, out_unsigned)
         input_tensor, y = generate_relu_test_data(config_dict)
+        catapult = self.backend == "catapult"
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -102,10 +92,14 @@ class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        typedef_suffix = "u" if in_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
-        typedef_suffix = "u" if out_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+        if catapult:
+            cwr.add_line(f"using TInput = ac_int<{in_bits}, {'false' if in_unsigned else 'true'}>;")
+            cwr.add_line(f"using TOutput = ac_int<{out_bits}, {'false' if out_unsigned else 'true'}>;")
+        else:
+            typedef_suffix = "u" if in_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{in_bits}> TInput;")
+            typedef_suffix = "u" if out_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
         cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
         cwr.add_lines(
             csnake.Variable(
@@ -130,36 +124,21 @@ class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
         self.run(self.simple_po2_config(), hls_steps)
 
 
-class TestCatapultStreamingReLU(StreamingReLUTestData, BaseCatapultTest):
+class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
+    backend = "vitis"
+
+    @property
+    def operator_filename(self):
+        return "StreamingReLU"
+
     @property
     def unit_filename(self):
         return "StreamingReLU"
 
-    def generate_config_file(self, config_dict):
-        input_tensor, output_tensor = generate_relu_test_data(config_dict)
-        cwr = csnake.CodeWriter()
-        cwr.include("<array>")
-        cwr.include("<ac_int.h>")
-        cwr.add_line("namespace test_config {")
-        cwr.indent()
-        for key, value in config_dict.items():
-            if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
-                cwr.add_line(f"const float {key} = {value}f;")
-            else:
-                cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"using TInput = ac_int<{config_dict['INPUT_DATAWIDTH']}, true>;")
-        cwr.add_line(f"using TOutput = ac_int<{config_dict['OUTPUT_DATAWIDTH']}, true>;")
-        cwr.add_line("struct Quantizer {")
-        cwr.indent()
-        cwr.add_line("TOutput operator()(TInput value) const { return value; }")
-        cwr.dedent()
-        cwr.add_line("};")
-        cwr.add_lines(csnake.Variable("input_tensor", primitive="TInput", value=input_tensor).generate_initialization())
-        cwr.add_lines(csnake.Variable("output_tensor", primitive="TOutput", value=output_tensor).generate_initialization())
-        cwr.dedent()
-        cwr.add_line("}")
-        return cwr.code
 
-    def test_simple_po2(self, hls_steps, tmp_path):
-        np.random.seed(42)
-        self.run(self.simple_po2_config(), hls_steps, str(tmp_path))
+class TestCatapultStreamingReLU(StreamingReLUTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self):
+        return "StreamingReLU"

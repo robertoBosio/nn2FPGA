@@ -1,13 +1,12 @@
 import numpy as np
 import onnxruntime as ort
 import csnake
-import pytest
 from onnx import TensorProto, helper
-from .base_catapult_test import BaseCatapultTest
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
-class TestDequantQuant(BaseVitisTest):
+class DequantQuantTestData:
 
     @property
     def operator_filename(self) -> str:
@@ -80,7 +79,7 @@ class TestDequantQuant(BaseVitisTest):
         cwr.include("<cstdint>")
         cwr.include("<array>")
         cwr.include("<iostream>")
-        catapult = isinstance(self, BaseCatapultTest)
+        catapult = self.backend == "catapult"
         cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
@@ -441,41 +440,21 @@ class TestDequantQuant(BaseVitisTest):
         )
 
 
-class TestCatapultDequantQuant(BaseCatapultTest):
-    generate_config_file = TestDequantQuant.generate_config_file
+class TestDequantQuant(DequantQuantTestData, BaseVitisTest):
+    backend = "vitis"
+
+    @property
+    def operator_filename(self) -> str:
+        return "DequantQuant"
 
     @property
     def unit_filename(self) -> str:
         return "DequantQuant"
 
-    @pytest.mark.parametrize(
-        "case",
-        [
-            TestDequantQuant.test_basic_shift,
-            TestDequantQuant.test_zero_shift,
-            TestDequantQuant.test_negative_shift,
-            TestDequantQuant.test_rounddown_to_even,
-            TestDequantQuant.test_roundup_to_even,
-            TestDequantQuant.test_rounddown_to_even_negative,
-            TestDequantQuant.test_roundup_to_even_negative,
-            TestDequantQuant.test_clamp_positive,
-            TestDequantQuant.test_clamp_negative,
-            TestDequantQuant.test_clamp_unsigned_positive_input,
-            TestDequantQuant.test_clamp_unsigned_negative_input,
-            TestDequantQuant.test_clip_signed_negative_shift,
-            TestDequantQuant.test_clip_signed_negative_shift_min_limit_bug_extreme,
-            TestDequantQuant.test_clip_signed_negative_shift_min_limit_bug_near_boundary,
-            TestDequantQuant.test_unsigned_to_signed_no_shift,
-            TestDequantQuant.test_mixed_1,
-            TestDequantQuant.test_mixed_2,
-            TestDequantQuant.test_simple_float_ratio,
-            TestDequantQuant.test_nontrivial_float_ratio,
-            TestDequantQuant.test_po2_asymmetric,
-        ],
-    )
-    def test_quantizer(self, case, hls_steps, tmp_path):
-        self._workdir = tmp_path
-        case(self, hls_steps)
 
-    def run(self, config_dict, hls_steps):
-        super().run(config_dict, hls_steps, str(self._workdir))
+class TestCatapultDequantQuant(DequantQuantTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self) -> str:
+        return "DequantQuant"

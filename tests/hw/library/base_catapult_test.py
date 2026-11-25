@@ -2,6 +2,8 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 
+import pytest
+
 
 class BaseCatapultTest(ABC):
     """Shared helpers for Catapult HLS library tests."""
@@ -58,7 +60,18 @@ class BaseCatapultTest(ABC):
         lines.append("quit")
         return "\n".join(lines)
 
-    def run(self, config_dict: dict, hls_steps: str, workdir: str):
+    @pytest.fixture(autouse=True)
+    def workdir(self, tmp_path):
+        self._workdir = str(tmp_path)
+
+    def run(
+        self,
+        config_dict: dict,
+        hls_steps: str,
+        workdir: str | None = None,
+        clean: bool = True,
+    ):
+        workdir = workdir or self._workdir
         os.makedirs(workdir, exist_ok=True)
         steps = {step.strip() for step in hls_steps.split(",")}
         simulator = os.environ.get("SCVERIFY_SIMULATOR", "ncsim")

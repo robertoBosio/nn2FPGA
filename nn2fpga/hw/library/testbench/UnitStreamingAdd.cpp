@@ -1,22 +1,41 @@
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/DequantQuant.hpp"
+#include "catapult/StreamingAdd.hpp"
+#include <ac_channel.h>
+#include <mc_scverify.h>
+
+template <typename T>
+using TestStream = ac_channel<T>;
+#else
 #include "vitis/DequantQuant.hpp"
 #include "vitis/StreamingAdd.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
-#include "test_config.hpp"
 #include "vitis/utils/CSDFG_utils.hpp"
+
+template <typename T>
+using TestStream = hls::stream<T>;
+#endif
+
+#include "test_config.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
+#ifndef NN2FPGA_CATAPULT
 #include <unordered_map>
+#endif
 
 using TInputWordA = std::array<test_config::TInputA, test_config::DIM2_UNROLL>;
 using TInputWordB = std::array<test_config::TInputB, test_config::DIM2_UNROLL>;
 using TOutputWord = std::array<test_config::TOutput, test_config::DIM2_UNROLL>;
 
-void wrap_run(hls::stream<TInputWordA> i_data0[test_config::DIM1_UNROLL],
-              hls::stream<TInputWordB> i_data1[test_config::DIM1_UNROLL],
-              hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
+void wrap_run(TestStream<TInputWordA> i_data0[test_config::DIM1_UNROLL],
+              TestStream<TInputWordB> i_data1[test_config::DIM1_UNROLL],
+              TestStream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
   StreamingAdd<TInputWordA, test_config::TInputA, TInputWordB,
                test_config::TInputB, TOutputWord, test_config::TOutput,
                test_config::TAcc, test_config::OutputTransform,
@@ -28,9 +47,9 @@ void wrap_run(hls::stream<TInputWordA> i_data0[test_config::DIM1_UNROLL],
 }
 
 bool test_run() {
-  hls::stream<TInputWordA> i_data0[test_config::DIM1_UNROLL];
-  hls::stream<TInputWordB> i_data1[test_config::DIM1_UNROLL];
-  hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL];
+  TestStream<TInputWordA> i_data0[test_config::DIM1_UNROLL];
+  TestStream<TInputWordB> i_data1[test_config::DIM1_UNROLL];
+  TestStream<TOutputWord> o_data[test_config::DIM1_UNROLL];
   const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Streaming input tensors.
@@ -59,7 +78,11 @@ bool test_run() {
     }
   }
   // Run the operator
+#ifdef NN2FPGA_CATAPULT
+  CCS_DESIGN(wrap_run)(i_data0, i_data1, o_data);
+#else
   wrap_run(i_data0, i_data1, o_data);
+#endif
 
   // Check output
   bool flag = true;
@@ -109,6 +132,7 @@ bool test_run() {
   return flag;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_step() {
 
   static constexpr size_t expectedII =
@@ -171,18 +195,25 @@ bool test_step() {
             << std::endl;
   return flag;
 }
+#endif
 
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
 
   bool all_passed = true;
 
   all_passed &= test_run();
 
+#ifndef NN2FPGA_CATAPULT
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
-  // estimations
+  // estimations.
   if (argc > 1 && std::string(argv[1]) == "csim") {
     all_passed &= test_step();
   }
+#endif
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;
@@ -190,5 +221,9 @@ int main(int argc, char **argv) {
     std::cout << "Passed." << std::endl;
   }
 
+#ifdef NN2FPGA_CATAPULT
+  CCS_RETURN(all_passed ? 0 : 1);
+#else
   return all_passed ? 0 : 1;
+#endif
 }
