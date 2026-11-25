@@ -33,7 +33,14 @@ class LowerToNN2FPGALayers(Transformation):
         model = ModelWrapper(model)
 
         for node in model.graph.node:
-            op = getCustomOp(node)
+            try:
+                op = getCustomOp(node)
+            except Exception as exc:
+                raise ValueError(
+                    "Expected all nodes to be lowered to custom ops after lowering to nn2FPGA layers, "
+                    f"but found node '{node.name}' with op_type '{node.op_type}' in domain '{node.domain}'."
+                ) from exc
+
             if not isinstance(op, CustomOp):
                 raise ValueError(
                     f"Expected all nodes to be CustomOps after lowering to nn2FPGA layers, but found a non-CustomOp: {node.op_type}"

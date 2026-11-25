@@ -1,3 +1,4 @@
+from fractions import Fraction
 import numpy as np
 from dataclasses import dataclass
 from onnx import helper
@@ -20,6 +21,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
 class StreamingMaxPool(NN2FPGAOp, DSECapable):
     """ Node implementing the output-stationary MaxPool operation. """
@@ -139,23 +141,57 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
+
+    def __ratio_to_fraction(self, ratio: float) -> tuple[int, int]:
+        frac = Fraction(float(ratio)).limit_denominator(1 << 20)
+        return int(frac.numerator), int(frac.denominator)
     
     def __get_quantizer(self, input_type, output_type) -> str:
-        """ Returns the quantizer type for the StreamingConv operation. """
+        """Returns the requantizer type for the StreamingMaxPool operation."""
 
-        if (
-            self.__is_power_of_two(input_type.scale)
-            and self.__is_power_of_two(output_type.scale)
-        ):
-            shift = -1 * (
-                int(np.log2(input_type.scale))
-                - int(np.log2(output_type.scale))
+        ratio = float(input_type.scale) / float(output_type.scale)
+        input_hls_type = input_type.get_hls_data_type()
+        output_hls_type = output_type.get_hls_data_type()
+        input_zeropt = int(input_type.zeropt)
+        output_zeropt = int(output_type.zeropt)
+
+        if np.isclose(ratio, 1.0, atol=1e-12):
+            if input_hls_type == output_hls_type and input_zeropt == output_zeropt:
+                return f"DequantQuantEqual<{output_hls_type}>"
+            return (
+                f"RequantizeEqual<{input_zeropt}, {output_zeropt}, "
+                f"{input_hls_type}, {output_hls_type}>"
             )
-            return f"DequantQuantPo2<{shift}, {input_type.get_hls_data_type()}, {output_type.get_hls_data_type()}>"
-        else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingConv.  "
+
+        if self.__is_power_of_two(ratio):
+            shift = -1 * int(np.log2(ratio))
+            if input_zeropt == 0:
+                return (
+                    f"DequantQuantPo2<{shift}, {input_hls_type}, {output_hls_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"RequantizePo2<{shift}, {input_zeropt}, {output_zeropt}, "
+                f"{input_hls_type}, {output_hls_type}>"
             )
+
+        num, den = self.__ratio_to_fraction(ratio)
+        if input_zeropt == 0:
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return (
+                    f"DequantQuantFloatShift<{n}, {s}, {input_hls_type}, {output_hls_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"DequantQuantFloat<{num}, {den}, {input_hls_type}, {output_hls_type}, "
+                f"{output_zeropt}>"
+            )
+        return (
+            f"RequantizeFloat<{num}, {den}, {input_zeropt}, {output_zeropt}, "
+            f"{input_hls_type}, {output_hls_type}>"
+        )
 
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingMaxPool operation. """

@@ -69,6 +69,7 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
+    model.set_metadata_prop("use_dma", _metadata_bool(config_dict.get("use_dma", True)))
     model.set_metadata_prop(
         "silvia_packing", _metadata_bool(config_dict["silvia_packing"])
     )
@@ -88,11 +89,15 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
 def _apply_frontend_transforms(
     model: ModelWrapper, prj_root: str, steps: dict
 ) -> ModelWrapper:
-    model = model.transform(transformation.SplitConcat())
     model = model.transform(transformation.RemoveNoopNodes())
     model = model.transform(transformation.PropagateQuant())
 
     nn2fpga_model = model.transform(transformation.SupportedPartition(prj_root))
+    nn2fpga_model = nn2fpga_model.transform(transformation.FuseSPPMaxPool())
+    nn2fpga_model = nn2fpga_model.transform(
+        transformation.NormalizeAsymmetricWeightQuant()
+    )
+    nn2fpga_model = nn2fpga_model.transform(transformation.SplitConcat())
     nn2fpga_model = nn2fpga_model.transform(transformation.SlicesToSplitTree())
     nn2fpga_model = nn2fpga_model.transform(transformation.FullyConnectedToPointwise())
     nn2fpga_model = nn2fpga_model.transform(transformation.FoldReshapeIntoInitializer())
@@ -115,10 +120,11 @@ def _apply_frontend_transforms(
 def _apply_backend_transforms(model: ModelWrapper, prj_root: str) -> ModelWrapper:
     model = model.transform(transformation.FuseElementwiseOps())
     model = model.transform(transformation.FoldQuant())
-    model = model.transform(transformation.FoldAsymmetricActQuant())
+    model = model.transform(transformation.FoldAsymmetricActQuant())    
     model = model.transform(transformation.InferLayouts())
     model = model.transform(transformation.BalanceComputation(nn2fpga_root=prj_root))
     model = model.transform(transformation.AdjustStreamingCommunication())
+    model = model.transform(transformation.InferQuant())
     model = model.transform(transformation.InsertStreamingLineBuffer())
     model = model.transform(transformation.InferQuant())
     return model
@@ -163,8 +169,11 @@ def _finalize_nn2fpga_model(
 ) -> ModelWrapper:
     if steps.get("AddStreamingParams", True):
         model = model.transform(
-            transformation.AddStreamingParams(nn2fpga_root=prj_root)
+            transformation.AddStreamingParams(
+                nn2fpga_root=prj_root
+            )
         )
+    model = model.transform(transformation.AllocateStreamingMemoryURAM())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(transformation.InferLayouts())
@@ -202,11 +211,6 @@ def _run_simulation_check(
         model,
         store_intermediate,
         _artifact_path(prj_root, "final_model_before_sim.onnx"),
-    )
-    _save_intermediate(
-        original_model,
-        store_intermediate,
-        _artifact_path(prj_root, "original_model_for_sim.onnx"),
     )
     qcdq_original_model = original_model.transform(transformation.ConvertToQCDQ())
     _save_intermediate(
@@ -284,7 +288,9 @@ def nn2fpga_compile(config_dict: dict):
         _artifact_path(prj_root, "nn2FPGA_compile.log")
     ) as logger:
         original_model, model = _load_and_prepare_model(compile_config)
-        nn2fpga_model = _apply_frontend_transforms(model, prj_root, steps)
+        nn2fpga_model = _apply_frontend_transforms(
+            model, prj_root, steps
+        )
         nn2fpga_model = _apply_backend_transforms(nn2fpga_model, prj_root)
 
         if steps.get("GenerateLightningSim", False):
@@ -294,7 +300,11 @@ def nn2fpga_compile(config_dict: dict):
                 store_intermediate,
             )
 
-        nn2fpga_model = _finalize_nn2fpga_model(nn2fpga_model, prj_root, steps)
+        nn2fpga_model = _finalize_nn2fpga_model(
+            nn2fpga_model,
+            prj_root,
+            steps,
+        )
         _save_intermediate(
             nn2fpga_model,
             store_intermediate,

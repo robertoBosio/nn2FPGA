@@ -59,7 +59,18 @@ class InsertStreamingLineBuffer(Transformation):
             pad_value = 0
             if node.op_type == "StreamingMaxPool":
                 pad_value = float('-inf')
-
+            else:
+                try:
+                    if nn2fpga_node.get_nodeattr("asym_folding") == 1:
+                        logger.info(f"Node {node.name} has asym_folding enabled")
+                        input_quant = get_custom_tensor_datatype(model, node.input[0])
+                        logger.info(f"Input quantization for node {node.name}: {input_quant}")
+                        if input_quant is not None:
+                            pad_value = int(input_quant.zeropt)
+                    logger.info(f"Pad value for node {node.name} is {pad_value}")
+                except Exception:
+                    pass
+                
             # Create the StreamingLineBuffer node
             streaming_line_buffer_node = helper.make_node(
                 op_type="StreamingCircularLineBuffer",
@@ -76,7 +87,7 @@ class InsertStreamingLineBuffer(Transformation):
                 out_stream_array=iface.in_stream_array,
                 channel_unroll=iface.in_word_array,
                 width_unroll=iface.in_stream_array,
-                pad_value=pad_value,
+                pad_value=float(pad_value),
                 name=f"{node.name}_streaming_linebuffer",
             )
 

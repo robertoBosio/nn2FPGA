@@ -1,3 +1,4 @@
+from fractions import Fraction
 import numpy as np
 import onnxruntime as rt
 from onnxscript.rewriter import pattern
@@ -15,12 +16,17 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
 class StreamingUpsample(NN2FPGAOp):
     """ Node implementing the StreamingUpsample operation. """
 
     @staticmethod
-    def pattern_resize(op, x, scales):
+    def pattern_resize(op, x, roi, scales):
+        return op.Resize(x, roi, scales, _allow_other_inputs=True, _allow_other_attributes=True)
+    
+    @staticmethod
+    def pattern_resize_empty_roi(op, x, scales):
         return op.Resize(x, None, scales, _allow_other_inputs=True, _allow_other_attributes=True)
 
     @staticmethod
@@ -28,7 +34,7 @@ class StreamingUpsample(NN2FPGAOp):
         return op.Upsample(x, scales, _allow_other_attributes=True)
     
     @staticmethod
-    def rewrite(op, x, scales, **kwargs):
+    def rewrite(op, x, roi=None, scales=None, **kwargs):
 
         # Get only the scale factor for height/width
         scale = scales.const_value.numpy()[-1]
@@ -44,6 +50,9 @@ class StreamingUpsample(NN2FPGAOp):
         return [
             pattern.RewriteRule(
                 StreamingUpsample.pattern_resize, StreamingUpsample.rewrite
+            ),
+            pattern.RewriteRule(
+                StreamingUpsample.pattern_resize_empty_roi, StreamingUpsample.rewrite
             ),
             pattern.RewriteRule(
                 StreamingUpsample.pattern_upsample, StreamingUpsample.rewrite
@@ -140,6 +149,10 @@ class StreamingUpsample(NN2FPGAOp):
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
 
+    def __ratio_to_fraction(self, ratio: float) -> tuple[int, int]:
+        frac = Fraction(float(ratio)).limit_denominator(1 << 20)
+        return int(frac.numerator), int(frac.denominator)
+
     def __get_stream_name(self, name: str) -> str:
         """
         Returns the name of the stream for the tensor.
@@ -156,17 +169,51 @@ class StreamingUpsample(NN2FPGAOp):
         return ""
     
     def __get_quantizer(self, input_quant, output_quant) -> str:
-        """ Returns the quantizer type for the StreamingUpsample operation. """
+        """Returns the requantizer type for the StreamingUpsample operation."""
 
-        if (
-            self.__is_power_of_two(input_quant.scale)
-            and self.__is_power_of_two(output_quant.scale)
-        ):
-            return f"DequantQuantPo2<0, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
-        else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingUpsample."
+        ratio = float(input_quant.scale) / float(output_quant.scale)
+        input_hls_type = input_quant.get_hls_data_type()
+        output_hls_type = output_quant.get_hls_data_type()
+        input_zeropt = int(input_quant.zeropt)
+        output_zeropt = int(output_quant.zeropt)
+
+        if np.isclose(ratio, 1.0, atol=1e-12):
+            if input_hls_type == output_hls_type and input_zeropt == output_zeropt:
+                return f"DequantQuantEqual<{output_hls_type}>"
+            return (
+                f"RequantizeEqual<{input_zeropt}, {output_zeropt}, "
+                f"{input_hls_type}, {output_hls_type}>"
             )
+
+        if self.__is_power_of_two(ratio):
+            shift = -1 * int(np.log2(ratio))
+            if input_zeropt == 0:
+                return (
+                    f"DequantQuantPo2<{shift}, {input_hls_type}, {output_hls_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"RequantizePo2<{shift}, {input_zeropt}, {output_zeropt}, "
+                f"{input_hls_type}, {output_hls_type}>"
+            )
+
+        num, den = self.__ratio_to_fraction(ratio)
+        if input_zeropt == 0:
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return (
+                    f"DequantQuantFloatShift<{n}, {s}, {input_hls_type}, {output_hls_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"DequantQuantFloat<{num}, {den}, {input_hls_type}, {output_hls_type}, "
+                f"{output_zeropt}>"
+            )
+        return (
+            f"RequantizeFloat<{num}, {den}, {input_zeropt}, {output_zeropt}, "
+            f"{input_hls_type}, {output_hls_type}>"
+        )
     
     def __get_object_declaration(self, model) -> cpp_object:
 

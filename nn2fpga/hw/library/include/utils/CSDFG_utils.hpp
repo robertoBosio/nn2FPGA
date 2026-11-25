@@ -82,8 +82,8 @@ public:
   // Define a string representation for debugging
   std::string to_string() const {
     std::string result = "ActorStatus:\n";
-    result += "Current Index: " + std::to_string(current_index) + "\n";
-    result += "Firings: ";
+    result += "\tCurrent Index: " + std::to_string(current_index) + "\n";
+    result += "\tFirings: ";
     for (const auto &firing : firings) {
       result += "(" + std::to_string(firing.get_remaining_time()) + ", " +
                 std::to_string(firing.get_firing_index()) + ") ";
@@ -220,7 +220,7 @@ struct StateRef {
 };
 
 std::unordered_map<StateSig, std::vector<StateRef>> visited;
-std::ofstream states_out("states.bin", std::ios::binary | std::ios::app);
+std::ofstream states_out("states.bin", std::ios::binary | std::ios::trunc);
 std::ifstream states_in("states.bin", std::ios::binary);
 
 uint64_t append_state_to_file(const std::vector<uint32_t> &data) {
@@ -249,6 +249,7 @@ bool states_equal_on_disk(uint64_t offset,
     buf.resize(len);
     states_in.read(reinterpret_cast<char*>(buf.data()),
                    len * sizeof(uint32_t));
+    if (!states_in) return false;
 
     return std::equal(buf.begin(), buf.end(), data.begin());
 }

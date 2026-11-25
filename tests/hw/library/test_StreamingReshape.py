@@ -3,6 +3,7 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
+from .utils.quantizer_codegen import emit_requantizer_typedef
 
 class TestStreamingReshape(BaseHLSTest):
 
@@ -111,6 +112,9 @@ class TestStreamingReshape(BaseHLSTest):
             model.SerializeToString(), providers=["CPUExecutionProvider"]
         )
         y = sess.run(None, {"X": input_tensor})[0]
+        config_dict["VALUE_TOLERANCE_LSB"] = 0 if np.log2(
+            float(config_dict["X_SCALE"]) / float(config_dict["Y_SCALE"])
+        ).is_integer() else 1
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -127,7 +131,16 @@ class TestStreamingReshape(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
+        emit_requantizer_typedef(
+            cwr,
+            "Quantizer",
+            "TInput",
+            "TOutput",
+            config_dict["X_SCALE"],
+            config_dict["Y_SCALE"],
+            input_zero_point=config_dict["X_ZP"],
+            output_zero_point=config_dict["Y_ZP"],
+        )
         cwr.add_line(f"const int DIM0 = {config_dict['IN_DIM0']};")
         cwr.add_line(f"const int DIM1 = {config_dict['IN_DIM1']};")
         cwr.add_line(f"const int DIM2 = {config_dict['IN_DIM2']};")
@@ -168,6 +181,29 @@ class TestStreamingReshape(BaseHLSTest):
             "Y_SCALE": 2**-5,
             "X_ZP": 0,
             "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_float_scale_asymmetric(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": 1,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUTPUT_IS_UNSIGNED": 1,
+            "IN_DIM0": 2,
+            "IN_DIM1": 2,
+            "IN_DIM2": 4,
+            "OUT_DIM0": 1,
+            "OUT_DIM1": 4,
+            "OUT_DIM2": 4,
+            "DIM2_UNROLL": 1,
+            "DIM1_UNROLL": 1,
+            "X_SCALE": 0.375,
+            "Y_SCALE": 0.3,
+            "X_ZP": 91,
+            "Y_ZP": 109,
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)

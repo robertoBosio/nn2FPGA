@@ -62,6 +62,9 @@ def check_input_same_quant(model: ModelWrapper):
         if node.op_type not in elementwise_ops + concat_like_ops:
             continue
 
+        if node.op_type in ["Add", "Concat"]:
+            continue
+
         # Check if node has initializers. If so, it isn't an activation Quant node.
         input_names = node.input
 

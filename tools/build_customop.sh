@@ -5,9 +5,9 @@ set -euo pipefail
 : "${ONNXRUNTIME_SDK_INCLUDE:=/opt/onnxruntime-sdk/include}"
 : "${XRT_INC:=${SYSROOT}/usr/include/xrt}"
 : "${XRT_LIBDIR:=${SYSROOT}/usr/lib/aarch64-linux-gnu}"
-: "${TP_JSON:=/workspace/NN2FPGA/deps/json/single_include}"
-: "${TP_BASE64:=/workspace/NN2FPGA/deps/cpp-base64}"
-: "${NN2FPGA_HW_LIB:=/workspace/NN2FPGA/nn2fpga/hw/operator_runtime}"
+: "${TP_JSON:=/workspace/nn2FPGA/deps/json/single_include}"
+: "${TP_BASE64:=/workspace/nn2FPGA/deps/cpp-base64}"
+: "${NN2FPGA_HW_LIB:=/workspace/nn2FPGA/nn2fpga/hw/operator_runtime}"
 
 SRC=${1:-nn2fpga/hw/operator_runtime/register_op.cpp}
 OUT_DIR=${2:-artifacts/aarch64}

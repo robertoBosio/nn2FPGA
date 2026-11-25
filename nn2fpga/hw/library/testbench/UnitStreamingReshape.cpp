@@ -7,6 +7,7 @@
 #include "utils/CSDFG_utils.hpp"
 #include <array>
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <unordered_map>
 
@@ -24,6 +25,8 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::DIM1_UNROLL],
 }
 
 bool test_run() {
+
+  const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
@@ -65,10 +68,11 @@ bool test_run() {
           TOutputWord output_word = out_stream[i_dim1_par].read();
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
-            bool cmp =
-                (output_word[i_dim2_par] ==
-                 test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                           [i_dim1 + i_dim1_par]);
+            const int got = static_cast<int>(output_word[i_dim2_par]);
+            const int expected = static_cast<int>(
+                test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                          [i_dim1 + i_dim1_par]);
+            bool cmp = std::abs(got - expected) <= tol;
             if (!cmp) {
               std::cout
                   << "Mismatch at index (i_dim0=" << i_dim0

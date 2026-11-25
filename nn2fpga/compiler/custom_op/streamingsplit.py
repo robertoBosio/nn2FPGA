@@ -14,6 +14,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 from onnxscript import ir
 from onnx_ir import convenience as ir_convenience
 
@@ -146,6 +147,11 @@ class StreamingSplit(NN2FPGAOp, DSECapable):
             )
             return f"DequantQuantPo2<{shift}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
         else:
+            ratio = float(input_quant.scale) / float(output_quant.scale)
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
             raise ValueError(
                 "Float quantization is currently not supported for StreamingConv.  "
             )

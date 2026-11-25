@@ -2,7 +2,16 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
+
 from .base_hls_test import BaseHLSTest
+from .utils.quantizer_codegen import emit_requantizer_typedef
+
+
+def _is_power_of_two_ratio(num: float, den: float, atol=1e-12) -> bool:
+    ratio = float(num) / float(den)
+    log2_ratio = np.log2(ratio)
+    return np.isclose(log2_ratio, np.round(log2_ratio), atol=atol)
+
 
 class TestStreamingUpsample(BaseHLSTest):
 
@@ -24,7 +33,6 @@ class TestStreamingUpsample(BaseHLSTest):
         np_in_type = self.get_numpy_dtype(in_bits, in_unsigned)
         np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
 
-        # Random input tensor in correct integer domain/range
         in_info = np.iinfo(np_in_type)
         input_tensor = np.random.randint(
             int(in_info.min),
@@ -60,13 +68,13 @@ class TestStreamingUpsample(BaseHLSTest):
         )
 
         X_scale = helper.make_tensor(
-            "X_scale", TensorProto.FLOAT, [], [config_dict["X_SCALE"]]
+            "X_scale", TensorProto.FLOAT, [], [float(config_dict["X_SCALE"])]
         )
-        X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [config_dict["X_ZP"]])
+        X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
         Y_scale = helper.make_tensor(
-            "Y_scale", TensorProto.FLOAT, [], [config_dict["Y_SCALE"]]
+            "Y_scale", TensorProto.FLOAT, [], [float(config_dict["Y_SCALE"])]
         )
-        Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [config_dict["Y_ZP"]])
+        Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
 
         dqlinear = helper.make_node(
             "DequantizeLinear",
@@ -75,15 +83,13 @@ class TestStreamingUpsample(BaseHLSTest):
         )
 
         upsample_scales = helper.make_tensor(
-            "scales", TensorProto.FLOAT, [4], [
-                1.0, 1.0,
-                config_dict["SCALE_FACTOR"],
-                config_dict["SCALE_FACTOR"]]
+            "scales",
+            TensorProto.FLOAT,
+            [4],
+            [1.0, 1.0, config_dict["SCALE_FACTOR"], config_dict["SCALE_FACTOR"]],
         )
 
-        upsample_roi = helper.make_tensor(
-            "roi", TensorProto.FLOAT, [0], []
-        )
+        upsample_roi = helper.make_tensor("roi", TensorProto.FLOAT, [0], [])
 
         upsample = helper.make_node(
             "Resize",
@@ -103,7 +109,7 @@ class TestStreamingUpsample(BaseHLSTest):
 
         graph = helper.make_graph(
             [dqlinear, upsample, qlinear],
-            "qconv_test",
+            "qupsample_test",
             [X],
             [Y],
             initializer=[X_scale, X_zp, Y_scale, Y_zp, upsample_roi, upsample_scales],
@@ -113,6 +119,10 @@ class TestStreamingUpsample(BaseHLSTest):
             model.SerializeToString(), providers=["CPUExecutionProvider"]
         )
         y = sess.run(None, {"X": input_tensor})[0]
+        y = y.astype(np_out_type, copy=False)
+        config_dict["VALUE_TOLERANCE_LSB"] = 0 if _is_power_of_two_ratio(
+            config_dict["X_SCALE"], config_dict["Y_SCALE"]
+        ) else 1
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -121,7 +131,7 @@ class TestStreamingUpsample(BaseHLSTest):
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
-            if key in ["X_SCALE", "W_SCALE", "Y_SCALE"]:
+            if key in ["X_SCALE", "Y_SCALE"]:
                 cwr.add_line(f"const float {key} = {float(value)}f;")
             else:
                 if isinstance(value, bool):
@@ -134,18 +144,27 @@ class TestStreamingUpsample(BaseHLSTest):
 
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
-        cwr.add_line(f"typedef DequantQuantPo2<0, TInput, TOutput> Quantizer;")
+        emit_requantizer_typedef(
+            cwr,
+            "Quantizer",
+            "TInput",
+            "TOutput",
+            config_dict["X_SCALE"],
+            config_dict["Y_SCALE"],
+            input_zero_point=config_dict["X_ZP"],
+            output_zero_point=config_dict["Y_ZP"],
+        )
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
-                primitive=f"TInput",
+                primitive="TInput",
                 value=input_tensor,
             ).generate_initialization()
         )
         cwr.add_lines(
             csnake.Variable(
                 "output_tensor",
-                primitive=f"TOutput",
+                primitive="TOutput",
                 value=y,
             ).generate_initialization()
         )
@@ -153,7 +172,7 @@ class TestStreamingUpsample(BaseHLSTest):
         cwr.add_line("}")
         return cwr.code
 
-    def test_simple_upsample(self, hls_steps):
+    def test_equal_quant(self, hls_steps):
         np.random.seed(42)
         config_dict = {
             "INPUT_DATAWIDTH": 8,
@@ -173,6 +192,56 @@ class TestStreamingUpsample(BaseHLSTest):
             "X_ZP": 0,
             "Y_SCALE": 2**-5,
             "Y_ZP": 0,
+            "SCALE_FACTOR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_asymmetric_po2(self, hls_steps):
+        np.random.seed(43)
+        config_dict = {
+            "INPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": False,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUTPUT_IS_UNSIGNED": False,
+            "IN_DIM0": 16,
+            "IN_DIM1": 20,
+            "IN_DIM2": 12,
+            "OUT_DIM0": 32,
+            "OUT_DIM1": 40,
+            "OUT_DIM2": 12,
+            "DIM2_UNROLL": 4,
+            "IN_DIM1_UNROLL": 5,
+            "OUT_DIM1_UNROLL": 10,
+            "X_SCALE": 2**-4,
+            "X_ZP": -7,
+            "Y_SCALE": 2**-5,
+            "Y_ZP": 11,
+            "SCALE_FACTOR": 2,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_asymmetric_float(self, hls_steps):
+        np.random.seed(44)
+        config_dict = {
+            "INPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": False,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUTPUT_IS_UNSIGNED": False,
+            "IN_DIM0": 18,
+            "IN_DIM1": 18,
+            "IN_DIM2": 16,
+            "OUT_DIM0": 36,
+            "OUT_DIM1": 36,
+            "OUT_DIM2": 16,
+            "DIM2_UNROLL": 4,
+            "IN_DIM1_UNROLL": 3,
+            "OUT_DIM1_UNROLL": 6,
+            "X_SCALE": 0.3,
+            "X_ZP": -12,
+            "Y_SCALE": 0.8,
+            "Y_ZP": 9,
             "SCALE_FACTOR": 2,
             "PIPELINE_DEPTH": 5,
         }

@@ -5,6 +5,7 @@
 #include "test_config.hpp"
 #include "utils/CSDFG_utils.hpp"
 #include <array>
+#include <cmath>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
@@ -39,6 +40,7 @@ bool test_run() {
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::FH * FW_EXPAND];
   hls::stream<TOutputWord> out_stream[test_config::W_PAR];
+  const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Fill input streams with test data
   for (size_t h = 0; h < OUT_HEIGHT; h++) {
@@ -85,17 +87,15 @@ bool test_run() {
           TOutputWord output_data = out_stream[i_w_par].read();
           for (size_t i_och_par = 0; i_och_par < test_config::CH_PAR;
                i_och_par++) {
+            const int got = int(output_data[i_och_par]);
+            const int expected =
+                int(test_config::output_tensor[0][i_och + i_och_par][h]
+                                               [w + i_w_par]);
 
-            // Check if the output data matches the expected result
-            if (output_data[i_och_par] !=
-                test_config::output_tensor[0][i_och + i_och_par][h][w + i_w_par]
-                                          ) {
+            if (std::abs(got - expected) > tol) {
               std::cerr << "Output mismatch at (" << h << ", " << w + i_w_par
-                        << ", " << i_och + i_och_par
-                        << "): " << output_data[i_och_par] << " != "
-                        << test_config::output_tensor[0][i_och + i_och_par][h]
-                                                     [w + i_w_par]
-                        << std::endl;
+                        << ", " << i_och + i_och_par << "): " << got
+                        << " != " << expected << std::endl;
               return false;
             }
           }

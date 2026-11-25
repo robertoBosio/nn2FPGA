@@ -1,8 +1,77 @@
+from fractions import Fraction
+
 import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
+from .utils.quantizer_codegen import emit_linear_quantizer_typedef
+
+
+def _signed_range_bits(bound: int) -> int:
+    bound = max(1, int(bound))
+    return int(np.ceil(np.log2(bound + 1))) + 1
+
+
+def _quant_range(bitwidth: int, unsigned: bool) -> tuple[int, int]:
+    if unsigned:
+        return 0, (1 << bitwidth) - 1
+    return -(1 << (bitwidth - 1)), (1 << (bitwidth - 1)) - 1
+
+
+def _max_centered_magnitude(bitwidth: int, unsigned: bool, zeropt: int) -> int:
+    qmin, qmax = _quant_range(bitwidth, unsigned)
+    return max(abs(qmin - zeropt), abs(qmax - zeropt))
+
+
+def _aligned_bound(scale: float, acc_scale: float, magnitude: int) -> int:
+    ratio = float(scale) / float(acc_scale)
+    return int(np.ceil(abs(ratio) * magnitude + 0.5))
+
+
+def _is_power_of_two_ratio(num: float, den: float, atol=1e-12) -> bool:
+    ratio = float(num) / float(den)
+    log2_ratio = np.log2(ratio)
+    return np.isclose(log2_ratio, np.round(log2_ratio), atol=atol)
+
+
+def _emit_input_aligner_typedef(cwr, alias, in_type, acc_type, in_scale, acc_scale, zero_point, max_den=1 << 20, atol=1e-12):
+    ratio = float(in_scale) / float(acc_scale)
+    if np.isclose(ratio, 1.0, atol=atol):
+        if int(zero_point) == 0:
+            cwr.add_line(f"typedef DequantQuantEqual<{in_type}> {alias};")
+        else:
+            cwr.add_line(
+                f"typedef DequantAlignEqual<{int(zero_point)}, {in_type}, {acc_type}> {alias};"
+            )
+        return
+
+    log2_ratio = np.log2(ratio)
+    rounded = np.round(log2_ratio)
+    if np.isclose(log2_ratio, rounded, atol=atol):
+        shift = int(-rounded)
+        cwr.add_line(f"const int {alias}_SHIFT = {shift};")
+        if int(zero_point) == 0:
+            cwr.add_line(
+                f"typedef DequantQuantPo2<{alias}_SHIFT, {in_type}, {acc_type}> {alias};"
+            )
+        else:
+            cwr.add_line(
+                f"typedef DequantAlignPo2<{alias}_SHIFT, {int(zero_point)}, {in_type}, {acc_type}> {alias};"
+            )
+        return
+
+    frac = Fraction(ratio).limit_denominator(max_den)
+    cwr.add_line(f"const int {alias}_NUM = {int(frac.numerator)};")
+    cwr.add_line(f"const int {alias}_DEN = {int(frac.denominator)};")
+    if int(zero_point) == 0:
+        cwr.add_line(
+            f"typedef DequantQuantFloat<{alias}_NUM, {alias}_DEN, {in_type}, {acc_type}> {alias};"
+        )
+    else:
+        cwr.add_line(
+            f"typedef DequantAlignFloat<{alias}_NUM, {alias}_DEN, {int(zero_point)}, {in_type}, {acc_type}> {alias};"
+        )
 
 class TestStreamingAdd(BaseHLSTest):
 
@@ -29,6 +98,8 @@ class TestStreamingAdd(BaseHLSTest):
         np_ina_type = self.get_numpy_dtype(ina_bits, ina_unsigned)
         np_inb_type = self.get_numpy_dtype(inb_bits, inb_unsigned)
         np_out_type = self.get_numpy_dtype(out_bits, out_unsigned)
+
+        acc_scale = float(config_dict.get("ACC_SCALE", min(config_dict["A_SCALE"], config_dict["B_SCALE"])))
 
         # Random input tensor in correct integer domain/range
         in_info = np.iinfo(np_ina_type)
@@ -150,23 +221,26 @@ class TestStreamingAdd(BaseHLSTest):
             initializer=[A_scale, B_scale, A_zp, B_zp, Y_scale, Y_zp],
         )
         model = helper.make_model(graph, producer_name="qonnx")
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
         sess = ort.InferenceSession(
-            model.SerializeToString(), providers=["CPUExecutionProvider"]
+            model.SerializeToString(), session_options, providers=["CPUExecutionProvider"]
         )
         y = sess.run(None, {"A": inputa_tensor, "B": inputb_tensor})[0]
+        y = y.astype(np_out_type, copy=False)
 
-        # Aligning scales in input
-        common_scale = min(config_dict["A_SCALE"], config_dict["B_SCALE"])
-        align_a = int(np.log2(config_dict["A_SCALE"] / common_scale))
-        align_b = int(np.log2(config_dict["B_SCALE"] / common_scale))
-        shift = int(np.log2(config_dict["Y_SCALE"] / common_scale))
-
-        tacc_bits = max(
-            ina_bits + align_a, inb_bits + align_b
-        ) + 1  # +1 for possible overflow in addition
-        if ina_unsigned != inb_unsigned:
-            tacc_bits += 1  # extra bit for signed + unsigned addition
+        max_a = _max_centered_magnitude(ina_bits, ina_unsigned, int(config_dict["A_ZP"]))
+        max_b = _max_centered_magnitude(inb_bits, inb_unsigned, int(config_dict["B_ZP"]))
+        bound_a = _aligned_bound(config_dict["A_SCALE"], acc_scale, max_a)
+        bound_b = _aligned_bound(config_dict["B_SCALE"], acc_scale, max_b)
+        tacc_bits = _signed_range_bits(bound_a + bound_b + 1)
+        config_dict["ACC_SCALE"] = acc_scale
         config_dict["ACC_DATAWIDTH"] = tacc_bits
+        config_dict["VALUE_TOLERANCE_LSB"] = 0 if (
+            _is_power_of_two_ratio(config_dict["A_SCALE"], acc_scale)
+            and _is_power_of_two_ratio(config_dict["B_SCALE"], acc_scale)
+            and _is_power_of_two_ratio(acc_scale, config_dict["Y_SCALE"])
+        ) else 1
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -175,7 +249,7 @@ class TestStreamingAdd(BaseHLSTest):
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
-            if key in ["A_SCALE", "B_SCALE", "Y_SCALE"]:
+            if key in ["A_SCALE", "B_SCALE", "Y_SCALE", "ACC_SCALE"]:
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 if isinstance(value, bool):
@@ -187,21 +261,38 @@ class TestStreamingAdd(BaseHLSTest):
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{ina_bits}> TInputA;")
         typedef_suffix = "u" if inb_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{inb_bits}> TInputB;")
-        typedef_suffix = "u" if (ina_unsigned and inb_unsigned) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{tacc_bits}> TAcc;")
+        cwr.add_line(f"typedef ap_int<{tacc_bits}> TAcc;")
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
 
-        # Quantizers
-        if align_a != 0:
-            cwr.add_line(f"typedef DequantQuantPo2<{-align_a}, TInputA, TAcc> AlignA;")
-        else:
-            cwr.add_line(f"typedef DequantQuantEqual<TInputA> AlignA;")
-        if align_b != 0:
-            cwr.add_line(f"typedef DequantQuantPo2<{-align_b}, TInputB, TAcc> AlignB;")
-        else:
-            cwr.add_line(f"typedef DequantQuantEqual<TInputB> AlignB;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> OutputTransform;")
+        _emit_input_aligner_typedef(
+            cwr,
+            "AlignA",
+            "TInputA",
+            "TAcc",
+            config_dict["A_SCALE"],
+            acc_scale,
+            config_dict["A_ZP"],
+        )
+        _emit_input_aligner_typedef(
+            cwr,
+            "AlignB",
+            "TInputB",
+            "TAcc",
+            config_dict["B_SCALE"],
+            acc_scale,
+            config_dict["B_ZP"],
+        )
+        emit_linear_quantizer_typedef(
+            cwr,
+            "OutputTransform",
+            "TAcc",
+            "TOutput",
+            acc_scale,
+            config_dict["Y_SCALE"],
+            False,
+            zero_point=config_dict["Y_ZP"],
+        )
 
         cwr.add_lines(
             csnake.Variable(
@@ -323,3 +414,75 @@ class TestStreamingAdd(BaseHLSTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
+
+    def test_pertensor_po2_mixed_scales_asymmetric(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUTA_IS_UNSIGNED": True,
+            "INPUTB_IS_UNSIGNED": True,
+            "OUTPUT_IS_UNSIGNED": True,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
+            "A_SCALE": 2**-4,
+            "B_SCALE": 2**-6,
+            "Y_SCALE": 2**-5,
+            "A_ZP": 23,
+            "B_ZP": 101,
+            "Y_ZP": 77,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_pertensor_float_mixed_scales_symmetric(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUTA_IS_UNSIGNED": False,
+            "INPUTB_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": False,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
+            "A_SCALE": 0.375,
+            "B_SCALE": 0.2,
+            "Y_SCALE": 0.125,
+            "A_ZP": 0,
+            "B_ZP": 0,
+            "Y_ZP": 0,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_pertensor_float_mixed_scales_asymmetric(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "INPUTA_IS_UNSIGNED": True,
+            "INPUTB_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": True,
+            "INPUTA_DATAWIDTH": 8,
+            "INPUTB_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "DIM0": 4,
+            "DIM1": 4,
+            "DIM2": 4,
+            "DIM1_UNROLL": 2,
+            "DIM2_UNROLL": 1,
+            "A_SCALE": 0.375,
+            "B_SCALE": 0.2,
+            "Y_SCALE": 0.3,
+            "A_ZP": 91,
+            "B_ZP": -17,
+            "Y_ZP": 109,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps, clean = False)

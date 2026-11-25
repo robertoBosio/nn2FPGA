@@ -32,6 +32,10 @@ def _get_B_as_python_number(B: ir.Value) -> float:
 class StreamingSigmoid(NN2FPGAOp):
 
     @staticmethod
+    def sigmoid_pattern(op, x):
+        return op.Sigmoid(x, _allow_other_attributes=True)
+
+    @staticmethod
     def hardsigmoid_pattern(op, x, B, alpha):
         y = op.HardSigmoid(x, alpha=alpha)
         return op.Mul(y, B)
@@ -42,10 +46,19 @@ class StreamingSigmoid(NN2FPGAOp):
         return ir_convenience.get_const_tensor(B) is not None
 
     @staticmethod
+    def rewrite_sigmoid(op, x, **_):
+        return op.StreamingSigmoid(
+            x,
+            impl="sigmoid",
+            _domain="nn2fpga.compiler.custom_op",
+        )
+
+    @staticmethod
     def rewrite(op, x, B, alpha, **_):
         b_value = _get_B_as_python_number(B)
         return op.StreamingSigmoid(
             x,
+            impl="hardsigmoid_mul",
             alpha=alpha,
             B=b_value,
             _domain="nn2fpga.compiler.custom_op",
@@ -55,6 +68,10 @@ class StreamingSigmoid(NN2FPGAOp):
     def register_rules():
         return [
             pattern.RewriteRule(
+                StreamingSigmoid.sigmoid_pattern,
+                StreamingSigmoid.rewrite_sigmoid,
+            ),
+            pattern.RewriteRule(
                 StreamingSigmoid.hardsigmoid_pattern,
                 StreamingSigmoid.rewrite,
                 StreamingSigmoid._condition,
@@ -63,6 +80,7 @@ class StreamingSigmoid(NN2FPGAOp):
 
     def get_nodeattr_types(self):
         return {
+            "impl": ("s", False, "sigmoid"),
             "alpha": ("f", False, 0.01),  # Slope for negative inputs
             "B": ("f", False, 1.0),      # Scaling factor after HardSigmoid
 
@@ -78,11 +96,19 @@ class StreamingSigmoid(NN2FPGAOp):
     def make_shape_compatible_op(self, model):
         node = self.onnx_node
 
+        if self.get_nodeattr("impl") == "hardsigmoid_mul":
+            return helper.make_node(
+                "HardSigmoid",
+                inputs=[node.input[0]],
+                outputs=node.output,
+                alpha=self.get_nodeattr("alpha"),
+                name=f"{node.name}_shape_compatible",
+            )
+
         return helper.make_node(
             "Sigmoid",
             inputs=node.input,
             outputs=node.output,
-            alpha=self.get_nodeattr("alpha"),
             name=f"{node.name}_shape_compatible",
         )
 
@@ -92,15 +118,37 @@ class StreamingSigmoid(NN2FPGAOp):
         model.set_tensor_datatype(node.output[0], dtype)
 
     def execute_node(self, context, graph):
-        # create a standard relu node to compute the result
         node = self.onnx_node
-        node_sigmoid = helper.make_node(
-            "Sigmoid",
-            inputs=node.input,
-            outputs=node.output,
-            alpha=self.get_nodeattr("alpha"),
-            name=f"{node.name}_shape_compatible",
-        )
+        if self.get_nodeattr("impl") == "hardsigmoid_mul":
+            B = helper.make_tensor("B", TensorProto.FLOAT, [], [self.get_nodeattr("B")])
+            nodes = [
+                helper.make_node(
+                    "HardSigmoid",
+                    alpha=self.get_nodeattr("alpha"),
+                    inputs=[node.input[0]],
+                    outputs=["A"],
+                    name=f"{node.name}_hardsigmoid_shape_compatible",
+                ),
+                helper.make_node(
+                    "Mul",
+                    inputs=["A", "B"],
+                    outputs=node.output,
+                    name=f"{node.name}_mul_shape_compatible",
+                ),
+            ]
+            initializers = [B]
+            graph_name = "single-hardsigmoid-mul-exec"
+        else:
+            nodes = [
+                helper.make_node(
+                    "Sigmoid",
+                    inputs=node.input,
+                    outputs=node.output,
+                    name=f"{node.name}_shape_compatible",
+                )
+            ]
+            initializers = []
+            graph_name = "single-sigmoid-exec"
 
         # Make single node graph for execution
         inp_values = context[node.input[0]]
@@ -110,10 +158,11 @@ class StreamingSigmoid(NN2FPGAOp):
         outp = helper.make_tensor_value_info(node.output[0], TensorProto.FLOAT, oshape)
 
         graph_sigmoid = helper.make_graph(
-            nodes=[node_sigmoid],
-            name="single-sigmoid-exec",
+            nodes=nodes,
+            name=graph_name,
             inputs=[inp],
             outputs=[outp],
+            initializer=initializers,
         )
 
         opset_version = self.onnx_opset_version
@@ -147,18 +196,31 @@ class StreamingSigmoid(NN2FPGAOp):
         nbits = input_quant.bitwidth
         LUT_entries = 1 << nbits
 
+        in_unsigned = not input_quant.signed
+        out_unsigned = not output_quant.signed
+
         # 1) Choose container dtype for ONNX and NumPy
         if nbits <= 8:
-            onnx_int_type = TensorProto.INT8
-            np_int_type = np.int8
+            onnx_in_type = TensorProto.UINT8 if in_unsigned else TensorProto.INT8
+            np_in_type = np.uint8 if in_unsigned else np.int8
         elif nbits <= 16:
-            onnx_int_type = TensorProto.INT16
-            np_int_type = np.int16
+            onnx_in_type = TensorProto.UINT16 if in_unsigned else TensorProto.INT16
+            np_in_type = np.uint16 if in_unsigned else np.int16
         elif nbits <= 32:
-            onnx_int_type = TensorProto.INT32
-            np_int_type = np.int32
+            onnx_in_type = TensorProto.UINT32 if in_unsigned else TensorProto.INT32
+            np_in_type = np.uint32 if in_unsigned else np.int32
         else:
-            raise ValueError(f"Unsupported bitwidth {nbits} (> 32).")
+            raise ValueError(f"Unsupported input bitwidth {nbits} (> 32).")
+
+        out_bits = output_quant.bitwidth
+        if out_bits <= 8:
+            onnx_out_type = TensorProto.UINT8 if out_unsigned else TensorProto.INT8
+        elif out_bits <= 16:
+            onnx_out_type = TensorProto.UINT16 if out_unsigned else TensorProto.INT16
+        elif out_bits <= 32:
+            onnx_out_type = TensorProto.UINT32 if out_unsigned else TensorProto.INT32
+        else:
+            raise ValueError(f"Unsupported output bitwidth {out_bits} (> 32).")
 
         # 2) Raw code values: 0 .. 2^nbits - 1
         raw_codes = np.arange(LUT_entries, dtype=np.int64)
@@ -167,18 +229,21 @@ class StreamingSigmoid(NN2FPGAOp):
         sign_bit = 1 << (nbits - 1)
         full_range = 1 << nbits
 
-        signed_values = raw_codes.copy()
-        signed_values[signed_values >= sign_bit] -= full_range
-        # At this point, signed_values holds the *mathematical* two's complement values
-        # corresponding to each n-bit code.
+        if in_unsigned:
+            input_values = raw_codes
+        else:
+            input_values = raw_codes.copy()
+            input_values[input_values >= sign_bit] -= full_range
+            # At this point, input_values holds the *mathematical* two's complement values
+            # corresponding to each n-bit code.
 
         # 4) Cast to container dtype expected by ONNX and shape it
-        input_tensor = signed_values.astype(np_int_type).reshape((1, LUT_entries, 1, 1))
+        input_tensor = input_values.astype(np_in_type).reshape((1, LUT_entries, 1, 1))
 
         # Define the input tensor to accomodate enough values to fill the LUT
         X = helper.make_tensor_value_info(
             "X",
-            onnx_int_type,
+            onnx_in_type,
             [
                 1,
                 LUT_entries,
@@ -188,7 +253,7 @@ class StreamingSigmoid(NN2FPGAOp):
         )
         Y = helper.make_tensor_value_info(
             "Y",
-            onnx_int_type,
+            onnx_out_type,
             [
                 1,
                 LUT_entries,
@@ -200,33 +265,44 @@ class StreamingSigmoid(NN2FPGAOp):
         X_scale = helper.make_tensor(
             "X_scale", TensorProto.FLOAT, [], [input_quant.scale]
         )
-        X_zp = helper.make_tensor("X_zp", onnx_int_type, [], [input_quant.zeropt])
+        X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [input_quant.zeropt])
         Y_scale = helper.make_tensor(
             "Y_scale", TensorProto.FLOAT, [], [output_quant.scale]
         )
-        Y_zp = helper.make_tensor("Y_zp", onnx_int_type, [], [output_quant.zeropt])
+        Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [output_quant.zeropt])
         dqlinear = helper.make_node(
             "DequantizeLinear",
             inputs=["X", "X_scale", "X_zp"],
             outputs=["X_dq"],
         )
 
-        B = helper.make_tensor(
-            "B", TensorProto.FLOAT, [], [self.get_nodeattr("B")]
-        )
-
-        HardSigmoid = helper.make_node(
-            "HardSigmoid",
-            alpha=self.get_nodeattr("alpha"),
-            inputs=["X_dq"],
-            outputs=["A"],
-        )
-
-        Mul = helper.make_node(
-            "Mul",
-            inputs=["A", "B"],
-            outputs=["Y_scaled"],
-        )
+        if self.get_nodeattr("impl") == "hardsigmoid_mul":
+            B = helper.make_tensor(
+                "B", TensorProto.FLOAT, [], [self.get_nodeattr("B")]
+            )
+            activation_nodes = [
+                helper.make_node(
+                    "HardSigmoid",
+                    alpha=self.get_nodeattr("alpha"),
+                    inputs=["X_dq"],
+                    outputs=["A"],
+                ),
+                helper.make_node(
+                    "Mul",
+                    inputs=["A", "B"],
+                    outputs=["Y_scaled"],
+                ),
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp, B]
+        else:
+            activation_nodes = [
+                helper.make_node(
+                    "Sigmoid",
+                    inputs=["X_dq"],
+                    outputs=["Y_scaled"],
+                )
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp]
 
         qlinear = helper.make_node(
             "QuantizeLinear",
@@ -235,11 +311,11 @@ class StreamingSigmoid(NN2FPGAOp):
         )
 
         graph = helper.make_graph(
-            [dqlinear, HardSigmoid, Mul, qlinear],
-            "qhard_sigmoid_test",
+            [dqlinear, *activation_nodes, qlinear],
+            "qsigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
+            initializer=initializers,
         )
         model_qonnx = helper.make_model(graph, producer_name="qonnx")
         sess = rt.InferenceSession(

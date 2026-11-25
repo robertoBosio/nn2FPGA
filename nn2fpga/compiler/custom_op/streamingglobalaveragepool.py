@@ -16,6 +16,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
 class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
     """Node implementing the streaming global average pooling operation."""
@@ -163,6 +164,11 @@ class StreamingGlobalAveragePool(NN2FPGAOp, DSECapable):
             shift = int(np.log2(input_quant.scale)) - int(np.log2(output_quant.scale))
             return f"DequantQuantPo2<{shift}, {self.__get_accumulator(input_quant, input_shape)}, {output_quant.get_hls_data_type()}>"
         else:
+            ratio = float(output_quant.scale) / float(input_quant.scale)
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {self.__get_accumulator(input_quant, input_shape)}, {output_quant.get_hls_data_type()}>"
             raise ValueError(
                 "Float quantization is currently not supported for StreamingGlobalAveragePool.  "
             )

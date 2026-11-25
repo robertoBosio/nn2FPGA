@@ -3,7 +3,7 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
-from fractions import Fraction
+from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
 class TestDequantQuant(BaseHLSTest):
 
@@ -14,21 +14,6 @@ class TestDequantQuant(BaseHLSTest):
     @property
     def unit_filename(self) -> str:
         return "DequantQuant"
-
-    def _classify_quantizer(self, acc_scale, out_scale, same_type, max_den=1 << 20, atol=1e-12):
-        ratio = float(acc_scale) / float(out_scale)
-
-        if np.isclose(ratio, 1.0, atol=atol) and same_type:
-            return "equal", None
-
-        log2_ratio = np.log2(ratio)
-        rounded = np.round(log2_ratio)
-        if np.isclose(log2_ratio, rounded, atol=atol):
-            shift = int(-rounded)
-            return "po2", shift
-
-        frac = Fraction(ratio).limit_denominator(max_den)
-        return "float", (int(frac.numerator), int(frac.denominator))
 
     def generate_config_file(self, config_dict):
         acc_unsigned = not bool(config_dict.get("ACC_SIGNED", True))
@@ -88,11 +73,6 @@ class TestDequantQuant(BaseHLSTest):
         y = y.astype(np_out_type, copy=False)
 
         same_type = (acc_bits == out_bits) and (acc_unsigned == out_unsigned)
-        mode, params = self._classify_quantizer(
-            config_dict["ACC_SCALE"],
-            config_dict["OUT_SCALE"],
-            same_type,
-        )
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -117,16 +97,16 @@ class TestDequantQuant(BaseHLSTest):
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOut;")
 
-        if mode == "equal":
-            cwr.add_line("typedef DequantQuantEqual<TOut> Quantizer;")
-        elif mode == "po2":
-            cwr.add_line(f"const int SHIFT = {int(params)};")
-            cwr.add_line("typedef DequantQuantPo2<SHIFT, TAcc, TOut> Quantizer;")
-        else:
-            num, den = params
-            cwr.add_line(f"const int NUM = {num};")
-            cwr.add_line(f"const int DEN = {den};")
-            cwr.add_line("typedef DequantQuantFloat<NUM, DEN, TAcc, TOut> Quantizer;")
+        emit_linear_quantizer_typedef(
+            cwr,
+            "Quantizer",
+            "TAcc",
+            "TOut",
+            config_dict["ACC_SCALE"],
+            config_dict["OUT_SCALE"],
+            same_type,
+            zero_point=config_dict.get("OUT_ZP", 0),
+        )
 
         cwr.add_lines(
             csnake.Variable(
@@ -431,6 +411,23 @@ class TestDequantQuant(BaseHLSTest):
             "OUT_SIGNED": 1,
             "ACC_SCALE": 0.8,
             "OUT_SCALE": 0.3,
+        }
+        self.run(
+            config_dict,
+            hls_steps,
+        )
+
+    def test_po2_asymmetric(self, hls_steps):
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "OUT_DATAWIDTH": 8,
+            "INPUT": -91,
+            "ACC_SIGNED": 1,
+            "OUT_SIGNED": 1,
+            "ACC_SCALE": 1.0,
+            "OUT_SCALE": 2.0,
+            "ACC_ZP": 0,
+            "OUT_ZP": 77,
         }
         self.run(
             config_dict,

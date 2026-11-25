@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
@@ -170,6 +171,23 @@ def test_check_params_quant_rejects_asymmetric_quant():
 
     assert check_params_quant(model, quant_node, reasons) is False
     assert any("unsupported asymmetric quantization" in reason for reason in reasons)
+
+
+def test_check_params_quant_accepts_asymmetric_weights_when_requested():
+    model, quant_node = _build_params_quant_model(zeropt_vals=(1,))
+    reasons = []
+
+    assert check_params_quant(model, quant_node, reasons, allow_asymmetric=True) is True
+    assert reasons == []
+
+
+def test_check_params_quant_rejects_per_channel_asymmetric_weights():
+    model, quant_node = _build_params_quant_model(zeropt_vals=(1, 1))
+    model.set_initializer("scale", np.array([0.1, 0.1], dtype=np.float32))
+    reasons = []
+
+    assert check_params_quant(model, quant_node, reasons, allow_asymmetric=True) is False
+    assert any("per-channel quantization" in reason for reason in reasons)
 
 
 def test_same_quant_params_returns_true_for_equal_params():

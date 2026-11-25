@@ -27,6 +27,7 @@ from nn2fpga.compiler.custom_op.streamingsoftmax import StreamingSoftmax
 from nn2fpga.compiler.custom_op.streamingsplit import StreamingSplit
 from nn2fpga.compiler.custom_op.streamingswish import StreamingSwish
 from nn2fpga.compiler.custom_op.streamingupsample import StreamingUpsample
+from nn2fpga.compiler.custom_op.streamingwindowtochannels import StreamingWindowToChannels
 from nn2fpga.compiler.custom_op.streamingyoloattention import StreamingYoloAttention
 from nn2fpga.compiler.custom_op.streamingyoloheadsoftmax import StreamingYoloHeadSoftmax
 from nn2fpga.compiler.custom_op.streamtoaxi import StreamToAXI
@@ -62,6 +63,7 @@ custom_op = {
     "StreamingSplit": StreamingSplit,
     "StreamingSwish": StreamingSwish,
     "StreamingUpsample": StreamingUpsample,
+    "StreamingWindowToChannels": StreamingWindowToChannels,
     "StreamingYoloAttention": StreamingYoloAttention,
     "StreamingYoloHeadSoftmax": StreamingYoloHeadSoftmax,
     "StreamToAXI": StreamToAXI,

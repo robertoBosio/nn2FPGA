@@ -1,10 +1,10 @@
+import numpy as np
+import qonnx.core.onnx_exec as oxe
 from nn2fpga.compiler.transforms.split_concat import SplitConcat
-from qonnx.util.basic import qonnx_make_model
+from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.infer_shapes import InferShapes
-import qonnx.core.onnx_exec as oxe
-from onnx import TensorProto, helper
-import numpy as np
+from qonnx.util.basic import qonnx_make_model
 
 def build_concat_graph(
     inputs: int,
@@ -80,6 +80,66 @@ def test_concat7():
     concat_nodes = [n for n in transformed_model.graph.node if n.op_type == "Concat"]
 
     assert len(concat_nodes) == 6
+
+
+def test_intermediate_concats_use_original_output_quantization():
+    model_wrapper = build_concat_graph(4)
+    concat_node = model_wrapper.graph.node[0]
+    concat_node.output[0] = "concat_output"
+    model_wrapper.graph.node.append(
+        helper.make_node(
+            "Quant",
+            inputs=["concat_output", "output_scale", "output_zero_point", "output_bitwidth"],
+            outputs=["output"],
+            name="output_quant",
+            signed=0,
+            narrow=0,
+            rounding_mode="ROUND",
+            domain="qonnx.custom_op.general",
+        )
+    )
+    model_wrapper.graph.initializer.extend(
+        [
+            helper.make_tensor("output_scale", TensorProto.FLOAT, [1], [0.125]),
+            helper.make_tensor("output_zero_point", TensorProto.UINT8, [1], [4]),
+            helper.make_tensor("output_bitwidth", TensorProto.INT32, [1], [8]),
+        ]
+    )
+
+    transformed_model = model_wrapper.transform(SplitConcat())
+
+    intermediate_quants = [
+        node
+        for node in transformed_model.graph.node
+        if node.name in {"output_quant_split_0", "output_quant_split_1"}
+    ]
+    original_quant = next(
+        node for node in transformed_model.graph.node if node.name == "output_quant"
+    )
+    assert len(intermediate_quants) == 2
+    for index, intermediate_quant in enumerate(intermediate_quants):
+        assert list(intermediate_quant.input) == [
+            f"concat_node_split_{index}",
+            "output_scale",
+            "output_zero_point",
+            "output_bitwidth",
+        ]
+        assert list(intermediate_quant.output) == [f"concat_node_split_{index}_quant"]
+        assert list(intermediate_quant.attribute) == list(original_quant.attribute)
+
+    split_nodes = {
+        node.name: node
+        for node in transformed_model.graph.node
+        if node.op_type == "Concat"
+    }
+    assert list(split_nodes["concat_node_split_1"].input) == [
+        "concat_node_split_0_quant",
+        "input3",
+    ]
+    assert list(split_nodes["concat_node_split_2"].input) == [
+        "concat_node_split_1_quant",
+        "input4",
+    ]
 
 def test_correctness():
 

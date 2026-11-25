@@ -120,7 +120,7 @@ def remove_boundary_adapters(text: str) -> tuple[str, list[str]]:
     params = []
     offset = 0
     while True:
-        block = find_object_block(text, "AXIToStream", offset)
+        block = find_object_block(text, "AXISToStream", offset)
         if block is None:
             break
         obj_start, obj_end, obj_name, template_args = block
@@ -141,7 +141,7 @@ def remove_boundary_adapters(text: str) -> tuple[str, list[str]]:
 
     offset = 0
     while True:
-        block = find_object_block(text, "StreamToAXI", offset)
+        block = find_object_block(text, "StreamToAXIS", offset)
         if block is None:
             break
         obj_start, obj_end, obj_name, template_args = block
@@ -261,8 +261,8 @@ def generate_tcl(top_name: str, part_name: str, frequency: str, hls_version: str
             'open_solution -reset solution0',
         ])
     lines.extend([
-        'add_files kernel.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include -Iinclude"',
-        'add_files -tb testbench.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include -Iinclude"',
+        'add_files kernel.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -Iinclude"',
+        'add_files -tb testbench.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -Iinclude"',
         f'set_top "{top_name}"',
         f'set_part {part_name}',
         f'create_clock -period {t_clk}',

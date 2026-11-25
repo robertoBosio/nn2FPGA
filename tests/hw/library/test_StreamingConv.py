@@ -3,6 +3,7 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 from .base_hls_test import BaseHLSTest
+from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
 class TestStreamingConv(BaseHLSTest):
 
@@ -188,8 +189,6 @@ class TestStreamingConv(BaseHLSTest):
         )
         y = sess.run(None, {"X": input_tensor})[0]
 
-        shift = int(np.log2(config_dict["Y_SCALE"] / (config_dict["X_SCALE"] * config_dict["W_SCALE"])))
-
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
@@ -224,7 +223,15 @@ class TestStreamingConv(BaseHLSTest):
         )
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH'] - 1}> TPartialAcc;")
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TAcc, TOutput> OutputTransform;")
+        emit_linear_quantizer_typedef(
+            cwr,
+            "OutputTransform",
+            "TAcc",
+            "TOutput",
+            config_dict["X_SCALE"] * config_dict["W_SCALE"],
+            config_dict["Y_SCALE"],
+            False,
+        )
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
@@ -513,38 +520,38 @@ class TestStreamingConv(BaseHLSTest):
         }
         self.run(config_dict, hls_steps)
 
-    # def test_pointwise_pertensor_float(self, hls_steps):
-    #     np.random.seed(42)
-    #     config_dict = {
-    #         "ACC_DATAWIDTH": 32,
-    #         "INPUT_DATAWIDTH": 8,
-    #         "WEIGHT_DATAWIDTH": 8,
-    #         "BIAS_DATAWIDTH": 32,
-    #         "OUTPUT_DATAWIDTH": 8,
-    #         "OUT_HEIGHT": 4,
-    #         "OUT_WIDTH": 4,
-    #         "IN_CH": 4,
-    #         "OUT_CH": 4,
-    #         "FH": 1,
-    #         "FW": 1,
-    #         "STRIDE_H": 1,
-    #         "STRIDE_W": 1,
-    #         "PAD_T": 0,
-    #         "PAD_B": 0,
-    #         "PAD_L": 0,
-    #         "PAD_R": 0,
-    #         "DIL_H": 1,
-    #         "DIL_W": 1,
-    #         "IN_CH_PAR": 1,
-    #         "OUT_CH_PAR": 1,
-    #         "W_PAR": 1,
-    #         "GROUP": 1,
-    #         "X_SCALE": 1.0, 
-    #         "W_SCALE": 0.0003719012311194092, 
-    #         "Y_SCALE": 0.0003719012311194092, 
-    #         "X_ZP": 0,    
-    #         "W_ZP": 0,    
-    #         "Y_ZP": 0,    
-    #         "PIPELINE_DEPTH": 5,
-    #     }
-    #     self.run(config_dict, hls_steps)
+    def test_pointwise_pertensor_float(self, hls_steps):
+        np.random.seed(42)
+        config_dict = {
+            "ACC_DATAWIDTH": 32,
+            "INPUT_DATAWIDTH": 8,
+            "WEIGHT_DATAWIDTH": 8,
+            "BIAS_DATAWIDTH": 32,
+            "OUTPUT_DATAWIDTH": 8,
+            "OUT_HEIGHT": 4,
+            "OUT_WIDTH": 4,
+            "IN_CH": 4,
+            "OUT_CH": 4,
+            "FH": 1,
+            "FW": 1,
+            "STRIDE_H": 1,
+            "STRIDE_W": 1,
+            "PAD_T": 0,
+            "PAD_B": 0,
+            "PAD_L": 0,
+            "PAD_R": 0,
+            "DIL_H": 1,
+            "DIL_W": 1,
+            "IN_CH_PAR": 1,
+            "OUT_CH_PAR": 1,
+            "W_PAR": 1,
+            "GROUP": 1,
+            "X_SCALE": 1.0, 
+            "W_SCALE": 0.0003719012311194092, 
+            "Y_SCALE": 0.18861539661884308, 
+            "X_ZP": 0,    
+            "W_ZP": 0,    
+            "Y_ZP": 0,    
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps, clean=False)

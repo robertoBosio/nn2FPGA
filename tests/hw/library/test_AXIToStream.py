@@ -79,3 +79,17 @@ class TestAXIToStream(BaseHLSTest):
             "PIPELINE_DEPTH": 2,
         }
         self.run(config_dict, hls_steps)
+
+    def test_axi512_par1(self, hls_steps):
+        config_dict = {
+            "AXI_DATAWIDTH": 512,
+            "OUT_DATAWIDTH": 8,
+            "DIM1": 13,
+            "DIM0": 13,
+            "DIM2": 96,
+            "DIM1_UNROLL": 1,
+            "DIM2_UNROLL": 1,
+            "DATA_PER_WORD": 64,
+            "PIPELINE_DEPTH": 8,
+        }
+        self.run(config_dict, hls_steps)

@@ -1,4 +1,7 @@
 from nn2fpga.compiler.transforms.add_streaming_params import AddStreamingParams
+from nn2fpga.compiler.transforms.allocate_streaming_memory_uram import (
+    AllocateStreamingMemoryURAM,
+)
 from nn2fpga.compiler.transforms.adjust_conv_scale import AdjustConvScale
 from nn2fpga.compiler.transforms.adjust_streaming_comunication import (
     AdjustStreamingCommunication,
@@ -9,12 +12,14 @@ from nn2fpga.compiler.transforms.convert_to_QCDQ import ConvertToQCDQ
 from nn2fpga.compiler.transforms.custom_infershape import CustomInferShapes
 from nn2fpga.compiler.transforms.embed_hls_code import EmbedHLSCode
 from nn2fpga.compiler.transforms.fold_asymmetric_act_quant import FoldAsymmetricActQuant
+from nn2fpga.compiler.transforms.normalize_asymmetric_weight_quant import NormalizeAsymmetricWeightQuant
 from nn2fpga.compiler.transforms.fold_quant import FoldQuant
 from nn2fpga.compiler.transforms.fold_reshape_into_initializer import (
     FoldReshapeIntoInitializer,
 )
 from nn2fpga.compiler.transforms.fullyconnected_to_conv import FullyConnectedToPointwise
 from nn2fpga.compiler.transforms.fuse_elementwise_op import FuseElementwiseOps
+from nn2fpga.compiler.transforms.fuse_spp_maxpool import FuseSPPMaxPool
 from nn2fpga.compiler.transforms.generate_bitstream import GenerateBitstream
 from nn2fpga.compiler.transforms.generate_driver import GenerateDriver
 from nn2fpga.compiler.transforms.generate_lightningsim_code import GenerateLightningSimCode

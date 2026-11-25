@@ -123,9 +123,16 @@ def check_attribute(
 
     return True
 
-def check_params_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list) -> bool: 
-    """ Check params Quant node. Right now, it is only supported symmetric quantization, 
-    with full range of values (narrow=0).
+def check_params_quant(
+    model: ModelWrapper,
+    node: onnx.NodeProto,
+    reasons: list,
+    allow_asymmetric: bool = False,
+) -> bool:
+    """Check a parameter Quant node for partitioning.
+
+    Asymmetric quantization is accepted only for scalar weight parameters that
+    will be centered in the extracted FPGA partition.
     Args:
         model (ModelWrapper): The ONNX model to check, wrapped in QONNX ModelWrapper.
         node (onnx.NodeProto): The node to check for activation quantization.
@@ -146,11 +153,24 @@ def check_params_quant(model: ModelWrapper, node: onnx.NodeProto, reasons: list)
         return False
 
     # Get scale and zero_point initializers
+    scale_name = node.input[1]
     zeropt_name = node.input[2]
+    scale = numpy_helper.to_array(get_by_name(graph.initializer, scale_name))
     zeropt = numpy_helper.to_array(get_by_name(graph.initializer, zeropt_name))
 
-    # Check symmetric quantization
-    if not np.allclose(zeropt, 0):
+    # Asymmetric weights are normalized after FPGA partitioning. Other
+    # parameters, including biases, still need a zero point of zero.
+    if allow_asymmetric and (
+        np.asarray(scale).size != 1 or np.asarray(zeropt).size != 1
+    ):
+        reasons.append("Parameters Quant with unsupported per-channel quantization")
+        return False
+    if allow_asymmetric and not float(
+        np.asarray(zeropt).reshape(()).item()
+    ).is_integer():
+        reasons.append("Parameters Quant with unsupported floating zero point")
+        return False
+    if not allow_asymmetric and not np.allclose(zeropt, 0):
         reasons.append(f"Parameters Quant with unsupported asymmetric quantization")
         return False
 
@@ -418,7 +438,9 @@ class ConvQuantPattern(Pattern):
 
         # weight quant (params)
         w_q = model.find_producer(anchor_node.input[1])
-        if w_q is None or not check_params_quant(model, w_q, reasons):
+        if w_q is None or not check_params_quant(
+            model, w_q, reasons, allow_asymmetric=True
+        ):
             reasons.append("Conv weights must be produced by supported params Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 
@@ -487,7 +509,9 @@ class GemmQuantPattern(Pattern):
 
         # weight quant (params)
         w_q = model.find_producer(anchor_node.input[1])
-        if w_q is None or not check_params_quant(model, w_q, reasons):
+        if w_q is None or not check_params_quant(
+            model, w_q, reasons, allow_asymmetric=True
+        ):
             reasons.append("Gemm weights must be produced by supported params Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 
@@ -654,8 +678,19 @@ class ResizeQuantUpsampleNearestAsymmetric(Pattern):
 
         # Roi must be empty
         if roi_name != "":
-            reasons.append("Resize roi input must be empty")
-            return Match(False, self.name, covered, reasons)
+            if not _is_initializer(model, roi_name):
+                reasons.append("Resize roi input must be empty or an empty initializer")
+                return Match(False, self.name, covered, reasons)
+
+            roi_init = next((i for i in model.graph.initializer if i.name == roi_name), None)
+            if roi_init is None:
+                reasons.append("Resize roi initializer not found")
+                return Match(False, self.name, covered, reasons)
+
+            roi = numpy_helper.to_array(roi_init)
+            if np.asarray(roi).size != 0:
+                reasons.append("Resize roi input must be empty or an empty initializer")
+                return Match(False, self.name, covered, reasons)
 
         # Scales must exist and be an initializer
         if scales_name == "":
@@ -719,12 +754,116 @@ class AddQuant(Pattern):
         covered.update({anchor_node.name, q0.name, q1.name})
         return Match(True, self.name, covered, reasons)
 
-class ConcatQuantSameParamsAxis(Pattern):
+
+class FocusSliceQuantConcat(Pattern):
+    name = "Focus Slice/Quant/Concat"
+    anchor_op = "Concat"
+
+    def _match_impl(self, model, anchor_node) -> Match:
+        reasons: List[str] = []
+        covered: Set[str] = set()
+        if len(anchor_node.input) != 4 or not check_attribute(anchor_node, "axis", 1, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        output_consumers = model.find_consumers(anchor_node.output[0])
+        if len(output_consumers) != 1 or not check_act_quant(model, output_consumers[0], reasons):
+            return Match(False, self.name, covered, reasons)
+        output_quant = output_consumers[0]
+
+        q_ee, q_oe, q_eo, q_oo = [model.find_producer(name) for name in anchor_node.input]
+        branch_quants = [q_ee, q_oe, q_eo, q_oo]
+        if not all(check_act_quant(model, quant, reasons) for quant in branch_quants):
+            return Match(False, self.name, covered, reasons)
+
+        ee, oe, eo, oo = [model.find_producer(quant.input[0]) for quant in branch_quants]
+        if any(
+            node is None or node.op_type != "Slice" or not node.input
+            for node in (ee, oe, eo, oo)
+        ):
+            return Match(False, self.name, covered, ["Focus branch input is not produced by Slice"])
+        h_even_quant = model.find_producer(ee.input[0])
+        h_odd_quant = model.find_producer(oe.input[0])
+        if h_even_quant is None or h_odd_quant is None:
+            return Match(False, self.name, covered, ["Focus height Quant nodes are missing"])
+        if eo.input[0] != h_even_quant.output[0] or oo.input[0] != h_odd_quant.output[0]:
+            return Match(False, self.name, covered, ["Focus width slices do not share height branches"])
+        if not check_act_quant(model, h_even_quant, reasons) or not check_act_quant(model, h_odd_quant, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        h_even = model.find_producer(h_even_quant.input[0])
+        h_odd = model.find_producer(h_odd_quant.input[0])
+        if (
+            h_even is None
+            or h_odd is None
+            or h_even.op_type != "Slice"
+            or h_odd.op_type != "Slice"
+            or not h_even.input
+            or not h_odd.input
+        ):
+            return Match(False, self.name, covered, ["Focus height Slices are missing"])
+        if h_even.input[0] != h_odd.input[0]:
+            return Match(False, self.name, covered, ["Focus height slices do not share an input"])
+        input_quant = model.find_producer(h_even.input[0])
+        if not check_act_quant(model, input_quant, reasons):
+            return Match(False, self.name, covered, reasons)
+
+        slices = ((h_even, 0, 2), (h_odd, 1, 2), (ee, 0, 3), (oe, 0, 3), (eo, 1, 3), (oo, 1, 3))
+        for node, start, axis in slices:
+            if node is None or node.op_type != "Slice" or len(node.input) < 5:
+                return Match(False, self.name, covered, ["Expected a five-input Focus Slice"])
+            values = []
+            for tensor_name in node.input[1:5]:
+                initializer = get_by_name(model.graph.initializer, tensor_name)
+                producer = model.find_producer(tensor_name)
+                if initializer is None and (producer is None or producer.op_type != "Constant"):
+                    return Match(False, self.name, covered, ["Focus Slice parameters must be constants"])
+                if initializer is not None:
+                    values.append(numpy_helper.to_array(initializer).reshape(-1).tolist())
+                else:
+                    value = get_by_name(producer.attribute, "value")
+                    if value is None:
+                        return Match(False, self.name, covered, ["Focus Constant has no value"])
+                    values.append(numpy_helper.to_array(value.t).reshape(-1).tolist())
+                    covered.add(producer.name)
+            starts, ends, axes, steps = values
+            if starts != [start] or len(ends) != 1 or ends[0] not in {2147483647, 9223372036854775807} or axes != [axis] or steps != [2]:
+                return Match(False, self.name, covered, [f"{node.name}: invalid Focus Slice"])
+
+        expected_consumers = {
+            input_quant.name: {h_even.name, h_odd.name},
+            h_even.name: {h_even_quant.name},
+            h_odd.name: {h_odd_quant.name},
+            h_even_quant.name: {ee.name, eo.name},
+            h_odd_quant.name: {oe.name, oo.name},
+            ee.name: {q_ee.name},
+            eo.name: {q_eo.name},
+            oe.name: {q_oe.name},
+            oo.name: {q_oo.name},
+            q_ee.name: {anchor_node.name},
+            q_oe.name: {anchor_node.name},
+            q_eo.name: {anchor_node.name},
+            q_oo.name: {anchor_node.name},
+            anchor_node.name: {output_quant.name},
+        }
+        nodes = [input_quant, h_even, h_odd, h_even_quant, h_odd_quant, ee, oe, eo, oo, *branch_quants, anchor_node]
+        for node in nodes:
+            consumers = {consumer.name for consumer in model.find_consumers(node.output[0])}
+            if consumers != expected_consumers[node.name]:
+                reasons.append(f"{node.name}: unexpected consumers {sorted(consumers)}")
+                return Match(False, self.name, covered, reasons)
+
+        covered.update(node.name for node in nodes)
+        covered.add(output_quant.name)
+        return Match(True, self.name, covered, [])
+
+
+class ConcatQuantAxis(Pattern):
     """
     Matches Concat where all inputs come from activation Quant/IntQuant
-    AND have identical (scale, zeropt).
+    and the output is consumed by an activation Quant/IntQuant. The output
+    quantizer defines the common domain for binary concat-tree intermediates.
     """
-    name = "Concat(Quant(...)) same params"
+    name = "Concat(Quant(...)) -> Quant supported axis"
     anchor_op = "Concat"
 
     def _match_impl(self, model, anchor_node) -> Match:
@@ -740,6 +879,14 @@ class ConcatQuantSameParamsAxis(Pattern):
             return Match(False, self.name, covered, reasons)
 
         input_shape = model.get_tensor_shape(anchor_node.input[0])
+        if input_shape is None:
+            producer = model.find_producer(anchor_node.input[0])
+            if producer is not None and producer.input:
+                input_shape = model.get_tensor_shape(producer.input[0])
+        if input_shape is None and anchor_node.output:
+            output_shape = model.get_tensor_shape(anchor_node.output[0])
+            if output_shape is not None:
+                input_shape = output_shape
         if input_shape is None:
             reasons.append("Concat input shape unknown")
             return Match(False, self.name, covered, reasons)
@@ -763,14 +910,19 @@ class ConcatQuantSameParamsAxis(Pattern):
 
             qnodes.append(q)
 
-        # all equal to first
-        first = qnodes[0]
-        if any(not _same_quant_params(model, first, q) for q in qnodes[1:]):
-            reasons.append("Concat inputs quant params differ")
+        output_consumers = model.find_consumers(anchor_node.output[0])
+        if len(output_consumers) != 1:
+            reasons.append("Concat output must have exactly one Quant/IntQuant consumer")
+            return Match(False, self.name, covered, reasons)
+
+        output_quant = output_consumers[0]
+        if not check_act_quant(model, output_quant, reasons):
+            reasons.append("Concat output must be consumed by activation Quant/IntQuant")
             return Match(False, self.name, covered, reasons)
 
         covered.add(anchor_node.name)
         covered.update(q.name for q in qnodes)
+        covered.add(output_quant.name)
         return Match(True, self.name, covered, reasons)
 
 class ReshapeFCOnly(Pattern):
@@ -1635,26 +1787,26 @@ class YoloAttentionFromInputReshape(Pattern):
 
 PATTERNS_BY_OP: Dict[str, List[Pattern]] = {
     "Add": [AddQuant()],
-    "Concat": [ConcatQuantSameParamsAxis()],
-    "Flatten": [FlattenFCOnly()],
-    "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
-    "HardSigmoid": [HardSigmoidQuant()],
-    "LeakyRelu": [LeakyReluQuantOrFusable()],
-    "Relu": [ReluQuantOrFusable()],
-    "Sigmoid": [SigmoidQuant()],
-    "Softmax": [YoloHeadSoftmax()],
-    "Swish": [SwishQuant()],
-    "Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
-    "IntQuant": [IntQuantNodePattern()],
-    "Quant": [QuantNodePattern()],
     "AveragePool": [AveragePoolQuantPattern()],
-    "Conv": [ConvQuantPattern()],
+    "Concat": [FocusSliceQuantConcat(), ConcatQuantAxis()],
+    "Conv": [ConvQuantPattern(debug_allowlist={f"Conv_{i}" for i in range(29, 36)})],
+    "Flatten": [FlattenFCOnly()],
     "Gemm": [GemmQuantPattern()],
     "GlobalMaxPool": [GlobalMaxPoolQuantPattern()],
     "GlobalAveragePool": [GlobalAveragePoolQuantPattern()],
+    "HardSigmoid": [HardSigmoidQuant()],
+    "IntQuant": [IntQuantNodePattern()],
+    "LeakyRelu": [LeakyReluQuantOrFusable()],
     "MaxPool": [MaxPoolQuantPattern()],
     "Mul": [MulHardSigmoidTimesConst(), MulQuantized()],
+    "Quant": [QuantNodePattern()],
+    "Reshape": [YoloAttentionFromInputReshape(), ReshapeFCOnly()],
     "Resize": [ResizeQuantUpsampleNearestAsymmetric()],
+    "Relu": [ReluQuantOrFusable()],
+    "Sigmoid": [SigmoidQuant()],
+    "Slice": [SliceSplitTreeFeasibleQuantized(allowed_axes={1,2,3})],
+    "Softmax": [YoloHeadSoftmax()],
+    "Swish": [SwishQuant()],
 }
 
 def match_supported_patterns(model, node) -> Match:

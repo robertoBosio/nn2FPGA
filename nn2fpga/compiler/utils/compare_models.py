@@ -1,11 +1,17 @@
 import numpy as np
+from onnx import TensorProto, helper
 import qonnx.core.onnx_exec as oxe
 from qonnx.core.modelwrapper import ModelWrapper
-from onnx import TensorProto
 from typing import List, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_opset_13(model: ModelWrapper) -> None:
+    for opset in model.model.opset_import:
+        if opset.domain == "" and opset.version < 13:
+            opset.version = 13
 
 def generate_random_input(model: ModelWrapper) -> dict:
     """
@@ -92,6 +98,8 @@ def test_transformation_equivalence(model_pre: ModelWrapper, model_post: ModelWr
     input_dict = generate_random_input(model_pre)
     output_names = get_output_names(model_pre)
 
+    _ensure_opset_13(model_pre)
+    _ensure_opset_13(model_post)
     out_expected = oxe.execute_onnx(model_pre, input_dict, return_full_exec_context=True)
     out_produced = oxe.execute_onnx(model_post, input_dict, return_full_exec_context=True)
 

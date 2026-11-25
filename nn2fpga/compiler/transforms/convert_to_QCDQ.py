@@ -2,11 +2,13 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.qonnx_to_qcdq import QuantToQCDQ
 from qonnx.custom_op.registry import getCustomOp
-from nn2fpga.compiler.transforms.add_streaming_params import quant_array
+from qonnx.util.basic import get_by_name
+from nn2fpga.compiler.utils.quantization import quant_array
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.core.tensor_type import TensorType, QuantizedTensorType
 from nn2fpga.compiler.core.tensor_layout import TensorLayout
 from onnx import TensorProto, helper, numpy_helper
+from onnx.helper import get_attribute_value
 import onnx.shape_inference as si
 from onnxscript.rewriter import pattern, rewrite
 from onnxscript import ir
@@ -73,9 +75,9 @@ def _extract_scalar_const(v):
     if v.const_value is None:
         return None
     arr = v.const_value.numpy()
-    if arr.shape != ():
+    if arr.size != 1:
         return None
-    return arr.item()
+    return arr.reshape(()).item()
 
 
 def _extract_optional_attr_value(v, default=None):
@@ -183,9 +185,11 @@ def is_dynamic_quant_rewritable(
     rounding_mode_val = _extract_optional_attr_value(rounding_mode, "ROUND")
     if not _is_supported_quant_config(bitwidth_scalar, signed_val, narrow_val, rounding_mode_val):
         return False
-    if scale.const_value.numpy().ndim != 0 or zero_point.const_value.numpy().ndim != 0:
+    scale_np = scale.const_value.numpy()
+    zero_point_np = zero_point.const_value.numpy()
+    if scale_np.size != 1 or zero_point_np.size != 1:
         logger.warning(
-            "Skipping Quant lowering: only scalar scale/zero_point handled in dynamic Q/DQ rewrite"
+            "Skipping Quant lowering: only per-tensor single-value scale/zero_point handled in dynamic Q/DQ rewrite"
         )
         return False
     return True
@@ -195,6 +199,34 @@ def create_const_initializer(model, value, dtype):
     init_name = model.make_new_valueinfo_name()
     model.set_initializer(init_name, np.array(value, dtype=dtype))
     return init_name
+
+
+def _get_tensor_dtype(model: ModelWrapper, tensor_name: str):
+    initializer = get_by_name(model.graph.initializer, tensor_name)
+    if initializer is not None:
+        return initializer.data_type
+
+    producer = model.find_producer(tensor_name)
+    if producer is not None and producer.op_type == "Constant":
+        value_attr = next((attr for attr in producer.attribute if attr.name == "value"), None)
+        if value_attr is not None:
+            return get_attribute_value(value_attr).data_type
+
+    return None
+
+
+def _ensure_qlinear_output_shapes(model: ModelWrapper):
+    for node in model.get_nodes_by_op_type("QuantizeLinear"):
+        output_name = node.output[0]
+        if model.get_tensor_shape(output_name) is not None:
+            continue
+
+        input_shape = model.get_tensor_shape(node.input[0])
+        if input_shape is None:
+            continue
+
+        output_dtype = _get_tensor_dtype(model, node.input[2])
+        model.set_tensor_shape(output_name, input_shape, dtype=output_dtype)
 
 
 def quant_to_qcdq(op, x, scale, zero_point, bitwidth, signed, narrow, rounding_mode):
@@ -253,6 +285,7 @@ class ConvertToQCDQ(Transformation):
             model_proto = ir.to_proto(ir_model)
 
             model = ModelWrapper(model_proto)
+            _ensure_qlinear_output_shapes(model)
             assert model.get_nodes_by_op_type("Quant") == [], \
                 "Not all Quant nodes were rewritten to QCDQ pattern"
 
@@ -278,16 +311,15 @@ class ConvertToQCDQ(Transformation):
                 if inp_shape is None:
                     continue
 
-                input_layout = TensorLayout.from_canonical_name(
-                    ap.input_map[inp].get("layout")
-                )
+                input_port = ap.input_map[inp]
+                input_layout = TensorLayout.from_canonical_name(input_port.get("layout"))
                 assert len(input_layout.perm) == len(
                     inp_shape
                 ), f"Input layout perm length {len(input_layout.perm)} does not match input shape length {len(inp_shape)} for input '{inp}'"
                 inp_shape_perm = [inp_shape[dim] for dim in input_layout.perm]
 
                 input_tensor_type = TensorType.from_canonical_name(
-                    ap.input_map[inp]["quant"]
+                    input_port["quant"]
                 )
                 
                 tensor_name = inp
@@ -339,19 +371,20 @@ class ConvertToQCDQ(Transformation):
                 new_inputs_map[inp] = (i, f"{tensor_name}")
 
             if new_inputs_map:
-                for old_name, (index, new_name) in new_inputs_map.items():
+                for _, (index, new_name) in new_inputs_map.items():
                     partition_node.input[index] = new_name
 
-                rename       = {old: new for old, (_, new) in new_inputs_map.items()}
+                rename = {old: new for old, (_, new) in new_inputs_map.items()}
                 ap.input_map = {rename.get(k, k): v for k, v in ap.input_map.items()}
 
-                for old_name, (_, new_name) in new_inputs_map.items():
+                for _, (_, new_name) in new_inputs_map.items():
+                    input_port = ap.input_map[new_name]
                     input_layout = TensorLayout.from_canonical_name(
-                        ap.input_map[new_name].get("layout")
+                        input_port.get("layout")
                     )
-                    inp_shape    = ap.input_map[new_name]["shape"]
-                    inp_perm     = [dim for dim in input_layout.perm if dim < len(inp_shape)]
-                    ap.input_map[new_name]["shape"] = [inp_shape[dim] for dim in inp_perm]
+                    inp_shape = input_port["shape"]
+                    inp_perm = [dim for dim in input_layout.perm if dim < len(inp_shape)]
+                    input_port["shape"] = [inp_shape[dim] for dim in inp_perm]
 
             # ── Outputs: Transpose(int8) → DequantizeLinear(int8→float) ──
             new_outputs_map = {}
@@ -367,16 +400,15 @@ class ConvertToQCDQ(Transformation):
                 if out_shape is None:
                     continue
 
-                output_layout = TensorLayout.from_canonical_name(
-                    ap.output_map[out].get("layout")
-                )
+                output_port = ap.output_map[out]
+                output_layout = TensorLayout.from_canonical_name(output_port.get("layout"))
                 assert len(output_layout.perm) == len(
                     out_shape
                 ), f"Output layout perm length {len(output_layout.perm)} does not match output shape length {len(out_shape)} for output '{out}'"
                 out_shape_perm = [out_shape[dim] for dim in output_layout.perm]
 
                 output_tensor_type = TensorType.from_canonical_name(
-                    ap.output_map[out]["quant"]
+                    output_port["quant"]
                 )
 
                 tensor_name = out
@@ -426,19 +458,20 @@ class ConvertToQCDQ(Transformation):
                 new_outputs_map[out] = (i, f"{tensor_name}")
 
             if new_outputs_map:
-                for old_name, (index, new_name) in new_outputs_map.items():
+                for _, (index, new_name) in new_outputs_map.items():
                     partition_node.output[index] = new_name
 
-                rename        = {old: new for old, (_, new) in new_outputs_map.items()}
+                rename = {old: new for old, (_, new) in new_outputs_map.items()}
                 ap.output_map = {rename.get(k, k): v for k, v in ap.output_map.items()}
 
-                for old_name, (_, new_name) in new_outputs_map.items():
+                for _, (_, new_name) in new_outputs_map.items():
+                    output_port = ap.output_map[new_name]
                     output_layout = TensorLayout.from_canonical_name(
-                        ap.output_map[new_name].get("layout")
+                        output_port.get("layout")
                     )
-                    out_shape  = ap.output_map[new_name]["shape"]
-                    out_perm   = [dim for dim in output_layout.perm if dim < len(out_shape)]
-                    ap.output_map[new_name]["shape"] = [out_shape[dim] for dim in out_perm]
+                    out_shape = output_port["shape"]
+                    out_perm = [dim for dim in output_layout.perm if dim < len(out_shape)]
+                    output_port["shape"] = [out_shape[dim] for dim in out_perm]
 
             getCustomOp(partition_node).set_nodeattr(
                 "accelerator_package", ap.to_json()

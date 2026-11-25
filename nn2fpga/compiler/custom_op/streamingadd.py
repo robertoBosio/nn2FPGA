@@ -1,5 +1,6 @@
 import numpy as np
 import onnxruntime as rt
+from fractions import Fraction
 from onnxscript.rewriter import pattern
 from onnx import TensorProto, helper
 from qonnx.util.basic import qonnx_make_model
@@ -15,6 +16,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
 class StreamingAdd(NN2FPGAOp):
     """Node implementing the Add operation."""
@@ -123,83 +125,134 @@ class StreamingAdd(NN2FPGAOp):
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
 
-    def __get_accumulator(self, input_quantA, input_quantB):
-        """ Returns the accumulator type for the Add operation. """
+    def __ratio_to_fraction(self, ratio: float) -> tuple[int, int]:
+        frac = Fraction(float(ratio)).limit_denominator(1 << 20)
+        return int(frac.numerator), int(frac.denominator)
 
-        # Determine signedness and bitwidth
-        signed = input_quantA.signed or input_quantB.signed
-        common_scale = min(input_quantA.scale, input_quantB.scale)
-        align_a = int(np.log2(input_quantA.scale / common_scale))
-        align_b = int(np.log2(input_quantB.scale / common_scale))
-        acc_bits = max(input_quantA.bitwidth + align_a, input_quantB.bitwidth + align_b) + 1
+    def __quant_range(self, tensor_quant: QuantizedTensorType) -> tuple[int, int]:
+        if tensor_quant.signed:
+            return -(1 << (tensor_quant.bitwidth - 1)), (1 << (tensor_quant.bitwidth - 1)) - 1
+        return 0, (1 << tensor_quant.bitwidth) - 1
 
-        # In case the input signedness is different, we need an extra bit, as the accumulator will be signed.
-        if (input_quantA.signed != input_quantB.signed):
-            acc_bits += 1
+    def __max_centered_magnitude(self, tensor_quant: QuantizedTensorType) -> int:
+        qmin, qmax = self.__quant_range(tensor_quant)
+        return max(abs(qmin - tensor_quant.zeropt), abs(qmax - tensor_quant.zeropt))
 
-        acc_quant = QuantizedTensorType(
+    def __aligned_bound(self, scale: float, acc_scale: float, magnitude: int) -> int:
+        ratio = float(scale) / float(acc_scale)
+        return int(np.ceil(abs(ratio) * magnitude + 0.5))
+
+    def __signed_range_bits(self, bound: int) -> int:
+        bound = max(1, int(bound))
+        return int(np.ceil(np.log2(bound + 1))) + 1
+
+    def __get_accumulator_quant(self, input_quantA, input_quantB) -> QuantizedTensorType:
+        acc_scale = min(input_quantA.scale, input_quantB.scale)
+        bound_a = self.__aligned_bound(
+            input_quantA.scale,
+            acc_scale,
+            self.__max_centered_magnitude(input_quantA),
+        )
+        bound_b = self.__aligned_bound(
+            input_quantB.scale,
+            acc_scale,
+            self.__max_centered_magnitude(input_quantB),
+        )
+        signed = (
+            bool(input_quantA.signed)
+            or bool(input_quantB.signed)
+            or int(input_quantA.zeropt) != 0
+            or int(input_quantB.zeropt) != 0
+        )
+        acc_bits = self.__signed_range_bits(bound_a + bound_b + 1)
+        return QuantizedTensorType(
             bitwidth=acc_bits,
             signed=signed,
-            scale=common_scale,
-            zeropt=input_quantA.zeropt
+            scale=acc_scale,
+            zeropt=0,
         )
-        return f"{acc_quant.get_hls_data_type()}"
 
-    def __get_align_shift(self, input_quantA, input_quantB) -> tuple[str, str]:
-        """ Returns the align shifts for the Add operation. """
+    def __get_accumulator(self, input_quantA, input_quantB):
+        """ Returns the accumulator type for the Add operation. """
+        return self.__get_accumulator_quant(input_quantA, input_quantB).get_hls_data_type()
 
-        common_scale = min(input_quantA.scale, input_quantB.scale)
-        align_a = int(np.log2(input_quantA.scale / common_scale))
-        align_b = int(np.log2(input_quantB.scale / common_scale))
+    def __get_input_aligner(self, input_quant, acc_quant) -> str:
+        ratio = float(input_quant.scale) / float(acc_quant.scale)
+        input_type = input_quant.get_hls_data_type()
+        acc_type = acc_quant.get_hls_data_type()
+        zeropt = int(input_quant.zeropt)
 
-        if align_a != 0:
-            alignA = f"DequantQuantPo2<{-align_a}, {input_quantA.get_hls_data_type()}, {self.__get_accumulator(input_quantA, input_quantB)}>"
-        else:
-            alignA = f"DequantQuantEqual<{input_quantA.get_hls_data_type()}>"
+        if np.isclose(ratio, 1.0, atol=1e-12):
+            if zeropt == 0:
+                return f"DequantQuantEqual<{input_type}>"
+            return f"DequantAlignEqual<{zeropt}, {input_type}, {acc_type}>"
 
-        if align_b != 0:
-            alignB = f"DequantQuantPo2<{-align_b}, {input_quantB.get_hls_data_type()}, {self.__get_accumulator(input_quantA, input_quantB)}>"
-        else:
-            alignB = f"DequantQuantEqual<{input_quantB.get_hls_data_type()}>"
+        if self.__is_power_of_two(ratio):
+            shift = -1 * int(np.log2(ratio))
+            if zeropt == 0:
+                return f"DequantQuantPo2<{shift}, {input_type}, {acc_type}>"
+            return f"DequantAlignPo2<{shift}, {zeropt}, {input_type}, {acc_type}>"
 
-        return alignA, alignB
+        num, den = self.__ratio_to_fraction(ratio)
+        if zeropt == 0:
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {input_type}, {acc_type}>"
+            return f"DequantQuantFloat<{num}, {den}, {input_type}, {acc_type}>"
+        return f"DequantAlignFloat<{num}, {den}, {zeropt}, {input_type}, {acc_type}>"
+
+    def __get_aligners(self, input_quantA, input_quantB) -> tuple[str, str]:
+        acc_quant = self.__get_accumulator_quant(input_quantA, input_quantB)
+        return (
+            self.__get_input_aligner(input_quantA, acc_quant),
+            self.__get_input_aligner(input_quantB, acc_quant),
+        )
 
     def __get_quantizer(self, input_quantA, input_quantB, output_type) -> str:
         """ Returns the quantizer type for the Add operation. """
+        acc_quant = self.__get_accumulator_quant(input_quantA, input_quantB)
+        ratio = float(acc_quant.scale) / float(output_type.scale)
+        accumulator = acc_quant.get_hls_data_type()
+        hls_output_type = output_type.get_hls_data_type()
+        output_zeropt = int(np.asarray(output_type.zeropt).reshape(()).item())
+        activation = self.get_nodeattr("activation")
 
-        if (
-            self.__is_power_of_two(input_quantA.scale)
-            and self.__is_power_of_two(input_quantB.scale)
-            and self.__is_power_of_two(output_type.scale)
-        ):
-            common_scale = min(input_quantA.scale, input_quantB.scale)
-            shift = -1 * (
-                int(np.log2(common_scale))
-                - int(np.log2(output_type.scale))
-            )
-            accumulator = self.__get_accumulator(input_quantA, input_quantB)
-            hls_output_type = output_type.get_hls_data_type()
-            activation = self.get_nodeattr("activation")
+        if self.__is_power_of_two(ratio):
+            shift = -1 * int(np.log2(ratio))
             if activation == "NoOp":
-                return f"DequantQuantPo2<{shift}, {accumulator}, {hls_output_type}>"
+                return f"DequantQuantPo2<{shift}, {accumulator}, {hls_output_type}, {output_zeropt}>"
             if activation == "ReLU":
-                return f"ReLUQuantPo2<{shift}, {accumulator}, {hls_output_type}>"
+                return f"ReLUQuantPo2<{shift}, {accumulator}, {hls_output_type}, {output_zeropt}>"
             if activation == "LeakyReLU":
                 alpha_num = self.get_nodeattr("activation_alpha_num")
                 alpha_den = self.get_nodeattr("activation_alpha_den")
                 if self.__is_power_of_two(alpha_den):
                     alpha_den_shift = int(np.log2(alpha_den))
-                    return f"LeakyReLUQuantPo2<{shift}, {alpha_num}, {alpha_den_shift}, {accumulator}, {hls_output_type}>"
+                    return f"LeakyReLUQuantPo2<{shift}, {alpha_num}, {alpha_den_shift}, {accumulator}, {hls_output_type}, {output_zeropt}>"
                 raise ValueError(
                     "Fused LeakyReLU currently requires a power-of-two alpha denominator."
                 )
             raise ValueError(
                 f"Unsupported activation function '{activation}' for StreamingAdd."
             )
-        else:
+
+        num, den = self.__ratio_to_fraction(ratio)
+        if activation == "NoOp":
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {accumulator}, {hls_output_type}, {output_zeropt}>"
+            return f"DequantQuantFloat<{num}, {den}, {accumulator}, {hls_output_type}, {output_zeropt}>"
+        if activation == "ReLU":
+            return f"ReLUQuantFloat<{num}, {den}, {accumulator}, {hls_output_type}, {output_zeropt}>"
+        if activation == "LeakyReLU":
             raise ValueError(
-                "Float quantization is currently not supported for StreamingAdd."
+                "Fused LeakyReLU currently requires power-of-two quantization scales in StreamingAdd."
             )
+        raise ValueError(
+            f"Unsupported activation function '{activation}' for StreamingAdd."
+        )
 
     def __get_object_declaration(self, model) -> cpp_object:
 
@@ -251,8 +304,8 @@ class StreamingAdd(NN2FPGAOp):
                     f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
                     f"OutputTransform",
                 ),
-                (f"{self.__get_align_shift(input_typeA, input_typeB)[0]}", "AlignA"),
-                (f"{self.__get_align_shift(input_typeA, input_typeB)[1]}", "AlignB"),
+                (f"{self.__get_aligners(input_typeA, input_typeB)[0]}", "AlignA"),
+                (f"{self.__get_aligners(input_typeA, input_typeB)[1]}", "AlignB"),
                 (f"{input_shapeA[1]}", "DIM0"),
                 (f"{input_shapeA[2]}", "DIM1"),
                 (f"{input_shapeA[3]}", "DIM2"),

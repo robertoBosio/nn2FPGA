@@ -1,7 +1,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, is_constant_input_node
-from nn2fpga.compiler.transforms.add_streaming_params import quant_array
+from nn2fpga.compiler.utils.quantization import quant_array
 import numpy as np
 import logging
 

@@ -16,7 +16,7 @@ constexpr int leakyrelu_unsigned_bits(int x) {
 }
 
 template <int Shift, int AlphaNum, int AlphaDenShift, typename TAcc,
-          typename TOut>
+          typename TOut, int ZeroPoint = 0>
 struct LeakyReLUQuantPo2 {
   TOut operator()(TAcc acc) const {
 #pragma HLS inline
@@ -25,10 +25,10 @@ struct LeakyReLUQuantPo2 {
           ap_int<TAcc::width + leakyrelu_unsigned_bits(leakyrelu_abs(AlphaNum)) +
                  1>;
       TWide scaled = TWide(acc) * AlphaNum;
-      DequantQuantPo2<Shift + AlphaDenShift, TWide, TOut> quantizer;
+      DequantQuantPo2<Shift + AlphaDenShift, TWide, TOut, ZeroPoint> quantizer;
       return quantizer(scaled);
     } else {
-      DequantQuantPo2<Shift, TAcc, TOut> quantizer;
+      DequantQuantPo2<Shift, TAcc, TOut, ZeroPoint> quantizer;
       return quantizer(acc);
     }
   }

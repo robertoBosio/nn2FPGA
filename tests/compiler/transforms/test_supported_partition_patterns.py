@@ -202,7 +202,12 @@ def _build_slice_pattern_model(
     return ModelWrapper(qonnx_make_model(graph, producer_name="test_producer"))
 
 
-def _build_concat_pattern_model(*, axis: int, quant_params: list[tuple[float, int, int]]):
+def _build_concat_pattern_model(
+    *,
+    axis: int,
+    quant_params: list[tuple[float, int, int]],
+    output_quantized: bool = True,
+):
     input_tensors = [
         helper.make_tensor_value_info(f"input_{index}", TensorProto.FLOAT, [1, 4, 1, 1])
         for index in range(len(quant_params))
@@ -226,11 +231,18 @@ def _build_concat_pattern_model(*, axis: int, quant_params: list[tuple[float, in
     concat_node = helper.make_node(
         "Concat",
         inputs=[f"quant_out_{index}" for index in range(len(quant_params))],
-        outputs=["output"],
+        outputs=["concat_output" if output_quantized else "output"],
         axis=axis,
         name="concat_node",
     )
     nodes.append(concat_node)
+
+    if output_quantized:
+        quant_inits, output_quant = _build_quant_node(
+            "concat_output", "output", 0.125, 0, 8, "output_quant"
+        )
+        initializers.extend(quant_inits)
+        nodes.append(output_quant)
     return ModelWrapper(
         qonnx_make_model(
             helper.make_graph(
@@ -245,11 +257,69 @@ def _build_concat_pattern_model(*, axis: int, quant_params: list[tuple[float, in
     )
 
 
+def _build_focus_pattern_model():
+    input_tensor = helper.make_tensor_value_info("source", TensorProto.FLOAT, [1, 3, 8, 8])
+    output_tensor = helper.make_tensor_value_info("focus_out", TensorProto.FLOAT, [1, 12, 4, 4])
+    initializers = [
+        helper.make_tensor("even", TensorProto.INT64, [1], [0]),
+        helper.make_tensor("odd", TensorProto.INT64, [1], [1]),
+        helper.make_tensor("end", TensorProto.INT64, [1], [2147483647]),
+        helper.make_tensor("height_axis", TensorProto.INT64, [1], [2]),
+        helper.make_tensor("width_axis", TensorProto.INT64, [1], [3]),
+        helper.make_tensor("step", TensorProto.INT64, [1], [2]),
+    ]
+
+    def slice_node(name, data, start, axis):
+        return helper.make_node(
+            "Slice", [data, start, "end", axis, "step"], [name], name=f"slice_{name}"
+        )
+
+    quant_initializers = []
+    quant_nodes = []
+    for output, source in (
+        ("q_source", "source"),
+        ("q_h_even", "h_even"),
+        ("q_h_odd", "h_odd"),
+        ("q_ee", "ee"),
+        ("q_eo", "eo"),
+        ("q_oe", "oe"),
+        ("q_oo", "oo"),
+        ("focus_out", "focus_concat"),
+    ):
+        inits, node = _build_quant_node(source, output, 1.0, -128, 8, output)
+        quant_initializers.extend(inits)
+        quant_nodes.append(node)
+
+    nodes = [
+        quant_nodes[0],
+        slice_node("h_even", "q_source", "even", "height_axis"),
+        slice_node("h_odd", "q_source", "odd", "height_axis"),
+        quant_nodes[1],
+        quant_nodes[2],
+        slice_node("ee", "q_h_even", "even", "width_axis"),
+        slice_node("eo", "q_h_even", "odd", "width_axis"),
+        slice_node("oe", "q_h_odd", "even", "width_axis"),
+        slice_node("oo", "q_h_odd", "odd", "width_axis"),
+        *quant_nodes[3:7],
+        helper.make_node("Concat", ["q_ee", "q_oe", "q_eo", "q_oo"], ["focus_concat"], axis=1, name="focus_concat"),
+        quant_nodes[7],
+    ]
+    graph = helper.make_graph(
+        nodes,
+        name="focus_pattern_graph",
+        inputs=[input_tensor],
+        outputs=[output_tensor],
+        initializer=[*initializers, *quant_initializers],
+    )
+    return ModelWrapper(qonnx_make_model(graph, producer_name="test_producer"))
+
+
 def _build_resize_pattern_model(
     *,
     roi_name: str,
     mode: str,
     coordinate_transformation_mode: str,
+    roi_values: tuple[float, ...] | None = None,
     scales_name: str = "scales",
     scales_values: tuple[float, ...] = (1.0, 1.0, 2.0, 2.0),
     scales_as_constant: bool = False,
@@ -261,6 +331,16 @@ def _build_resize_pattern_model(
     )
     nodes = [input_quant]
     initializers = list(quant_inits)
+
+    if roi_name != "" and roi_values is not None:
+        initializers.append(
+            helper.make_tensor(
+                roi_name,
+                TensorProto.FLOAT,
+                [len(roi_values)],
+                list(roi_values),
+            )
+        )
 
     resize_inputs = ["quantized_input", roi_name, scales_name]
     if scales_as_constant:
@@ -448,6 +528,100 @@ def _build_leakyrelu_fusable_pattern_model(producer_op_type: str):
     )
 
 
+def _build_unary_quant_pattern_model(op_type: str, quantize_output: bool = False):
+    input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4, 1, 1])
+    output_tensor = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4, 1, 1])
+
+    quant_inits, quant_node = _build_quant_node(
+        "input",
+        "quantized_input",
+        0.1,
+        0,
+        8,
+        "input_quant",
+    )
+    nodes = [quant_node]
+    initializers = list(quant_inits)
+
+    op_output_name = "output"
+    if quantize_output:
+        op_output_name = f"{op_type.lower()}_out"
+
+    op_node = helper.make_node(
+        op_type,
+        inputs=["quantized_input"],
+        outputs=[op_output_name],
+        name=f"{op_type.lower()}_node",
+    )
+    nodes.append(op_node)
+
+    if quantize_output:
+        out_quant_inits, out_quant = _build_quant_node(
+            op_output_name,
+            "output",
+            0.1,
+            0,
+            8,
+            "output_quant",
+        )
+        initializers.extend(out_quant_inits)
+        nodes.append(out_quant)
+
+    return ModelWrapper(
+        qonnx_make_model(
+            helper.make_graph(
+                nodes,
+                name=f"{op_type.lower()}_pattern_graph",
+                inputs=[input_tensor],
+                outputs=[output_tensor],
+                initializer=initializers,
+            ),
+            producer_name="test_producer",
+        )
+    )
+
+
+def _build_hardsigmoid_mul_pattern_model(alpha: float = 0.1666666716337204):
+    input_tensor = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4, 1, 1])
+    output_tensor = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4, 1, 1])
+
+    quant_inits, quant_node = _build_quant_node(
+        "input",
+        "quantized_input",
+        0.1,
+        0,
+        8,
+        "input_quant",
+    )
+    const_tensor = helper.make_tensor("mul_const", TensorProto.FLOAT, [], [1.0001220703125])
+    hardsigmoid_node = helper.make_node(
+        "HardSigmoid",
+        inputs=["quantized_input"],
+        outputs=["hardsigmoid_out"],
+        name="hardsigmoid_node",
+        alpha=alpha,
+    )
+    mul_node = helper.make_node(
+        "Mul",
+        inputs=["hardsigmoid_out", "mul_const"],
+        outputs=["output"],
+        name="mul_node",
+    )
+
+    return ModelWrapper(
+        qonnx_make_model(
+            helper.make_graph(
+                [quant_node, hardsigmoid_node, mul_node],
+                name="hardsigmoid_mul_pattern_graph",
+                inputs=[input_tensor],
+                outputs=[output_tensor],
+                initializer=[*quant_inits, const_tensor],
+            ),
+            producer_name="test_producer",
+        )
+    )
+
+
 def test_slice_pattern_matches_full_tiling_with_equal_output_quant_params():
     model = _build_slice_pattern_model(
         slice_specs=[
@@ -572,8 +746,8 @@ def test_concat_pattern_matches_supported_axis_with_equal_quant_params():
     match = match_supported_patterns(model, anchor_node)
 
     assert match.ok is True
-    assert match.pattern_name == "Concat(Quant(...)) same params"
-    assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
+    assert match.pattern_name == "Concat(Quant(...)) -> Quant supported axis"
+    assert {"concat_node", "input_quant_0", "input_quant_1", "output_quant"}.issubset(match.covered)
 
 
 def test_concat_pattern_matches_negative_last_axis():
@@ -583,7 +757,7 @@ def test_concat_pattern_matches_negative_last_axis():
     match = match_supported_patterns(model, anchor_node)
 
     assert match.ok is True
-    assert match.pattern_name == "Concat(Quant(...)) same params"
+    assert match.pattern_name == "Concat(Quant(...)) -> Quant supported axis"
     assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
 
 
@@ -594,18 +768,33 @@ def test_concat_pattern_matches_negative_height_axis():
     match = match_supported_patterns(model, anchor_node)
 
     assert match.ok is True
-    assert match.pattern_name == "Concat(Quant(...)) same params"
+    assert match.pattern_name == "Concat(Quant(...)) -> Quant supported axis"
     assert {"concat_node", "input_quant_0", "input_quant_1"}.issubset(match.covered)
 
 
-def test_concat_pattern_rejects_different_quant_params():
+def test_concat_pattern_accepts_different_quant_params():
     model = _build_concat_pattern_model(axis=1, quant_params=[(0.1, 0, 8), (0.2, 0, 8)])
     anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
 
     match = match_supported_patterns(model, anchor_node)
 
+    assert match.ok is True
+    assert match.pattern_name == "Concat(Quant(...)) -> Quant supported axis"
+    assert {"concat_node", "input_quant_0", "input_quant_1", "output_quant"}.issubset(match.covered)
+
+
+def test_concat_pattern_rejects_missing_output_quantizer():
+    model = _build_concat_pattern_model(
+        axis=1,
+        quant_params=[(0.1, 0, 8), (0.2, 0, 8)],
+        output_quantized=False,
+    )
+    anchor_node = next(node for node in model.graph.node if node.name == "concat_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
     assert match.ok is False
-    assert any("Concat inputs quant params differ" in reason for reason in match.reasons)
+    assert any("exactly one Quant/IntQuant consumer" in reason for reason in match.reasons)
 
 
 def test_concat_pattern_rejects_unsupported_axis():
@@ -643,9 +832,26 @@ def test_resize_pattern_matches_nearest_asymmetric_with_initializer_scales():
     assert {"resize_node", "input_quant"}.issubset(match.covered)
 
 
+def test_resize_pattern_matches_empty_roi_initializer():
+    model = _build_resize_pattern_model(
+        roi_name="roi",
+        roi_values=(),
+        mode="nearest",
+        coordinate_transformation_mode="asymmetric",
+    )
+    anchor_node = next(node for node in model.graph.node if node.name == "resize_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Resize(Quant(act)) upsample nearest/asymmetric + scales [1,1,s,s]"
+    assert {"resize_node", "input_quant"}.issubset(match.covered)
+
+
 def test_resize_pattern_rejects_non_empty_roi():
     model = _build_resize_pattern_model(
         roi_name="roi",
+        roi_values=(0.0, 0.0, 1.0, 1.0),
         mode="nearest",
         coordinate_transformation_mode="asymmetric",
     )
@@ -654,7 +860,7 @@ def test_resize_pattern_rejects_non_empty_roi():
     match = match_supported_patterns(model, anchor_node)
 
     assert match.ok is False
-    assert any("Resize roi input must be empty" in reason for reason in match.reasons)
+    assert any("Resize roi input must be empty or an empty initializer" in reason for reason in match.reasons)
 
 
 def test_resize_pattern_rejects_constant_scales_node():
@@ -685,6 +891,28 @@ def test_resize_pattern_rejects_mismatched_hw_scales():
 
     assert match.ok is False
     assert any("Resize scales H and W factors must be equal" in reason for reason in match.reasons)
+
+
+def test_sigmoid_pattern_matches_quantized_input():
+    model = _build_unary_quant_pattern_model("Sigmoid", quantize_output=True)
+    anchor_node = next(node for node in model.graph.node if node.name == "sigmoid_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Sigmoid(Quant(x))"
+    assert {"sigmoid_node", "input_quant"}.issubset(match.covered)
+
+
+def test_mul_hardsigmoid_const_pattern_matches_quantized_input():
+    model = _build_hardsigmoid_mul_pattern_model()
+    anchor_node = next(node for node in model.graph.node if node.name == "mul_node")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Mul(HardSigmoid(Quant(x)), Const)"
+    assert {"mul_node", "hardsigmoid_node", "input_quant"}.issubset(match.covered)
 
 
 def test_add_pattern_matches_two_activation_quant_inputs_even_with_different_params():
@@ -795,3 +1023,30 @@ def test_leakyrelu_pattern_rejects_non_quantized_non_fusable_input():
 
     assert match.ok is False
     assert any("LeakyRelu must be quantized or fusable into Conv/Gemm/Add" in reason for reason in match.reasons)
+
+
+def test_focus_pattern_matches_int32_end_sentinel():
+    model = _build_focus_pattern_model()
+    anchor_node = next(node for node in model.graph.node if node.name == "focus_concat")
+
+    match = match_supported_patterns(model, anchor_node)
+
+    assert match.ok is True
+    assert match.pattern_name == "Focus Slice/Quant/Concat"
+    assert match.covered == {
+        "slice_h_even",
+        "slice_h_odd",
+        "slice_ee",
+        "slice_eo",
+        "slice_oe",
+        "slice_oo",
+        "q_source",
+        "q_h_even",
+        "q_h_odd",
+        "q_ee",
+        "q_eo",
+        "q_oe",
+        "q_oo",
+        "focus_concat",
+        "focus_out",
+    }

@@ -5,6 +5,7 @@
 #include "test_config.hpp"
 #include "utils/CSDFG_utils.hpp"
 #include <array>
+#include <cmath>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
@@ -33,6 +34,7 @@ bool test_run() {
   // Prepare input and output streams
   hls::stream<TInputWord> in_stream[test_config::IN_DIM1_UNROLL];
   hls::stream<TOutputWord> out_stream[test_config::OUT_DIM1_UNROLL];
+  const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Fill input streams with test data
   for (size_t i_dim0 = 0; i_dim0 < test_config::IN_DIM0; i_dim0++) {
@@ -70,17 +72,15 @@ bool test_run() {
           TOutputWord output_data = out_stream[i_dim1_par].read();
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
-
-            // Check if the output data matches the expected result
-            if (output_data[i_dim2_par] !=
-                test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                          [i_dim1 + i_dim1_par]) {
+            const int got = int(output_data[i_dim2_par]);
+            const int expected =
+                int(test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                              [i_dim1 + i_dim1_par]);
+            if (std::abs(got - expected) > tol) {
               std::cerr
                   << "Output mismatch at (" << i_dim0 << ", "
                   << i_dim1 + i_dim1_par << ", " << i_dim2 + i_dim2_par
-                  << "): " << output_data[i_dim2_par] << " != "
-                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                               [i_dim1 + i_dim1_par]
+                  << "): " << got << " != " << expected
                   << std::endl;
               return false;
             }

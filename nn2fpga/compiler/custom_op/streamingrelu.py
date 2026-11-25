@@ -15,6 +15,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
 
 class StreamingReLU(NN2FPGAOp):
@@ -132,6 +133,11 @@ class StreamingReLU(NN2FPGAOp):
                 return f"DequantQuantEqual<{input_quant.get_hls_data_type()}>"
             return f"DequantQuantPo2<{shift}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
         else:
+            ratio = float(output_quant.scale) / float(input_quant.scale)
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return f"DequantQuantFloatShift<{n}, {s}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
             raise ValueError(
                 "Float quantization is currently not supported for StreamingReLU."
             )

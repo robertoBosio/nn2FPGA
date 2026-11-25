@@ -20,10 +20,20 @@ template <typename T> struct ReLU {
   }
 };
 
-template <int Shift, typename TAcc, typename TOut> struct ReLUQuantPo2 {
+template <int Shift, typename TAcc, typename TOut, int ZeroPoint = 0>
+struct ReLUQuantPo2 {
   TOut operator()(TAcc acc) const {
 #pragma HLS inline
-    DequantQuantPo2<Shift, TAcc, TOut> quantizer;
+    DequantQuantPo2<Shift, TAcc, TOut, ZeroPoint> quantizer;
+    return acc < 0 ? quantizer(TAcc(0)) : quantizer(acc);
+  }
+};
+
+template <int Num, int Den, typename TAcc, typename TOut, int ZeroPoint = 0>
+struct ReLUQuantFloat {
+  TOut operator()(TAcc acc) const {
+#pragma HLS inline
+    DequantQuantFloat<Num, Den, TAcc, TOut, ZeroPoint> quantizer;
     return acc < 0 ? quantizer(TAcc(0)) : quantizer(acc);
   }
 };

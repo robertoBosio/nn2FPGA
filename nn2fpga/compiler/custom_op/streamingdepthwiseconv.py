@@ -29,6 +29,10 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import (
+    ratio_to_fraction,
+    ratio_to_shift_form,
+)
 
 
 class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
@@ -361,6 +365,19 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
         """
         return f"{name}_stream"
 
+    def __get_effective_input_quant(self, input_quant):
+        if self.get_nodeattr("asym_folding") == 0:
+            return input_quant
+
+        return QuantizedTensorType(
+            bitwidth=input_quant.bitwidth,
+            signed=input_quant.signed,
+            scale=input_quant.scale,
+            zeropt=0,
+            narrow=input_quant.narrow,
+            rounding_mode=input_quant.rounding_mode,
+        )
+
     def __get_partial_accumulator(
         self, input_quant, weights_quant, bias_quant, weights_shape
     ) -> str:
@@ -430,6 +447,8 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
     ) -> str:
         """Returns the quantizer type for the StreamingDepthwiseConv operation."""
 
+        output_zeropt = int(np.asarray(output_quant.zeropt).reshape(()).item())
+
         # Check if the scale is a power of two
         if isinstance(weights_quant.scale, (list, np.ndarray)):
             if len(weights_quant.scale) != 1:
@@ -439,6 +458,12 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
             weights_scale = weights_quant.scale[0]
         else:
             weights_scale = weights_quant.scale
+
+        accumulator = self.__get_accumulator(
+            input_quant, weights_quant, bias_quant, weights_shape
+        )
+        output_type = output_quant.get_hls_data_type()
+        activation = self.get_nodeattr("activation")
 
         if (
             self.__is_power_of_two(input_quant.scale)
@@ -450,13 +475,8 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            accumulator = self.__get_accumulator(
-                input_quant, weights_quant, bias_quant, weights_shape
-            )
-            output_type = output_quant.get_hls_data_type()
-            activation = self.get_nodeattr("activation")
             if activation == "NoOp":
-                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}>"
+                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation == "ReLU":
                 return f"ReLUQuantPo2<{shift}, {accumulator}, {output_type}>"
             if activation == "LeakyReLU":
@@ -472,8 +492,20 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
                 f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
             )
         else:
+            ratio = (weights_scale * input_quant.scale) / output_quant.scale
+            num, den = ratio_to_fraction(ratio)
+            if activation == "NoOp":
+                shift_form = ratio_to_shift_form(ratio)
+                if shift_form is not None:
+                    n, s = shift_form
+                    return f"DequantQuantFloatShift<{n}, {s}, {accumulator}, {output_type}, {output_zeropt}>"
+                return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}, {output_zeropt}>"
+            if activation in ["ReLU", "LeakyReLU"]:
+                raise ValueError(
+                    f"Fused {activation} currently requires power-of-two quantization scales."
+                )
             raise ValueError(
-                "Float quantization is currently not supported for StreamingDepthwiseConv.  "
+                f"Unsupported activation function '{activation}' for StreamingDepthwiseConv."
             )
 
     def __current_dse_point(self) -> "StreamingDepthwiseConv.DSEPoint":
@@ -488,7 +520,9 @@ class StreamingDepthwiseConv(NN2FPGAOp, DSECapable, HasParameters):
     def __get_object_declaration(self, model) -> cpp_object:
         """Generate the cpp_object for the StreamingDepthwiseConv operation."""
 
-        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        input_type = self.__get_effective_input_quant(
+            require_tensor_type(model, self.onnx_node.input[0])
+        )
         output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         weights_quant = QuantizedTensorType(

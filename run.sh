@@ -30,7 +30,7 @@ if ! docker image inspect "${IMAGE_NAME}" > /dev/null 2>&1; then
     echo "Building Docker image '${IMAGE_NAME}'..."
     docker build \
         --file docker/Dockerfile \
-        --build-arg NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/NN2FPGA" \
+        --build-arg NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/nn2FPGA" \
         -t "${IMAGE_NAME}" .
 fi
 
@@ -38,7 +38,7 @@ fi
 EXTRA_DOCKER_ARGS=()
 if [ -n "${WORK_DIR:-}" ]; then
     EXTRA_DOCKER_ARGS+=(
-        -v "${WORK_DIR}:${WORKSPACE_ROOT_DIR}/NN2FPGA/work"
+        -v "${WORK_DIR}:${WORKSPACE_ROOT_DIR}/nn2FPGA/work"
     )
 fi
 
@@ -53,7 +53,7 @@ docker run -it --rm \
     "${EXTRA_DOCKER_ARGS[@]}" \
     --network=host \
     --memory 80g \
-    --env NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/NN2FPGA" \
+    --env NN2FPGA_ROOT_DIR="${WORKSPACE_ROOT_DIR}/nn2FPGA" \
     --env XILINX_DIR="${XILINX_DIR}" \
     --env XRT_DIR="${XRT_DIR}" \
     --env XILINX_VERSION="${XILINX_VERSION}" \

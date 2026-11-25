@@ -19,9 +19,10 @@
  * @tparam DIM2_UNROLL The unrolling factor for the third dimension.
  */
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_DIM0, size_t IN_DIM1,
-          size_t IN_DIM2_A, size_t IN_DIM2_B, size_t DIM1_UNROLL,
+template <typename TInputWordA, typename TInputA, typename TInputWordB,
+          typename TInputB, typename TOutputWord, typename TOutput,
+          typename TransformA, typename TransformB, size_t IN_DIM0,
+          size_t IN_DIM1, size_t IN_DIM2_A, size_t IN_DIM2_B, size_t DIM1_UNROLL,
           size_t DIM2_UNROLL>
 class StreamingConcatDim2 {
   static_assert(IN_DIM1 % DIM1_UNROLL == 0, "DIM1_UNROLL must divide IN_DIM1");
@@ -39,8 +40,8 @@ public:
   StreamingConcatDim2() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  void run(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
            hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     for (size_t i_dim01 = 0; i_dim01 < IN_DIM0 * IN_DIM1 / DIM1_UNROLL;
          i_dim01++) {
@@ -53,8 +54,8 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  ActorStatus step(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                    hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
@@ -150,40 +151,38 @@ private:
     return r;
   }
 
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  static void pipeline_body(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                             hls::stream<TOutputWord> o_data[DIM1_UNROLL],
                             size_t i_dim2) {
 #pragma HLS inline
-    TInputWord input_word;
     TOutputWord output_word;
-    Quantizer quantizer;
+    TransformA transform_a;
+    TransformB transform_b;
 
     for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       // Read the input data structure from the input streams.
       if (i_dim2 < IN_DIM2_A / DIM2_UNROLL) {
-        input_word = i_dataA[i_dim1_par].read();
+        TInputWordA input_word = i_dataA[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+          TInputA input_data = input_word[i_dim2_par];
+          output_word[i_dim2_par] = transform_a(input_data);
+        }
       } else {
-        input_word = i_dataB[i_dim1_par].read();
-      }
-
-      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
-        // Extract the data for the current pixel channel.
-        TInput input_data = input_word[i_dim2_par];
-
-        // Quantize the sum.
-        TOutput output_data = quantizer(input_data);
-
-        // Store the quantized data in the output structure.
-        output_word[i_dim2_par] = output_data;
+        TInputWordB input_word = i_dataB[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+          TInputB input_data = input_word[i_dim2_par];
+          output_word[i_dim2_par] = transform_b(input_data);
+        }
       }
       o_data[i_dim1_par].write(output_word);
     }
   }
 };
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_DIM0,
+template <typename TInputWordA, typename TInputA, typename TInputWordB,
+          typename TInputB, typename TOutputWord, typename TOutput,
+          typename TransformA, typename TransformB, size_t IN_DIM0,
           size_t IN_DIM1_A, size_t IN_DIM1_B, size_t IN_DIM2,
           size_t DIM1_UNROLL, size_t DIM2_UNROLL>
 class StreamingConcatDim1 {
@@ -202,8 +201,8 @@ public:
   StreamingConcatDim1() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  void run(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
            hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     for (size_t i_dim0 = 0; i_dim0 < IN_DIM0; i_dim0++) {
       for (size_t i_dim1 = 0; i_dim1 < (IN_DIM1_A + IN_DIM1_B);
@@ -217,8 +216,8 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  ActorStatus step(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                    hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
@@ -318,40 +317,38 @@ private:
     return r;
   }
 
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  static void pipeline_body(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                             hls::stream<TOutputWord> o_data[DIM1_UNROLL],
                             size_t i_dim1) {
 #pragma HLS inline
-    TInputWord input_word;
     TOutputWord output_word;
-    Quantizer quantizer;
+    TransformA transform_a;
+    TransformB transform_b;
 
     for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       // Read the input data structure from the input streams.
       if (i_dim1 < IN_DIM1_A) {
-        input_word = i_dataA[i_dim1_par].read();
+        TInputWordA input_word = i_dataA[i_dim1_par].read();
+        for (size_t i_ch_par = 0; i_ch_par < DIM2_UNROLL; i_ch_par++) {
+          TInputA input_data = input_word[i_ch_par];
+          output_word[i_ch_par] = transform_a(input_data);
+        }
       } else {
-        input_word = i_dataB[i_dim1_par].read();
-      }
-
-      for (size_t i_ch_par = 0; i_ch_par < DIM2_UNROLL; i_ch_par++) {
-        // Extract the data for the current pixel channel.
-        TInput input_data = input_word[i_ch_par];
-
-        // Quantize the sum.
-        TOutput output_data = quantizer(input_data);
-
-        // Store the quantized data in the output structure.
-        output_word[i_ch_par] = output_data;
+        TInputWordB input_word = i_dataB[i_dim1_par].read();
+        for (size_t i_ch_par = 0; i_ch_par < DIM2_UNROLL; i_ch_par++) {
+          TInputB input_data = input_word[i_ch_par];
+          output_word[i_ch_par] = transform_b(input_data);
+        }
       }
       o_data[i_dim1_par].write(output_word);
     }
   }
 };
 
-template <typename TInputWord, typename TInput, typename TOutputWord,
-          typename TOutput, typename Quantizer, size_t IN_DIM0_A,
+template <typename TInputWordA, typename TInputA, typename TInputWordB,
+          typename TInputB, typename TOutputWord, typename TOutput,
+          typename TransformA, typename TransformB, size_t IN_DIM0_A,
           size_t IN_DIM0_B, size_t IN_DIM1, size_t IN_DIM2, size_t DIM1_UNROLL,
           size_t DIM2_UNROLL>
 class StreamingConcatDim0 {
@@ -367,8 +364,8 @@ public:
   StreamingConcatDim0() = default;
 
   template <size_t HLS_TAG>
-  void run(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-           hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  void run(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+           hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
            hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     for (size_t i_dim0 = 0; i_dim0 < (IN_DIM0_A + IN_DIM0_B); i_dim0++) {
       for (size_t i_dim1 = 0; i_dim1 < IN_DIM1 / DIM1_UNROLL; i_dim1++) {
@@ -381,8 +378,8 @@ public:
     }
   }
 
-  ActorStatus step(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                   hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  ActorStatus step(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                   hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                    hls::stream<TOutputWord> o_data[DIM1_UNROLL]) {
     // Get the state for this instance.
     auto it = registry().find(this);
@@ -482,32 +479,29 @@ private:
     return r;
   }
 
-  static void pipeline_body(hls::stream<TInputWord> i_dataA[DIM1_UNROLL],
-                            hls::stream<TInputWord> i_dataB[DIM1_UNROLL],
+  static void pipeline_body(hls::stream<TInputWordA> i_dataA[DIM1_UNROLL],
+                            hls::stream<TInputWordB> i_dataB[DIM1_UNROLL],
                             hls::stream<TOutputWord> o_data[DIM1_UNROLL],
                             size_t i_dim0) {
 #pragma HLS inline
-    TInputWord input_word;
     TOutputWord output_word;
-    Quantizer quantizer;
+    TransformA transform_a;
+    TransformB transform_b;
 
     for (size_t i_dim1_par = 0; i_dim1_par < DIM1_UNROLL; i_dim1_par++) {
       // Read the input data structure from the input streams.
       if (i_dim0 < IN_DIM0_A) {
-        input_word = i_dataA[i_dim1_par].read();
+        TInputWordA input_word = i_dataA[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+          TInputA input_data = input_word[i_dim2_par];
+          output_word[i_dim2_par] = transform_a(input_data);
+        }
       } else {
-        input_word = i_dataB[i_dim1_par].read();
-      }
-
-      for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
-        // Extract the data for the current pixel channel.
-        TInput input_data = input_word[i_dim2_par];
-
-        // Quantize the sum.
-        TOutput output_data = quantizer(input_data);
-
-        // Store the quantized data in the output structure.
-        output_word[i_dim2_par] = output_data;
+        TInputWordB input_word = i_dataB[i_dim1_par].read();
+        for (size_t i_dim2_par = 0; i_dim2_par < DIM2_UNROLL; i_dim2_par++) {
+          TInputB input_data = input_word[i_dim2_par];
+          output_word[i_dim2_par] = transform_b(input_data);
+        }
       }
       o_data[i_dim1_par].write(output_word);
     }

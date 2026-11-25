@@ -1,7 +1,9 @@
-from qonnx.transformation.base import Transformation
-from qonnx.core.modelwrapper import ModelWrapper
-from onnx import helper
+import copy
 import logging
+
+from onnx import helper
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.base import Transformation
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,15 @@ class SplitConcat(Transformation):
 
             inputs = list(node.input)
             output = node.output[0]
+            output_consumers = model.find_consumers(output)
+            output_quant = next(
+                (
+                    consumer
+                    for consumer in output_consumers
+                    if consumer.op_type in {"Quant", "IntQuant"}
+                ),
+                None,
+            )
 
             axis_attr = next((attr for attr in node.attribute if attr.name == "axis"), None)
             axis = axis_attr.i if axis_attr is not None else 0
@@ -55,7 +66,16 @@ class SplitConcat(Transformation):
                     axis=axis,
                 )
                 new_nodes.append(new_node)
-                current = tmp_out
+                if output_quant is not None:
+                    quantized_tmp_out = f"{tmp_out}_quant"
+                    intermediate_quant = copy.deepcopy(output_quant)
+                    intermediate_quant.name = f"{output_quant.name}_split_{split_idx}"
+                    intermediate_quant.input[0] = tmp_out
+                    intermediate_quant.output[0] = quantized_tmp_out
+                    new_nodes.append(intermediate_quant)
+                    current = quantized_tmp_out
+                else:
+                    current = tmp_out
                 split_idx += 1
 
             final_node = helper.make_node(

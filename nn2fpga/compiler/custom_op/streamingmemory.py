@@ -36,6 +36,8 @@ class StreamingMemory(NN2FPGAOp):
             "mem_shape": ("ints", True, [1, 1, 1, 1]),  # N, C, H, W
             # Number of data to shift to next StreamingMemory
             "data_to_shift": ("i", False, 0),
+            # Storage implementation selected by AllocateStreamingMemoryURAM.
+            "storage_impl": ("s", False, "auto"),
         }
 
     def make_shape_compatible_op(self, model):
@@ -180,6 +182,10 @@ class StreamingMemory(NN2FPGAOp):
                     self.get_nodeattr("in_channel_unroll")
                     * self.get_nodeattr("out_channel_unroll"),
                     "WORD_PAR",
+                ),
+                (
+                    "true" if self.get_nodeattr("storage_impl") == "uram" else "false",
+                    "USE_URAM",
                 ),
             ],
         )

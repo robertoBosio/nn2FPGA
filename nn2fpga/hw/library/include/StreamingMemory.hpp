@@ -24,6 +24,7 @@
  * @tparam WORDS          Number of words stored in the memory.
  * @tparam ARRAY_PAR      Number of streams written in parallel.
  * @tparam WORD_PAR       Number of words packed in a single stream packet.
+ * @tparam USE_URAM       Bind the memory to URAM instead of HLS auto-selection.
  *
  * @section Implementation Details
  * - Memory initialization is done only once, on the first call to run()
@@ -31,10 +32,11 @@
  */
 
 template <typename TInputWord, typename TOutput, typename TOutputWord,
-          size_t DATA_PER_WORD, size_t DATA_TO_SHIFT, size_t TIMES,
-          size_t WORDS, size_t ARRAY_PAR, size_t WORD_PAR>
+           size_t DATA_PER_WORD, size_t DATA_TO_SHIFT, size_t TIMES,
+           size_t WORDS, size_t ARRAY_PAR, size_t WORD_PAR,
+           bool USE_URAM = false, int MEM_LATENCY = -1>
 class StreamingMemory {
-private:
+protected:
   static constexpr size_t CH_GROUPS = WORDS / (ARRAY_PAR * WORD_PAR);
 
   // Depth of the streams in output of the node.
@@ -141,6 +143,7 @@ public : StreamingMemory() = default;
     static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
 #pragma HLS array_reshape variable = mem dim = 3 complete
 #pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY
     static bool initialized_flag = false;
     if (!initialized_flag) {
       initialize_memory(i_shift_data, mem);
@@ -163,7 +166,7 @@ public : StreamingMemory() = default;
       }
     }
   }
-
+  
   ActorStatus step(hls::stream<TInputWord> i_shift_data[1],
                    hls::stream<TOutputWord> o_data[ARRAY_PAR],
                    hls::stream<TInputWord> o_shift_data[1]) {
@@ -178,6 +181,7 @@ public : StreamingMemory() = default;
     static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
 #pragma HLS array_reshape variable = mem dim = 3 complete
 #pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY
     static bool initialized_flag = false;
 
     // Initialize memory from input stream on first run
@@ -194,7 +198,7 @@ public : StreamingMemory() = default;
       }
     }
   }
-
+  
   ActorStatus step(hls::stream<TInputWord> i_shift_data[1],
                    hls::stream<TOutputWord> o_data[ARRAY_PAR]) {
     (void)i_shift_data;
@@ -206,6 +210,7 @@ public : StreamingMemory() = default;
     static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
 #pragma HLS array_reshape variable = mem dim = 3 complete
 #pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY
 
     for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
     STREAMINGMEMORY_RUN_LOOP:
@@ -215,7 +220,7 @@ public : StreamingMemory() = default;
       }
     }
   }
-
+  
   ActorStatus step(hls::stream<TOutputWord> o_data[ARRAY_PAR]) {
     static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
     // Find the state for this instance.
@@ -276,5 +281,90 @@ public : StreamingMemory() = default;
     }
 
     return st.actor_status;
+  }
+};
+
+template <typename TInputWord, typename TOutput, typename TOutputWord,
+          size_t DATA_PER_WORD, size_t DATA_TO_SHIFT, size_t TIMES,
+          size_t WORDS, size_t ARRAY_PAR, size_t WORD_PAR, int MEM_LATENCY>
+class StreamingMemory<TInputWord, TOutput, TOutputWord, DATA_PER_WORD,
+                      DATA_TO_SHIFT, TIMES, WORDS, ARRAY_PAR, WORD_PAR, true,
+                      MEM_LATENCY>
+    : public StreamingMemory<TInputWord, TOutput, TOutputWord, DATA_PER_WORD,
+                             DATA_TO_SHIFT, TIMES, WORDS, ARRAY_PAR, WORD_PAR,
+                             false, MEM_LATENCY> {
+  using Base = StreamingMemory<TInputWord, TOutput, TOutputWord, DATA_PER_WORD,
+                               DATA_TO_SHIFT, TIMES, WORDS, ARRAY_PAR, WORD_PAR,
+                               false, MEM_LATENCY>;
+  static constexpr size_t CH_GROUPS = WORDS / (ARRAY_PAR * WORD_PAR);
+
+public:
+  using Base::Base;
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_shift_data[1],
+           hls::stream<TOutputWord> o_data[ARRAY_PAR],
+           hls::stream<TInputWord> o_shift_data[1]) {
+    static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY impl = uram
+    static bool initialized_flag = false;
+    if (!initialized_flag) {
+      this->initialize_memory(i_shift_data, mem);
+    SHIFT_LOOP:
+      for (size_t i = 0; i < DATA_TO_SHIFT; i++) {
+#pragma HLS pipeline off
+        TInputWord in_word = i_shift_data[0].read();
+        o_shift_data[0].write(in_word);
+      }
+    }
+    initialized_flag = true;
+
+    for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
+      for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
+#pragma HLS pipeline II = 1
+        Base::pipeline_body(o_data, mem[i_ch_groups]);
+      }
+    }
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TInputWord> i_shift_data[1],
+           hls::stream<TOutputWord> o_data[ARRAY_PAR]) {
+    static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY impl = uram
+    static bool initialized_flag = false;
+    if (!initialized_flag) {
+      this->initialize_memory(i_shift_data, mem);
+    }
+    initialized_flag = true;
+
+    for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
+      for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
+#pragma HLS pipeline II = 1
+        Base::pipeline_body(o_data, mem[i_ch_groups]);
+      }
+    }
+  }
+
+  template <size_t HLS_TAG>
+  void run(hls::stream<TOutputWord> o_data[ARRAY_PAR]) {
+    static TOutput mem[CH_GROUPS][WORD_PAR][ARRAY_PAR];
+#pragma HLS array_reshape variable = mem dim = 3 complete
+#pragma HLS array_reshape variable = mem dim = 2 complete
+#pragma HLS bind_storage variable = mem type = ram_t2p latency = MEM_LATENCY impl = uram
+
+    for (size_t i_hw = 0; i_hw < TIMES; i_hw++) {
+    STREAMINGMEMORY_RUN_LOOP:
+      for (size_t i_ch_groups = 0; i_ch_groups < CH_GROUPS; i_ch_groups++) {
+#pragma HLS pipeline II = 1
+        Base::pipeline_body(o_data, mem[i_ch_groups]);
+      }
+    }
   }
 };

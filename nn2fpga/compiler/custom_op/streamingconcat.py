@@ -1,4 +1,5 @@
 from attr import dataclass
+from fractions import Fraction
 import numpy as np
 import onnxruntime as rt
 from onnxscript.rewriter import pattern
@@ -16,6 +17,7 @@ from nn2fpga.compiler.utils.codegen_utils import (
     cpp_object,
     get_word_type,
 )
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 import logging
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,9 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
-        dtype = model.get_tensor_datatype(node.input[0])
+        dtype = model.get_tensor_datatype(node.output[0])
+        if dtype is None:
+            dtype = model.get_tensor_datatype(node.input[0])
         model.set_tensor_datatype(node.output[0], dtype)
 
     def execute_node(self, context, graph):
@@ -146,23 +150,54 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
 
-    def __get_quantizer(self, input_quantA, input_quantB, output_quant) -> str:
-        """ Returns the quantizer type for the Add operation. """
+    def __ratio_to_fraction(self, ratio: float) -> tuple[int, int]:
+        frac = Fraction(float(ratio)).limit_denominator(1 << 20)
+        return int(frac.numerator), int(frac.denominator)
 
-        if (
-            self.__is_power_of_two(input_quantA.scale)
-            and self.__is_power_of_two(input_quantB.scale)
-            and self.__is_power_of_two(output_quant.scale)
-        ):
-            shift = -1 * (
-                int(np.log2(input_quantA.scale))
-                - int(np.log2(output_quant.scale))
+    def __get_transform(self, input_quant, output_quant) -> str:
+        ratio = float(input_quant.scale) / float(output_quant.scale)
+        input_type = input_quant.get_hls_data_type()
+        output_type = output_quant.get_hls_data_type()
+        input_zeropt = int(input_quant.zeropt)
+        output_zeropt = int(output_quant.zeropt)
+
+        if np.isclose(ratio, 1.0, atol=1e-12):
+            if input_type == output_type and input_zeropt == output_zeropt:
+                return f"DequantQuantEqual<{output_type}>"
+            return (
+                f"RequantizeEqual<{input_zeropt}, {output_zeropt}, "
+                f"{input_type}, {output_type}>"
             )
-            return f"DequantQuantPo2<{shift}, {input_quantA.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
-        else:
-            raise ValueError(
-                "Float quantization is currently not supported for StreamingConcat."
+
+        if self.__is_power_of_two(ratio):
+            shift = -1 * int(np.log2(ratio))
+            if input_zeropt == 0:
+                return (
+                    f"DequantQuantPo2<{shift}, {input_type}, {output_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"RequantizePo2<{shift}, {input_zeropt}, {output_zeropt}, "
+                f"{input_type}, {output_type}>"
             )
+
+        num, den = self.__ratio_to_fraction(ratio)
+        if input_zeropt == 0:
+            shift_form = ratio_to_shift_form(ratio)
+            if shift_form is not None:
+                n, s = shift_form
+                return (
+                    f"DequantQuantFloatShift<{n}, {s}, {input_type}, {output_type}, "
+                    f"{output_zeropt}>"
+                )
+            return (
+                f"DequantQuantFloat<{num}, {den}, {input_type}, {output_type}, "
+                f"{output_zeropt}>"
+            )
+        return (
+            f"RequantizeFloat<{num}, {den}, {input_zeropt}, {output_zeropt}, "
+            f"{input_type}, {output_type}>"
+        )
 
     def __get_object_declaration(self, model) -> cpp_object:
 
@@ -224,11 +259,19 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             template_args=[
                 (
                     f"{get_word_type(input_typeA, self.get_nodeattr('in_word_array'))}",
-                    f"TInputWord",
+                    f"TInputWordA",
                 ),
                 (
                     f"{input_typeA.get_hls_data_type()}",
-                    f"TInput",
+                    f"TInputA",
+                ),
+                (
+                    f"{get_word_type(input_typeB, self.get_nodeattr('in_word_array'))}",
+                    f"TInputWordB",
+                ),
+                (
+                    f"{input_typeB.get_hls_data_type()}",
+                    f"TInputB",
                 ),
                 (
                     f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
@@ -239,8 +282,12 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                     f"TOutput",
                 ),
                 (
-                    f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
-                    f"Quantizer",
+                    f"{self.__get_transform(input_typeA, output_type)}",
+                    f"TransformA",
+                ),
+                (
+                    f"{self.__get_transform(input_typeB, output_type)}",
+                    f"TransformB",
                 ),
                 template_args[0],
                 template_args[1],
@@ -371,8 +418,8 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
             list[StreamingConcat.DSEPoint]: List of DSE points.
         """
 
-        input_type = require_tensor_type(model, self.onnx_node.input[0])
-        input_bits = input_type.bitwidth
+        input_typeA = require_tensor_type(model, self.onnx_node.input[0])
+        input_typeB = require_tensor_type(model, self.onnx_node.input[1])
 
         output_type = require_tensor_type(model, self.onnx_node.output[0])
         output_bits = output_type.bitwidth
@@ -416,7 +463,9 @@ class StreamingConcat(NN2FPGAOp, DSECapable):
                 ),
             ):
                 # Check dimension of input streams
-                if (input_bits * dim2_unroll) > 4096:
+                if (input_typeA.bitwidth * dim2_unroll) > 4096:
+                    continue
+                if (input_typeB.bitwidth * dim2_unroll) > 4096:
                     continue
                 # Check dimension of output streams
                 if (output_bits * dim2_unroll) > 4096:

@@ -378,7 +378,8 @@ class StreamingLeakyReLU(NN2FPGAOp):
         Returns:
             int: Estimated latency in clock cycles.
         """
-        input_shape = self.require_input_shape(model, 0)
+        input_layout = require_tensor_layout(model, self.onnx_node.input[0])
+        input_shape = self.require_4d_input_shape(model, 0, input_layout)
 
         unroll_factor = self.get_nodeattr("dim2_unroll") * self.get_nodeattr("dim1_unroll")
         return np.prod(input_shape) // unroll_factor

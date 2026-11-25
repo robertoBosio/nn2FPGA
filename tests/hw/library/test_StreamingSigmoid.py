@@ -16,7 +16,10 @@ class TestStreamingSigmoid(BaseHLSTest):
 
     def generate_lut_memory(self, config_dict):
         """
-        Generate LUT contents for (DequantizeLinear -> HardSigmoid -> Mul -> QuantizeLinear),
+        Generate LUT contents for either:
+        - DequantizeLinear -> Sigmoid -> QuantizeLinear
+        - DequantizeLinear -> HardSigmoid -> Mul -> QuantizeLinear
+
         supporting signed/unsigned input and signed/unsigned output independently.
 
         Expected config_dict keys:
@@ -25,9 +28,11 @@ class TestStreamingSigmoid(BaseHLSTest):
         OUTPUT_IS_UNSIGNED (bool, optional; default False)
         X_SCALE (float), X_ZP (int)
         Y_SCALE (float), Y_ZP (int)
+        ACTIVATION_KIND (str, optional; "sigmoid" or "hardsigmoid_mul")
         SIGMOID_ALPHA (float)
         B_VALUE (float)
         """
+        activation_kind = config_dict.get("ACTIVATION_KIND", "sigmoid")
         nbits = int(config_dict["INPUT_DATAWIDTH"])
         out_bits = int(config_dict["OUTPUT_DATAWIDTH"])
         LUT_entries = 1 << nbits
@@ -73,8 +78,6 @@ class TestStreamingSigmoid(BaseHLSTest):
         X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
         Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
 
-        B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
-
         # ----- nodes -----
         dqlinear = helper.make_node(
             "DequantizeLinear",
@@ -82,18 +85,31 @@ class TestStreamingSigmoid(BaseHLSTest):
             outputs=["X_dq"],
         )
 
-        HardSigmoid = helper.make_node(
-            "HardSigmoid",
-            alpha=float(config_dict["SIGMOID_ALPHA"]),
-            inputs=["X_dq"],
-            outputs=["A"],
-        )
-
-        Mul = helper.make_node(
-            "Mul",
-            inputs=["A", "B"],
-            outputs=["Y_dq"],
-        )
+        if activation_kind == "hardsigmoid_mul":
+            B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
+            activation_nodes = [
+                helper.make_node(
+                    "HardSigmoid",
+                    alpha=float(config_dict["SIGMOID_ALPHA"]),
+                    inputs=["X_dq"],
+                    outputs=["A"],
+                ),
+                helper.make_node(
+                    "Mul",
+                    inputs=["A", "B"],
+                    outputs=["Y_dq"],
+                ),
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp, B]
+        else:
+            activation_nodes = [
+                helper.make_node(
+                    "Sigmoid",
+                    inputs=["X_dq"],
+                    outputs=["Y_dq"],
+                )
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp]
 
         qlinear = helper.make_node(
             "QuantizeLinear",
@@ -102,11 +118,11 @@ class TestStreamingSigmoid(BaseHLSTest):
         )
 
         graph = helper.make_graph(
-            [dqlinear, HardSigmoid, Mul, qlinear],
+            [dqlinear, *activation_nodes, qlinear],
             "qsigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
+            initializer=initializers,
         )
 
         model_qonnx = helper.make_model(graph, producer_name="qonnx")
@@ -182,26 +198,39 @@ class TestStreamingSigmoid(BaseHLSTest):
         X_zp = helper.make_tensor("X_zp", onnx_in_type, [], [int(config_dict["X_ZP"])])
         Y_zp = helper.make_tensor("Y_zp", onnx_out_type, [], [int(config_dict["Y_ZP"])])
 
+        activation_kind = config_dict.get("ACTIVATION_KIND", "sigmoid")
+
         dqlinear = helper.make_node(
             "DequantizeLinear",
             inputs=["X", "X_scale", "X_zp"],
             outputs=["X_dq"],
         )
 
-        B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
-
-        HardSigmoid = helper.make_node(
-            "HardSigmoid",
-            alpha=float(config_dict["SIGMOID_ALPHA"]),
-            inputs=["X_dq"],
-            outputs=["A"],
-        )
-
-        Mul = helper.make_node(
-            "Mul",
-            inputs=["A", "B"],
-            outputs=["Y_dq"],
-        )
+        if activation_kind == "hardsigmoid_mul":
+            B = helper.make_tensor("B", TensorProto.FLOAT, [], [float(config_dict["B_VALUE"])])
+            activation_nodes = [
+                helper.make_node(
+                    "HardSigmoid",
+                    alpha=float(config_dict["SIGMOID_ALPHA"]),
+                    inputs=["X_dq"],
+                    outputs=["A"],
+                ),
+                helper.make_node(
+                    "Mul",
+                    inputs=["A", "B"],
+                    outputs=["Y_dq"],
+                ),
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp, B]
+        else:
+            activation_nodes = [
+                helper.make_node(
+                    "Sigmoid",
+                    inputs=["X_dq"],
+                    outputs=["Y_dq"],
+                )
+            ]
+            initializers = [X_scale, X_zp, Y_scale, Y_zp]
 
         qlinear = helper.make_node(
             "QuantizeLinear",
@@ -210,11 +239,11 @@ class TestStreamingSigmoid(BaseHLSTest):
         )
 
         graph = helper.make_graph(
-            [dqlinear, HardSigmoid, Mul, qlinear],
+            [dqlinear, *activation_nodes, qlinear],
             "qsigmoid_test",
             [X],
             [Y],
-            initializer=[X_scale, X_zp, Y_scale, Y_zp, B],
+            initializer=initializers,
         )
         model = helper.make_model(graph, producer_name="qonnx")
 
@@ -223,9 +252,6 @@ class TestStreamingSigmoid(BaseHLSTest):
 
         # Optional: cast ORT output to expected numpy dtype (ORT should already produce correct dtype)
         y = y.astype(np_out_type, copy=False)
-
-        # shift based on Po2 scales (assumes ratio is power-of-two)
-        shift = int(np.log2(float(config_dict["Y_SCALE"]) / float(config_dict["X_SCALE"])))
 
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
@@ -241,6 +267,8 @@ class TestStreamingSigmoid(BaseHLSTest):
                 if isinstance(value, bool):
                     value_str = "true" if value else "false"
                     cwr.add_line(f"const bool {key} = {value_str};")
+                elif isinstance(value, str):
+                    continue
                 else:
                     cwr.add_line(f"const int {key} = {int(value)};")
 
@@ -249,8 +277,6 @@ class TestStreamingSigmoid(BaseHLSTest):
 
         typedef_suffix = "u" if out_unsigned else ""
         cwr.add_line(f"typedef ap_{typedef_suffix}int<{out_bits}> TOutput;")
-
-        cwr.add_line(f"typedef DequantQuantPo2<{shift}, TInput, TOutput> Quantizer;")
 
         cwr.add_lines(
             csnake.Variable(
@@ -276,6 +302,7 @@ class TestStreamingSigmoid(BaseHLSTest):
     def test_8bit_po2_signed(self, hls_steps):
         np.random.seed(42)
         config_dict = {
+            "ACTIVATION_KIND": "sigmoid",
             "INPUT_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": False,
@@ -299,6 +326,7 @@ class TestStreamingSigmoid(BaseHLSTest):
     def test_8bit_po2_unsigned(self, hls_steps):
         np.random.seed(42)
         config_dict = {
+            "ACTIVATION_KIND": "sigmoid",
             "INPUT_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": True,
@@ -322,9 +350,58 @@ class TestStreamingSigmoid(BaseHLSTest):
     def test_8bit_po2_mixed(self, hls_steps):
         np.random.seed(42)
         config_dict = {
+            "ACTIVATION_KIND": "sigmoid",
             "INPUT_DATAWIDTH": 8,
             "OUTPUT_DATAWIDTH": 8,
             "INPUT_IS_UNSIGNED": True,
+            "OUTPUT_IS_UNSIGNED": False,
+            "DIM0": 2,
+            "DIM1": 2,
+            "DIM2": 2,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 2,
+            "X_SCALE": 2**-2,
+            "Y_SCALE": 2**-6,
+            "X_ZP": 0,
+            "Y_ZP": 0,
+            "SIGMOID_ALPHA": 0.1666666716337204,
+            "B_VALUE": 1.0001220703125,
+            "LUT_SIZE": 256,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_8bit_asymmetric_float(self, hls_steps):
+        np.random.seed(43)
+        config_dict = {
+            "ACTIVATION_KIND": "sigmoid",
+            "INPUT_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": False,
+            "OUTPUT_IS_UNSIGNED": True,
+            "DIM0": 2,
+            "DIM1": 3,
+            "DIM2": 4,
+            "DIM2_UNROLL": 2,
+            "DIM1_UNROLL": 1,
+            "X_SCALE": 0.3,
+            "Y_SCALE": 0.05,
+            "X_ZP": -12,
+            "Y_ZP": 7,
+            "SIGMOID_ALPHA": 0.1666666716337204,
+            "B_VALUE": 1.0001220703125,
+            "LUT_SIZE": 256,
+            "PIPELINE_DEPTH": 5,
+        }
+        self.run(config_dict, hls_steps)
+
+    def test_hardsigmoid_mul_legacy(self, hls_steps):
+        np.random.seed(44)
+        config_dict = {
+            "ACTIVATION_KIND": "hardsigmoid_mul",
+            "INPUT_DATAWIDTH": 8,
+            "OUTPUT_DATAWIDTH": 8,
+            "INPUT_IS_UNSIGNED": False,
             "OUTPUT_IS_UNSIGNED": False,
             "DIM0": 2,
             "DIM1": 2,

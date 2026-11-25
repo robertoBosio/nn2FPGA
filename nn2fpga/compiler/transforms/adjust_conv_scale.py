@@ -5,7 +5,7 @@ from qonnx.custom_op.registry import getCustomOp
 import logging
 import numpy as np
 import math
-from nn2fpga.compiler.transforms.add_streaming_params import quant_array, safe_int_quant_call
+from nn2fpga.compiler.utils.quantization import quant_array, safe_int_quant_call
 logger = logging.getLogger(__name__)
 
 NODES_WITH_BIAS = [

@@ -6,22 +6,24 @@
 #include "test_config.hpp"
 #include "utils/CSDFG_utils.hpp"
 #include <array>
+#include <cmath>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
 
 void wrap_run(
-    hls::stream<test_config::TInputWord> i_data0[test_config::DIM1_UNROLL],
-    hls::stream<test_config::TInputWord> i_data1[test_config::DIM1_UNROLL],
+    hls::stream<test_config::TInputWordA> i_data0[test_config::DIM1_UNROLL],
+    hls::stream<test_config::TInputWordB> i_data1[test_config::DIM1_UNROLL],
     hls::stream<test_config::TOutputWord> o_data[test_config::DIM1_UNROLL]) {
   test_config::StreamingConcat concat;
   concat.run<0>(i_data0, i_data1, o_data);
 }
 
 bool test_run() {
-  hls::stream<test_config::TInputWord> i_data0[test_config::DIM1_UNROLL];
-  hls::stream<test_config::TInputWord> i_data1[test_config::DIM1_UNROLL];
+  hls::stream<test_config::TInputWordA> i_data0[test_config::DIM1_UNROLL];
+  hls::stream<test_config::TInputWordB> i_data1[test_config::DIM1_UNROLL];
   hls::stream<test_config::TOutputWord> o_data[test_config::DIM1_UNROLL];
+  const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Streaming input tensors.
   for (size_t i_dim0 = 0; i_dim0 < test_config::IN_DIM0_A; i_dim0++) {
@@ -31,7 +33,7 @@ bool test_run() {
            i_dim2 += test_config::DIM2_UNROLL) {
         for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
              i_dim1_par++) {
-          test_config::TInputWord input_data;
+          test_config::TInputWordA input_data;
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
             input_data[i_dim2_par] =
@@ -50,7 +52,7 @@ bool test_run() {
            i_dim2 += test_config::DIM2_UNROLL) {
         for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
              i_dim1_par++) {
-          test_config::TInputWord input_data;
+          test_config::TInputWordB input_data;
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
             input_data[i_dim2_par] =
@@ -81,17 +83,17 @@ bool test_run() {
           bool cmp;
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
-            cmp = (data[i_dim2_par] ==
-                   test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+            const int got = int(data[i_dim2_par]);
+            const int expected =
+                int(test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
                                              [i_dim1 + i_dim1_par]);
+            cmp = std::abs(got - expected) <= tol;
             if (!cmp) {
               std::cout
                   << "Mismatch at index (h=" << i_dim0 << ", w=" << i_dim1
                   << ", ich=" << i_dim2 << ", w_par=" << i_dim1_par
-                  << ", ch_par=" << i_dim2_par << "). got: " << data[i_dim2_par]
-                  << ", expected: "
-                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                               [i_dim1 + i_dim1_par]
+                  << ", ch_par=" << i_dim2_par << "). got: " << got
+                  << ", expected: " << expected
                   << std::endl;
             }
             flag &= cmp;
@@ -121,8 +123,8 @@ bool test_step() {
       (test_config::DIM1_UNROLL * test_config::DIM2_UNROLL);
 
   // Create input and output streams
-  hls::stream<test_config::TInputWord> i_data0[test_config::DIM1_UNROLL];
-  hls::stream<test_config::TInputWord> i_data1[test_config::DIM1_UNROLL];
+  hls::stream<test_config::TInputWordA> i_data0[test_config::DIM1_UNROLL];
+  hls::stream<test_config::TInputWordB> i_data1[test_config::DIM1_UNROLL];
   hls::stream<test_config::TOutputWord> o_data[test_config::DIM1_UNROLL];
   test_config::StreamingConcat concat;
   concat.step_init(test_config::PIPELINE_DEPTH);
@@ -136,8 +138,8 @@ bool test_step() {
     // Dummy input data
     for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
          i_dim1_par++) {
-      i_data0[i_dim1_par].write(test_config::TInputWord());
-      i_data1[i_dim1_par].write(test_config::TInputWord());
+      i_data0[i_dim1_par].write(test_config::TInputWordA());
+      i_data1[i_dim1_par].write(test_config::TInputWordB());
     }
 
     ActorStatus actor_status = concat.step(i_data0, i_data1, o_data);

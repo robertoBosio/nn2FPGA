@@ -5,7 +5,7 @@ import numpy as np
 from onnx import TensorProto
 
 PROJECT_NAME = "proj_unit_test"
-FILE_DIR = "/workspace/NN2FPGA/nn2fpga/hw/library"
+FILE_DIR = "/workspace/nn2FPGA/nn2fpga/hw/library"
 
 class BaseHLSTest(ABC):
     """
@@ -69,10 +69,10 @@ class BaseHLSTest(ABC):
             f'open_project -reset "{PROJECT_NAME}"',
             'open_solution -reset solution0',
             *(
-                f'add_files {FILE_DIR}/include/{op_name}.hpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include"' for op_name in op_filenames
+                f'add_files {FILE_DIR}/include/{op_name}.hpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include"' for op_name in op_filenames
             ),
-            f'add_files {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include -I/workspace/NN2FPGA/"',
-            f'add_files -tb {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/NN2FPGA/nn2fpga/hw/library/include -I/workspace/NN2FPGA/"',
+            f'add_files {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I/workspace/nn2FPGA/"',
+            f'add_files -tb {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I/workspace/nn2FPGA/"',
             "set_top wrap_run",
             "set_part xck26-sfvc784-2LV-c",
             "create_clock -period 3.33ns",

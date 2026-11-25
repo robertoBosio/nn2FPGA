@@ -193,8 +193,8 @@ def dump_tcl_script(
     lines.append("")
 
     if silvia_packing:
-        lines.append('source "/workspace/NN2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
-        lines.append('set SILVIA::ROOT "/workspace/NN2FPGA/deps/SILVIA"')
+        lines.append('source "/workspace/nn2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
+        lines.append('set SILVIA::ROOT "/workspace/nn2FPGA/deps/SILVIA"')
         lines.append('set SILVIA::LLVM_ROOT "${SILVIA::ROOT}/llvm-project/install"')
         lines.append('set SILVIA::PASSES [list [dict create OP "muladd" MAX_CHAIN_LEN 3 OP_SIZE 4] [dict create OP "muladd" INLINE 1 MAX_CHAIN_LEN 3] [dict create OP "muladd" MUL_ONLY 1 INLINE 1]]')
         lines.append('set SILVIA::DEBUG 1')
@@ -215,7 +215,7 @@ def dump_tcl_script(
 
     lines.extend(
         [
-            f'add_files kernel.cpp -cflags " -I/workspace/NN2FPGA/nn2fpga/hw/library/include"',
+            f'add_files kernel.cpp -cflags " -I/workspace/nn2FPGA/nn2fpga/hw/library/include"',
             f'set_top {top_name}',
             f'set_part {part_name}',
             f'create_clock -period {t_clk}',
@@ -544,6 +544,7 @@ class GenerateBitstream(Transformation):
         axilite_size = int(model.get_metadata_prop("axilite_size"))
         axilite_address = int(model.get_metadata_prop("axilite_address"))
         silvia_packing = str(model.get_metadata_prop("silvia_packing")).lower() == "true"
+        use_dma = str(model.get_metadata_prop("use_dma")).lower() == "true"
         design_id = model.get_metadata_prop("design_id")
         interface_width = read_board_info(board)["axi_bitwidth"]
         part_name = read_board_info(board)["part"]
@@ -605,9 +606,11 @@ class GenerateBitstream(Transformation):
             # Patch the Verilog files to optimize RAM usage
             process_verilog_files(hls_output_dir / "impl/verilog")
             process_verilog_files(hls_output_dir / "impl/ip/hdl/verilog")
-            buffer_names = list(ap.buffer_map.keys())
-            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/verilog", top_name, buffer_names)
-            gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/ip/hdl/verilog", top_name, buffer_names)
+            if use_dma and ap.buffer_map:
+                # Gate the entry process on the configured buffers
+                buffer_names = list(ap.buffer_map.keys())
+                gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/verilog", top_name, buffer_names)
+                gate_entry_proc_on_configured_buffers(hls_output_dir / "impl/ip/hdl/verilog", top_name, buffer_names)
 
         # Save the design ID in a constant register of the BD,
         # and reserve the axilite space.

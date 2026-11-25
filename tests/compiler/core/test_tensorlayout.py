@@ -114,12 +114,14 @@ def test_layout_and_quant_coexist():
     # Verify that setting a layout annotation does not disturb an existing
     # quant annotation on the same tensor and vice versa.
     from nn2fpga.compiler.core.tensor_type import (
-        TensorQuant,
+        QuantizedTensorType,
         set_custom_tensor_datatype,
         get_custom_tensor_datatype,
     )
     model = _make_simple_model()
-    quant = TensorQuant(bitwidth=8, signed=1, scale=0.1, zeropt=0, narrow=0, rounding_mode="ROUND")
+    quant = QuantizedTensorType(
+        bitwidth=8, signed=1, scale=0.1, zeropt=0, narrow=0, rounding_mode="ROUND"
+    )
     layout = TensorLayout((0, 2, 3, 1))
 
     set_custom_tensor_datatype(model, "input", quant)

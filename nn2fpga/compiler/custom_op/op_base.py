@@ -69,6 +69,7 @@ class NN2FPGAOp(CustomOp, ABC):
 
     def divisors(self, n: list[int], clip: int) -> list[int]:
         """Return all divisors of all numbers in n that are <= clip."""
+        clip = max(1, clip)  # Ensure clip is at least 1 to avoid empty divisor list.
         if not n:  # Handle empty list case.
             return []
         return [

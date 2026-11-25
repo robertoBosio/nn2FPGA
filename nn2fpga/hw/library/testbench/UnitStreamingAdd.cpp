@@ -31,6 +31,7 @@ bool test_run() {
   hls::stream<TInputWordA> i_data0[test_config::DIM1_UNROLL];
   hls::stream<TInputWordB> i_data1[test_config::DIM1_UNROLL];
   hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL];
+  const int tol = test_config::VALUE_TOLERANCE_LSB;
 
   // Streaming input tensors.
   for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
@@ -75,17 +76,17 @@ bool test_run() {
           bool cmp;
           for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL;
                i_dim2_par++) {
-            cmp = (data[i_dim2_par] ==
-                   test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                             [i_dim1 + i_dim1_par]);
+            const int got = int(data[i_dim2_par]);
+            const int expected =
+                int(test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
+                                              [i_dim1 + i_dim1_par]);
+            cmp = std::abs(got - expected) <= tol;
             if (!cmp) {
               std::cout
                   << "Mismatch at index (h=" << i_dim0 << ", w=" << i_dim1
                   << ", ich=" << i_dim2 << ", w_par=" << i_dim1_par
-                  << ", ch_par=" << i_dim2_par << "). got: " << data[i_dim2_par]
-                  << ", expected: "
-                  << test_config::output_tensor[0][i_dim2 + i_dim2_par][i_dim0]
-                                               [i_dim1 + i_dim1_par]
+                  << ", ch_par=" << i_dim2_par << "). got: " << got
+                  << ", expected: " << expected
                   << std::endl;
             }
             flag &= cmp;

@@ -1,3 +1,4 @@
+from fractions import Fraction
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
@@ -22,6 +23,8 @@ from nn2fpga.compiler.utils.codegen_utils import (
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
+from nn2fpga.compiler.utils.quantization import quant_array
+from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 from nn2fpga.compiler.utils.linebuffer_utils import (
     circular_linebuffer_compatible_or_bypassed,
     circular_linebuffer_latency,
@@ -294,7 +297,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         )
         if len(node.input) > 5:
             bias = helper.make_tensor_value_info(
-                node.input[6], TensorProto.FLOAT, bias_values.shape
+                node.input[5], TensorProto.FLOAT, bias_values.shape
             )
 
         graph_conv = helper.make_graph(
@@ -311,7 +314,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         if len(node.input) > 5:
             idict = {node.input[0]: inp_values,
                      node.input[1]: weight_values,
-                     node.input[6]: bias_values}
+                     node.input[5]: bias_values}
         else:
             idict = {node.input[0]: inp_values, 
                     node.input[1]: weight_values}
@@ -329,6 +332,19 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         Returns the name of the stream for the tensor.
         """
         return f"{name}_stream"
+
+    def __get_effective_input_quant(self, input_quant):
+        if self.get_nodeattr("asym_folding") == 0:
+            return input_quant
+
+        return QuantizedTensorType(
+            bitwidth=input_quant.bitwidth,
+            signed=input_quant.signed,
+            scale=input_quant.scale,
+            zeropt=0,
+            narrow=input_quant.narrow,
+            rounding_mode=input_quant.rounding_mode,
+        )
 
     def __get_partial_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
         """ Returns the accumulator type for the StreamingConv operation. """
@@ -380,6 +396,8 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
     def __get_quantizer(self, input_quant, weights_quant, bias_quant, output_quant, weights_shape) -> str:
         """ Returns the quantizer type for the StreamingConv operation. """
 
+        output_zeropt = int(np.asarray(output_quant.zeropt).reshape(()).item())
+
         # Check if the scale is a power of two
         if isinstance(weights_quant.scale, (list, np.ndarray)):
             if len(weights_quant.scale) != 1:
@@ -404,7 +422,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             output_type = output_quant.get_hls_data_type()
             activation = self.get_nodeattr("activation")
             if activation == "NoOp":
-                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}>"
+                return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation == "ReLU":
                 return f"ReLUQuantPo2<{shift}, {accumulator}, {output_type}>"
             if activation == "LeakyReLU":
@@ -420,14 +438,19 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 f"Unsupported activation function '{activation}' for StreamingConv."
             )
         else:
-            inv_scale = output_quant.scale / (weights_scale * input_quant.scale)
-            num = int(inv_scale * (2 ** 16))  # Fixed-point representation
-            den = 2 ** 16
+            ratio = (weights_scale * input_quant.scale) / output_quant.scale
+            frac = Fraction(float(ratio)).limit_denominator(1 << 20)
+            num = int(frac.numerator)
+            den = int(frac.denominator)
             accumulator = self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)
             output_type = output_quant.get_hls_data_type()
             activation = self.get_nodeattr("activation")
             if activation == "NoOp":
-                return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}>"
+                shift_form = ratio_to_shift_form(ratio)
+                if shift_form is not None:
+                    n, s = shift_form
+                    return f"DequantQuantFloatShift<{n}, {s}, {accumulator}, {output_type}, {output_zeropt}>"
+                return f"DequantQuantFloat<{num}, {den}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation in ["ReLU", "LeakyReLU"]:
                 raise ValueError(
                     f"Fused {activation} currently requires power-of-two quantization scales."
@@ -439,7 +462,9 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
     def __get_object_declaration(self, model) -> cpp_object:
         """ Generate the cpp_object for the StreamingConv operation. """
 
-        input_type = require_tensor_type(model, self.onnx_node.input[0])
+        input_type = self.__get_effective_input_quant(
+            require_tensor_type(model, self.onnx_node.input[0])
+        )
         output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         weights_quant = QuantizedTensorType(
@@ -555,12 +580,20 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         # Create weights and biases variable declarations if parameters are stored internally.
         param_storage = self.get_nodeattr("param_storage")
         if param_storage == "INTERNAL":
-            values = np.random.randint(
-                low=0,
-                high=2 ** (weights_quant.bitwidth - 1),
-                size=np.prod(weights_shape),
-                dtype=np.int8,
-            )
+            weight_values = model.get_initializer(self.onnx_node.input[1])
+            if weight_values is None:
+                raise ValueError(
+                    f"Internal weights for StreamingConv node {self.onnx_node.name} must be an initializer."
+                )
+            weight_values = quant_array(
+                weight_values,
+                scale=weights_quant.scale,
+                zeropt=weights_quant.zeropt,
+                bitwidth=weights_quant.bitwidth,
+                signed=weights_quant.signed,
+                narrow=weights_quant.narrow,
+                rounding_mode=weights_quant.rounding_mode,
+            ).astype(weights_quant.get_numpy_dtype(), copy=False)
             weights_var = cpp_variable(
                 name=f"{self.onnx_node.name}_weights",
                 primitive=weights_quant.get_hls_data_type(),
@@ -568,7 +601,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=3 complete",
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_weights dim=2 complete",
                 ],
-                value=values.reshape(
+                value=weight_values.reshape(
                     output_shape[-1]
                     * input_shape[-1]
                     // (
@@ -582,12 +615,20 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 ),
             )
 
-            values = np.random.randint(
-                low=0,
-                high=2 ** (bias_quant.bitwidth - 1),
-                size=output_shape[-1],
-                dtype=np.int32,
-            )
+            bias_values = model.get_initializer(self.onnx_node.input[5])
+            if bias_values is None:
+                raise ValueError(
+                    f"Internal biases for StreamingConv node {self.onnx_node.name} must be an initializer."
+                )
+            bias_values = quant_array(
+                bias_values,
+                scale=bias_quant.scale,
+                zeropt=bias_quant.zeropt,
+                bitwidth=bias_quant.bitwidth,
+                signed=bias_quant.signed,
+                narrow=bias_quant.narrow,
+                rounding_mode=bias_quant.rounding_mode,
+            ).astype(bias_quant.get_numpy_dtype(), copy=False)
 
             bias_var = cpp_variable(
                 name=f"{self.onnx_node.name}_biases",
@@ -596,7 +637,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=3 complete",
                     f"HLS ARRAY_RESHAPE variable={self.onnx_node.name}_biases dim=2 complete",
                 ],
-                value=values.reshape(
+                value=bias_values.reshape(
                     output_shape[-1] // self.get_nodeattr("out_channel_unroll"),
                     self.get_nodeattr("out_channel_unroll"),
                     1,
@@ -604,12 +645,12 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             )
 
             return variables_code + (
-                weights_var.generate_declaration() 
-                + ";\n"
+                weights_var.generate_initialization().code
+                + "\n"
                 + weights_var.generate_pragma()
                 + "\n"
-                + bias_var.generate_declaration()
-                + ";\n"
+                + bias_var.generate_initialization().code
+                + "\n"
                 + bias_var.generate_pragma()
             )
         else:
@@ -984,6 +1025,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         for in_channel_unroll in self.divisors([input_shape[-1]], input_shape[-1]):
             # Clipping out channel unrolling factor to avoid collapsing the loop,
             # due to a bug which forces Vitis to generate a stp pipeline.
+            # This does not work if there is only a single channel in the output
             for out_channel_unroll in self.divisors(
                 [output_shape[-1]], output_shape[-1] - 1
             ):

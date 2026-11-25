@@ -3,6 +3,7 @@ import base64
 import os
 import subprocess
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
+from nn2fpga.compiler.utils.axi import get_axi_word_count
 from nn2fpga.compiler.utils.board_util import read_board_info
 from nn2fpga.compiler.utils.codegen_utils import (
     NewCodeWriter,
@@ -37,8 +38,8 @@ def dump_tcl_script(
 
     # Check the HLS version to determine the correct syntax
     if silvia_packing:
-        lines.append('source "/workspace/NN2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
-        lines.append('set SILVIA::ROOT "/workspace/NN2FPGA/deps/SILVIA"')
+        lines.append('source "/workspace/nn2FPGA/deps/SILVIA/scripts/SILVIA.tcl"')
+        lines.append('set SILVIA::ROOT "/workspace/nn2FPGA/deps/SILVIA"')
         lines.append('set SILVIA::LLVM_ROOT "${SILVIA::ROOT}/llvm-project/install"')
         lines.append(
             'set SILVIA::PASSES [list [dict create OP "muladd" MAX_CHAIN_LEN 3 OP_SIZE 4] [dict create OP "muladd" INLINE 1 MAX_CHAIN_LEN 3] [dict create OP "muladd" MUL_ONLY 1 INLINE 1]]'
@@ -61,9 +62,9 @@ def dump_tcl_script(
 
     lines.extend(
         [
-            'add_files kernel.cpp -cflags " -I/workspace/NN2FPGA/nn2fpga/hw/library/include"',
-            'add_files -tb "/workspace/NN2FPGA/deps/cnpy/cnpy.cpp"',
-            f'add_files -tb "{tb_files}" -cflags "-I/workspace/NN2FPGA/deps/cnpy -I/workspace/NN2FPGA/nn2fpga/hw/library/include -lz"',
+            'add_files kernel.cpp -cflags " -I/workspace/nn2FPGA/nn2fpga/hw/library/include"',
+            'add_files -tb "/workspace/nn2FPGA/deps/cnpy/cnpy.cpp"',
+            f'add_files -tb "{tb_files}" -cflags "-I/workspace/nn2FPGA/deps/cnpy -I/workspace/nn2FPGA/nn2fpga/hw/library/include -lz"',
             f'set_top "{top_name}"',
             f"set_part {part_name}",
             f"create_clock -period {t_clk}",
@@ -105,17 +106,27 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
     kernel_arguments = []
 
     for value in input_map.values():
+        port_type = (
+            f"ap_uint<{axi_bitwidth}>*"
+            if value["mode"] == "m_axi"
+            else f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&"
+        )
         var = cpp_variable(
             value["new_name"],
-            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&",
+            port_type,
         )
         kernel_function.add_argument(var)
         kernel_arguments.append(value["new_name"])
 
     for output in output_map.values():
+        port_type = (
+            f"ap_uint<{axi_bitwidth}>*"
+            if output["mode"] == "m_axi"
+            else f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&"
+        )
         var = cpp_variable(
             output["new_name"],
-            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>&",
+            port_type,
         )
         kernel_function.add_argument(var)
         kernel_arguments.append(output["new_name"])
@@ -152,20 +163,40 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
     for value in input_map.values():
         file_name = "file_" + value["new_name"]
         main_function.add_code(f"std::string {file_name} = argv[{file_arg_idx}];")
-        var = cpp_variable(
-            value["new_name"],
-            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
-        )
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+        if value["mode"] == "m_axi":
+            words = get_axi_word_count(
+                value["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
+            var = cpp_variable(
+                value["new_name"], f"ap_uint<{axi_bitwidth}>", array=words
+            )
+        else:
+            var = cpp_variable(
+                value["new_name"],
+                f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
+            )
         main_function.add_code(f"{var.generate_declaration()};")
         file_arg_idx += 1
 
     for value in output_map.values():
         file_name = "file_" + value["new_name"]
         main_function.add_code(f"std::string {file_name} = argv[{file_arg_idx}];")
-        var = cpp_variable(
-            value["new_name"],
-            f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
-        )
+        tensor_type = TensorType.from_canonical_name(value["quant"])
+        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+        if value["mode"] == "m_axi":
+            words = get_axi_word_count(
+                value["shape"], tensor_type.bitwidth, axi_bitwidth
+            )
+            var = cpp_variable(
+                value["new_name"], f"ap_uint<{axi_bitwidth}>", array=words
+            )
+        else:
+            var = cpp_variable(
+                value["new_name"],
+                f"hls::stream<ap_axiu<{axi_bitwidth}, 0, 0, 0>>",
+            )
         main_function.add_code(f"{var.generate_declaration()};")
         file_arg_idx += 1
     
@@ -174,8 +205,19 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
 
     # Add read from file calls for input streams
     for value in input_map.values():
+        if value["mode"] == "m_axi":
+            function_name = "npy_to_maxi"
+            tensor_type = TensorType.from_canonical_name(value["quant"])
+            data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+            data_type = f"ap_uint<{axi_bitwidth}>"
+        else:
+            function_name = "npy_to_hls_stream"
+            tensor_type = TensorType.from_canonical_name(value["quant"])
+            data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+            data_type = f"ap_axiu<{axi_bitwidth}, 0, 0, 0>"
+
         npy_read = cpp_function(
-            name=f"npy_to_hls_stream",
+            name=function_name,
             return_type="void",
             templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
             arguments=[
@@ -185,13 +227,10 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
             ],
         )
 
-        tensor_type = TensorType.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
-
         main_function.add_code(
             npy_read.generate_call(
                 [
-                    f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
+                    data_type,
                     tensor_type.get_hls_data_type(),
                     tensor_type.get_cpp_quant_type(),
                 ],
@@ -206,8 +245,21 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
 
     # Add write to file calls for output streams
     for value in output_map.values():
+        if value["mode"] == "m_axi":
+            function_name = "maxi_to_npy"
+            tensor_type = TensorType.from_canonical_name(value["quant"])
+            data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+            shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
+            data_type = f"ap_uint<{axi_bitwidth}>"
+        else:
+            function_name = "hls_stream_to_npy"
+            tensor_type = TensorType.from_canonical_name(value["quant"])
+            data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
+            shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
+            data_type = f"ap_axiu<{axi_bitwidth}, 0, 0, 0>"
+
         npy_write = cpp_function(
-            name=f"hls_stream_to_npy",
+            name=function_name,
             return_type="void",
             templates=["typename TAxi", "typename TData", "typename TDataNumpy"],
             arguments=[
@@ -218,14 +270,10 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
             ],
         )
 
-        tensor_type = TensorType.from_canonical_name(value["quant"])
-        data_per_word = axi_bitwidth // int(tensor_type.bitwidth)
-        shape_str = str(value["shape"]).replace("[", "{").replace("]", "}")
-
         main_function.add_code(
             npy_write.generate_call(
                 [
-                    f"ap_axiu<{axi_bitwidth}, 0, 0, 0>",
+                    data_type,
                     tensor_type.get_hls_data_type(),
                     tensor_type.get_cpp_quant_type(),
                 ],
