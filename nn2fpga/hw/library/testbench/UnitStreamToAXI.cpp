@@ -1,4 +1,4 @@
-#include "StreamToAXI.hpp"
+#include "vitis/StreamToAXI.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -6,8 +6,8 @@
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
-#include "utils/CSDFG_utils.hpp"
-#include "utils/HLS_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
+#include "vitis/utils/HLS_utils.hpp"
 #include "test_config.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;

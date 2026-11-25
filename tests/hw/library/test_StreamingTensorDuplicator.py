@@ -1,7 +1,7 @@
 import csnake
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
-class TestStreamingTensorDuplicator(BaseHLSTest):
+class TestStreamingTensorDuplicator(BaseVitisTest):
 
     @property
     def operator_filename(self) -> str:

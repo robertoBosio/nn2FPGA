@@ -42,6 +42,23 @@ if [ -n "${WORK_DIR:-}" ]; then
     )
 fi
 
+# Catapult is supplied by the host so each installation can use its own
+# version and license setup. Leave CATAPULT_HOME unset for Vitis-only use.
+if [ -n "${CATAPULT_HOME:-}" ]; then
+    CATAPULT_HOME="$(realpath "${CATAPULT_HOME}")"
+    if [ ! -x "${CATAPULT_HOME}/bin/catapult" ]; then
+        echo "CATAPULT_HOME must contain bin/catapult: ${CATAPULT_HOME}" >&2
+        exit 1
+    fi
+    EXTRA_DOCKER_ARGS+=(
+        -v "${CATAPULT_HOME}:${CATAPULT_HOME}:ro"
+        --env "CATAPULT_HOME=${CATAPULT_HOME}"
+    )
+    if [ -n "${MGLS_LICENSE_FILE:-}" ]; then
+        EXTRA_DOCKER_ARGS+=(--env "MGLS_LICENSE_FILE=${MGLS_LICENSE_FILE}")
+    fi
+fi
+
 # ----- Run the container -----
 docker run -it --rm \
     --name "${CONTAINER_NAME}" \

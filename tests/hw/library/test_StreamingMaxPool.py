@@ -3,7 +3,7 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 from .utils.quantizer_codegen import emit_requantizer_typedef
 
 
@@ -13,7 +13,7 @@ def _is_power_of_two_ratio(num: float, den: float, atol=1e-12) -> bool:
     return np.isclose(log2_ratio, np.round(log2_ratio), atol=atol)
 
 
-class TestStreamingMaxPool(BaseHLSTest):
+class TestStreamingMaxPool(BaseVitisTest):
 
     @property
     def operator_filename(self):

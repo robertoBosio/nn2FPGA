@@ -3,9 +3,9 @@ import onnxruntime as ort
 import csnake
 import onnx
 from onnx import TensorProto, helper
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
-class TestYoloHead(BaseHLSTest):
+class TestYoloHead(BaseVitisTest):
 
     @property
     def operator_filename(self):

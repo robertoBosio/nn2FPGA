@@ -4,7 +4,7 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
 
@@ -73,7 +73,7 @@ def _emit_input_aligner_typedef(cwr, alias, in_type, acc_type, in_scale, acc_sca
             f"typedef DequantAlignFloat<{alias}_NUM, {alias}_DEN, {int(zero_point)}, {in_type}, {acc_type}> {alias};"
         )
 
-class TestStreamingAdd(BaseHLSTest):
+class TestStreamingAdd(BaseVitisTest):
 
     @property
     def operator_filename(self) -> str:

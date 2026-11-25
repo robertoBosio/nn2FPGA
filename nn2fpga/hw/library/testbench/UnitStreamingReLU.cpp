@@ -1,20 +1,38 @@
-#include "DequantQuant.hpp"
-#include "StreamingReLU.hpp"
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/StreamingReLU.hpp"
+#include <ac_channel.h>
+
+template <typename T>
+using TestStream = ac_channel<T>;
+#else
+#include "vitis/DequantQuant.hpp"
+#include "vitis/StreamingReLU.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
-#include "test_config.hpp"
-#include "utils/CSDFG_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
+
+template <typename T>
+using TestStream = hls::stream<T>;
+#endif
+
 #include <array>
 #include <cassert>
 #include <iostream>
+#ifndef NN2FPGA_CATAPULT
 #include <unordered_map>
+#endif
+
+#include "test_config.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::DIM2_UNROLL>;
 using TOutputWord = TInputWord;
 
-void wrap_run(hls::stream<TInputWord> i_data[test_config::DIM1_UNROLL],
-              hls::stream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
+void wrap_run(TestStream<TInputWord> i_data[test_config::DIM1_UNROLL],
+              TestStream<TOutputWord> o_data[test_config::DIM1_UNROLL]) {
   StreamingReLU<TInputWord, test_config::TInput, TOutputWord,
                 test_config::TOutput, test_config::Quantizer, test_config::DIM0,
                 test_config::DIM1, test_config::DIM2, test_config::DIM1_UNROLL,
@@ -26,8 +44,8 @@ void wrap_run(hls::stream<TInputWord> i_data[test_config::DIM1_UNROLL],
 bool test_run() {
 
   // Prepare input and output streams
-  hls::stream<TInputWord> in_stream[test_config::DIM1_UNROLL];
-  hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
+  TestStream<TInputWord> in_stream[test_config::DIM1_UNROLL];
+  TestStream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
 
   // Fill input streams with test data
   for (size_t i_dim0 = 0; i_dim0 < test_config::DIM0; i_dim0++) {
@@ -90,6 +108,7 @@ bool test_run() {
   return flag;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_step() {
 
   static constexpr size_t expectedII =
@@ -148,6 +167,7 @@ bool test_step() {
             << std::endl;
   return flag;
 }
+#endif
 
 int main(int argc, char **argv) {
 
@@ -155,11 +175,13 @@ int main(int argc, char **argv) {
 
   all_passed &= test_run();
 
+#ifndef NN2FPGA_CATAPULT
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
-  // estimations
+  // estimations.
   if (argc > 1 && std::string(argv[1]) == "csim") {
     all_passed &= test_step();
   }
+#endif
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;

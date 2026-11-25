@@ -3,9 +3,9 @@ import onnxruntime as ort
 import csnake
 import onnx
 from onnx import TensorProto, helper
-from tests.hw.library.base_hls_test import BaseHLSTest
+from tests.hw.library.base_vitis_test import BaseVitisTest
 
-class TestQKMatMul(BaseHLSTest):
+class TestQKMatMul(BaseVitisTest):
 
     @property
     def operator_filename(self):

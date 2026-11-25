@@ -1,8 +1,8 @@
 import csnake
 import numpy as np
-from tests.hw.library.base_hls_test import BaseHLSTest
+from tests.hw.library.base_vitis_test import BaseVitisTest
 
-class TestDynfifo(BaseHLSTest):
+class TestDynfifo(BaseVitisTest):
 
     @property
     def operator_filename(self) -> str:

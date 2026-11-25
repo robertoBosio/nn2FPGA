@@ -15,6 +15,7 @@ RUN apt-get update && apt-get upgrade -y && \
       zip unzip xz-utils \
       file patch rsync \
       libncurses5 libtinfo5 \
+      libc6-dev-i386 \
       locales time \
 	  libxml2 libxslt1.1 \
 	  tcl8.6 \

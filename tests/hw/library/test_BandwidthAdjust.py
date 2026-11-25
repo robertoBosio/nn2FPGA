@@ -1,8 +1,8 @@
 import csnake
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
 
-class TestStreamingConv(BaseHLSTest):
+class TestStreamingConv(BaseVitisTest):
 
     @property
     def operator_filename(self) -> str:

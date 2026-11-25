@@ -1,4 +1,4 @@
-#include "StreamingCircularLineBuffer.hpp"
+#include "vitis/StreamingCircularLineBuffer.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"

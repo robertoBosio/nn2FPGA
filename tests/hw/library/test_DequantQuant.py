@@ -2,10 +2,10 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
-class TestDequantQuant(BaseHLSTest):
+class TestDequantQuant(BaseVitisTest):
 
     @property
     def operator_filename(self) -> str:

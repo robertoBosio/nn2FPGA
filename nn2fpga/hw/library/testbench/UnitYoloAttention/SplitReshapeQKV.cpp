@@ -1,4 +1,4 @@
-#include "YoloAttention/SplitReshapeQKV.hpp"
+#include "vitis/YoloAttention/SplitReshapeQKV.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -7,8 +7,8 @@
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
-#include "utils/CSDFG_utils.hpp"
-#include "DequantQuant.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
+#include "vitis/DequantQuant.hpp"
 
 void wrap_run(
     hls::stream<test_config::TInputWord> input_data[1],

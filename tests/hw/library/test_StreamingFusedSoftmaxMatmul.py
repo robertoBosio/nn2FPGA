@@ -3,9 +3,9 @@ import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
 import onnx
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
-class TestStreamingFusedSoftmaxMatmul(BaseHLSTest):
+class TestStreamingFusedSoftmaxMatmul(BaseVitisTest):
 
     @property
     def operator_filename(self):

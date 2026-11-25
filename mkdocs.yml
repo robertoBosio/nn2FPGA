@@ -8,5 +8,6 @@ theme:
 nav:
 - Home: index.md
 - Developer Guide:
+    - Catapult Backend Strategy: developer/catapult_backend.md
     - Compiler Core:
         - AcceleratorPackage: developer/compiler/core/accelerator_package.md

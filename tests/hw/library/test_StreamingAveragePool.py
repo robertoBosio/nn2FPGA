@@ -2,10 +2,10 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
 
-class TestStreamingAveragePool(BaseHLSTest):
+class TestStreamingAveragePool(BaseVitisTest):
 
     @property
     def operator_filename(self):

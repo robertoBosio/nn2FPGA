@@ -2,9 +2,9 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
-from tests.hw.library.base_hls_test import BaseHLSTest
+from tests.hw.library.base_vitis_test import BaseVitisTest
 
-class TestTranspose(BaseHLSTest):
+class TestTranspose(BaseVitisTest):
 
     @property
     def operator_filename(self):

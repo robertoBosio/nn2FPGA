@@ -33,6 +33,23 @@ git submodule update --init --recursive
 ./run.sh
 ```
 
+### Optional Catapult HLS
+
+Catapult is mounted from the host rather than installed in the Docker image.
+Set `CATAPULT_HOME` to the host installation's `Mgc_home` directory before
+running `./run.sh`. Set `MGLS_LICENSE_FILE` according to the local license
+server configuration. These variables can be exported in the shell or placed
+in the untracked `.run.local.sh` file.
+
+```bash
+CATAPULT_HOME=/path/to/Mgc_home
+MGLS_LICENSE_FILE=/path/to/license.dat
+```
+
+When `CATAPULT_HOME` is set, `run.sh` validates and read-only mounts it at the
+same path in the container, then makes `catapult` available on `PATH`. Leaving
+it unset preserves the Vitis-only environment.
+
 For custom board images or OS versions, see [Generating a board sysroot](developer/sysroot.md).
 
 For custom operator internals, see [Runtime operator](developer/runtime_operator.md).

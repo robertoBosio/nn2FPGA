@@ -1,8 +1,8 @@
-#include "StreamingWindowToChannels.hpp"
+#include "vitis/StreamingWindowToChannels.hpp"
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "test_config.hpp"
-#include "utils/CSDFG_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
 #include <cassert>
 #include <iostream>
 #include <string>

@@ -1,9 +1,9 @@
-#include "YoloAttention/Transpose.hpp"
+#include "vitis/YoloAttention/Transpose.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "test_config.hpp"
-#include "utils/CSDFG_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>

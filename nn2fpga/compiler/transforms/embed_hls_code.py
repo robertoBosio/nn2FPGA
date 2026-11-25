@@ -35,7 +35,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
     cwr.include("hls_vector.h")
     cwr.include("ap_axi_sdata.h")
 
-    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
+    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include/vitis"
 
     if os.path.isdir(base_include_dir):
         for root, _, files in os.walk(base_include_dir):
@@ -47,7 +47,7 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
                     )
                     rel_path = rel_path.replace(os.sep, "/")
                     if "testbench" not in rel_path:
-                        cwr.include(rel_path)
+                        cwr.include(f"vitis/{rel_path}")
 
     # Top function definition
     function = cpp_function(model.get_metadata_prop("top_name"), "void")

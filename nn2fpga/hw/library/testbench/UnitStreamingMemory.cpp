@@ -1,5 +1,5 @@
-#include "DequantQuant.hpp"
-#include "StreamingMemory.hpp"
+#include "vitis/DequantQuant.hpp"
+#include "vitis/StreamingMemory.hpp"
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "test_config.hpp"

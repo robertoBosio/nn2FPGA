@@ -1,10 +1,10 @@
 import csnake
 import numpy as np
 
-from .base_hls_test import BaseHLSTest
+from .base_vitis_test import BaseVitisTest
 
 
-class TestStreamingCircularLineBuffer(BaseHLSTest):
+class TestStreamingCircularLineBuffer(BaseVitisTest):
     @property
     def operator_filename(self):
         return "StreamingCircularLineBuffer"

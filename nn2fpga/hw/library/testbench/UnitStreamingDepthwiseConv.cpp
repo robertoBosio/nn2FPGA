@@ -1,5 +1,5 @@
-#include "DequantQuant.hpp"
-#include "StreamingDepthwiseConv.hpp"
+#include "vitis/DequantQuant.hpp"
+#include "vitis/StreamingDepthwiseConv.hpp"
 #include "ap_int.h"
 #include "hls_stream.h"
 #include "test_config.hpp"
@@ -7,7 +7,7 @@
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
-#include "utils/CSDFG_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
 
 using TInputWord = std::array<test_config::TInput, test_config::CH_PAR>;
 using TWeightWord = std::array<test_config::TWeight, test_config::CH_PAR>;

@@ -1,4 +1,4 @@
-#include "DequantQuant.hpp"
+#include "vitis/DequantQuant.hpp"
 #include "ap_int.h"
 #include "test_config.hpp"
 #include <cassert>

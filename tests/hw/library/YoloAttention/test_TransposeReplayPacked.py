@@ -1,9 +1,9 @@
 import numpy as np
 import csnake
-from tests.hw.library.base_hls_test import BaseHLSTest
+from tests.hw.library.base_vitis_test import BaseVitisTest
 
 
-class TestTransposeReplayPacked(BaseHLSTest):
+class TestTransposeReplayPacked(BaseVitisTest):
 
     @property
     def operator_filename(self):

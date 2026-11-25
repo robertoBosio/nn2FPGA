@@ -33,7 +33,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
     cwr.include("<chrono>")
 
     # Include files from the nn2FPGA library
-    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
+    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include/vitis"
 
     if os.path.isdir(base_include_dir):
         for root, _, files in os.walk(base_include_dir):
@@ -45,7 +45,7 @@ def generate_hls_code(model: ModelWrapper, work_root: str) -> str:
                     )
                     rel_path = rel_path.replace(os.sep, "/")
                     if "testbench" not in rel_path:
-                        cwr.include(rel_path)
+                        cwr.include(f"vitis/{rel_path}")
 
     cwr.include("<fstream>")
     cwr.include("<iostream>")

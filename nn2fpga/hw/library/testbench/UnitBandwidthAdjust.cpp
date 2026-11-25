@@ -1,4 +1,4 @@
-#include "BandwidthAdjust.hpp"
+#include "vitis/BandwidthAdjust.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
@@ -7,7 +7,7 @@
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
-#include "utils/CSDFG_utils.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
 
 void wrap_run(
     hls::stream<test_config::TInputWord> input_data_stream[test_config::IN_DIM1_UNROLL],

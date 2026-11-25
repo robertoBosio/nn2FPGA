@@ -74,6 +74,11 @@ export ONNXRUNTIME_SDK_INCLUDE=${ONNXRUNTIME_SDK_INCLUDE:-/opt/onnxruntime-sdk/i
 export CC=aarch64-linux-gnu-gcc
 export CXX=aarch64-linux-gnu-g++
 
+if [ -n "${CATAPULT_HOME:-}" ]; then
+    export MGC_HOME="${CATAPULT_HOME}"
+    export PATH="${CATAPULT_HOME}/bin:${PATH}"
+fi
+
 #cd "$NN2FPGA_ROOT_DIR"
 
 # Drop into interactive shell as the created user
