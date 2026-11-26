@@ -1,4 +1,5 @@
 from onnx import TensorProto, helper
+import pytest
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
 
@@ -105,3 +106,64 @@ def test_generate_hls_code_uses_axilite_for_maxi_ports(monkeypatch):
     )
     assert "ap_uint<128> global_in[2]" in driver_code
     assert "ap_uint<128> global_out[2]" in driver_code
+
+
+def test_generate_hls_code_uses_catapult_streaming_ports():
+    model = _model_with_ports()
+    model.set_metadata_prop("hls_backend", "catapult")
+    model.set_metadata_prop("use_dma", "true")
+    for name in ("global_in", "global_out"):
+        set_custom_tensor_fifo_metadata(model, name, TensorFifo(1, "ac_int<128, false>"))
+
+    code = generate_hls_code(
+        model,
+        AcceleratorPackage(
+            input_map={"input": _port("global_in", "axis")},
+            output_map={"output": _port("global_out", "axis")},
+        ),
+    )
+
+    assert "ac_int.h" in code
+    assert "ac_channel.h" in code
+    assert "ac_channel<ac_int<128, false>>" in code
+    assert "#pragma hls_design top" in code
+    assert "hls::stream" not in code
+    assert "#pragma HLS" not in code
+
+
+def test_generate_hls_code_rejects_catapult_maxi_ports():
+    model = _model_with_ports()
+    model.set_metadata_prop("hls_backend", "catapult")
+    model.set_metadata_prop("use_dma", "true")
+
+    with pytest.raises(ValueError, match="supports only axis ports"):
+        generate_hls_code(
+            model,
+            AcceleratorPackage(
+                input_map={"input": _port("global_in", "m_axi")},
+                output_map={"output": _port("global_out", "axis")},
+            ),
+        )
+
+
+def test_generate_hls_code_rejects_non_streaming_catapult_mode():
+    model = _model_with_ports()
+    model.set_metadata_prop("hls_backend", "catapult")
+    model.set_metadata_prop("use_dma", "false")
+
+    with pytest.raises(ValueError, match="requires use_dma=true"):
+        generate_hls_code(model, AcceleratorPackage())
+
+
+def test_generate_hls_code_rejects_catapult_external_buffers():
+    model = _model_with_ports()
+    model.set_metadata_prop("hls_backend", "catapult")
+    model.set_metadata_prop("use_dma", "true")
+
+    with pytest.raises(ValueError, match="external memory buffers"):
+        generate_hls_code(
+            model,
+            AcceleratorPackage(
+                buffer_map={"weights": {"hls_type": "ac_int<8, true>", "depth": 1}}
+            ),
+        )

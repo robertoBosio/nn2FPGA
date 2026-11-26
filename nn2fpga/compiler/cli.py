@@ -28,6 +28,7 @@ def load_config(config_path: str) -> dict:
         config_dict["onnx_path"] = config["project"]["onnx_path"]
         config_dict["prj_root"] = config["project"]["project_root"]
         config_dict["hls_version"] = str(config["project"]["hls_version"])
+        config_dict["hls_backend"] = config["project"].get("hls_backend", "vitis")
         config_dict["board"] = config["platform"]["board"]
         config_dict["frequency"] = config["platform"]["frequency"]
 
@@ -110,6 +111,9 @@ def check_config(config_dict: dict):
     if not config_dict["xilinx_version"].replace('.', '', 1).isdigit():
         raise ValueError("Invalid 'xilinx_version' in configuration. It must be a string representing a version number (e.g., '2024.2').")
 
+    if config_dict.get("hls_backend", "vitis") not in ["vitis", "catapult"]:
+        raise ValueError("Invalid 'hls_backend' in configuration. It must be either 'vitis' or 'catapult'.")
+
     if config_dict["simulation"] not in ["csim", "cosim", "export"]:
         raise ValueError("Invalid 'simulation' option. It must be either 'csim', 'cosim', or 'export'.")
 
@@ -118,6 +122,20 @@ def check_config(config_dict: dict):
 
     if not isinstance(config_dict["use_dma"], bool):
         raise ValueError("Invalid 'use_dma' option. It must be a boolean.")
+
+    if config_dict.get("hls_backend", "vitis") == "catapult":
+        if not config_dict["use_dma"]:
+            raise ValueError("Catapult backend requires 'use_dma = true' for streaming boundary ports.")
+        if config_dict["silvia_packing"]:
+            raise ValueError("Catapult backend does not support 'silvia_packing = true'.")
+        unsupported_steps = {
+            "GenerateLightningSim": "LightningSim generation",
+            "GenerateBitstream": "bitstream generation",
+            "Deploy": "deployment",
+        }
+        for step, description in unsupported_steps.items():
+            if config_dict["steps"].get(step, False):
+                raise ValueError(f"Catapult backend does not support {description} ('{step}').")
 
 def main():
     parser = argparse.ArgumentParser(

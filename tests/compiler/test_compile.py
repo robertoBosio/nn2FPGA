@@ -283,6 +283,22 @@ def test_compile_saves_mid_pipeline_artifacts_when_enabled(tmp_path, fake_compil
 
     saved_original = FakeModel.registry[str(prj_root / "original_model_qcdq_for_sim.onnx")]
     assert saved_original.metadata["silvia_packing"] == "true"
+    assert saved_original.metadata["hls_backend"] == "vitis"
+
+
+def test_compile_records_configured_hls_backend_metadata(tmp_path, fake_compile):
+    onnx_path = tmp_path / "model.onnx"
+    onnx_path.write_text("fake", encoding="utf-8")
+    config = build_config(tmp_path, str(onnx_path), store_intermediate=True)
+    config["hls_backend"] = "catapult"
+    config["silvia_packing"] = False
+
+    compile_module.nn2fpga_compile(config)
+
+    saved_original = FakeModel.registry[
+        str(Path(config["prj_root"]) / "original_model_qcdq_for_sim.onnx")
+    ]
+    assert saved_original.metadata["hls_backend"] == "catapult"
 
 
 def test_compile_can_generate_bitstream_without_deploy(tmp_path, fake_compile):

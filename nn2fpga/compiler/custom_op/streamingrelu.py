@@ -11,9 +11,9 @@ from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
@@ -118,7 +118,7 @@ class StreamingReLU(NN2FPGAOp):
         """
         return ""
 
-    def __get_quantizer(self, input_quant, output_quant) -> str:
+    def __get_quantizer(self, input_quant, output_quant, codegen: HLSCodegen) -> str:
         """Returns the quantizer type for the ReLU operation."""
 
         if self.__is_power_of_two(input_quant.scale) and self.__is_power_of_two(
@@ -130,19 +130,21 @@ class StreamingReLU(NN2FPGAOp):
                 and input_quant.bitwidth == output_quant.bitwidth
                 and input_quant.signed == output_quant.signed
             ):
-                return f"DequantQuantEqual<{input_quant.get_hls_data_type()}>"
-            return f"DequantQuantPo2<{shift}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
+                return f"DequantQuantEqual<{codegen.scalar_type(input_quant)}>"
+            return f"DequantQuantPo2<{shift}, {codegen.scalar_type(input_quant)}, {codegen.scalar_type(output_quant)}>"
         else:
             ratio = float(output_quant.scale) / float(input_quant.scale)
             shift_form = ratio_to_shift_form(ratio)
             if shift_form is not None:
                 n, s = shift_form
-                return f"DequantQuantFloatShift<{n}, {s}, {input_quant.get_hls_data_type()}, {output_quant.get_hls_data_type()}>"
+                return f"DequantQuantFloatShift<{n}, {s}, {codegen.scalar_type(input_quant)}, {codegen.scalar_type(output_quant)}>"
             raise ValueError(
                 "Float quantization is currently not supported for StreamingReLU."
             )
 
-    def __get_object_declaration(self, model) -> cpp_object:
+    def __get_object_declaration(self, model, codegen: HLSCodegen | None = None) -> cpp_object:
+
+        codegen = codegen or HLSCodegen.from_model(model)
 
         input_quant = require_tensor_type(model, self.onnx_node.input[0])
         output_quant = require_tensor_type(model, self.onnx_node.output[0])
@@ -154,23 +156,23 @@ class StreamingReLU(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    f"{codegen.word_type(input_quant, self.get_nodeattr('in_word_array'))}",
                     f"TInputWord",
                 ),
                 (
-                    f"{input_quant.get_hls_data_type()}",
+                    f"{codegen.scalar_type(input_quant)}",
                     f"TInput",
                 ),
                 (
-                    f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                    f"{codegen.word_type(output_quant, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{output_quant.get_hls_data_type()}",
+                    f"{codegen.scalar_type(output_quant)}",
                     f"TOutput",
                 ),
                 (
-                    f"{self.__get_quantizer(input_quant, output_quant)}",
+                    f"{self.__get_quantizer(input_quant, output_quant, codegen)}",
                     f"Quantizer",
                 ),
                 (f"{input_shape[-3]}", "DIM0"),
@@ -183,7 +185,7 @@ class StreamingReLU(NN2FPGAOp):
 
         return StreamingReLU.generate_declaration()
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
 
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
@@ -191,11 +193,11 @@ class StreamingReLU(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -206,7 +208,10 @@ class StreamingReLU(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
+
+        if not codegen.supports_step_calls:
+            return ""
 
         step = cpp_function(
             name=f"{self.onnx_node.name}.step",
@@ -214,11 +219,11 @@ class StreamingReLU(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -240,6 +245,7 @@ class StreamingReLU(NN2FPGAOp):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
+        codegen = HLSCodegen.from_model(model)
         output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -255,7 +261,7 @@ class StreamingReLU(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(output_quant, self.get_nodeattr('out_word_array')),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -268,9 +274,9 @@ class StreamingReLU(NN2FPGAOp):
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

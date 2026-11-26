@@ -7,9 +7,9 @@ from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 
 class BandwidthAdjust(NN2FPGAOp):
@@ -68,7 +68,7 @@ class BandwidthAdjust(NN2FPGAOp):
         """
         return ""
 
-    def __get_object_declaration(self, model, name) -> str:
+    def __get_object_declaration(self, model, name, codegen: HLSCodegen) -> str:
         input_type = require_tensor_type(model, self.onnx_node.input[0])
         output_type = require_tensor_type(model, self.onnx_node.output[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
@@ -79,12 +79,12 @@ class BandwidthAdjust(NN2FPGAOp):
             name,
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}", "TInputWord"),
-                (f"{input_type.get_hls_data_type()}", "TInput"),
-                (f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}", "TOutputWord"),
-                (f"{output_type.get_hls_data_type()}", "TOutput"),
+                (codegen.word_type(input_type, self.get_nodeattr("in_word_array")), "TInputWord"),
+                (codegen.scalar_type(input_type), "TInput"),
+                (codegen.word_type(output_type, self.get_nodeattr("out_word_array")), "TOutputWord"),
+                (codegen.scalar_type(output_type), "TOutput"),
                 (
-                    f"DequantQuantEqual<{output_type.get_hls_data_type()}>",
+                    f"DequantQuantEqual<{codegen.scalar_type(output_type)}>",
                     "Quantizer",
                 ),
                 (input_shape[1], "IN_DIM0"),
@@ -98,7 +98,7 @@ class BandwidthAdjust(NN2FPGAOp):
         )
         return BandwidthAdjust.generate_declaration()
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to run the BandwidthAdjust node. """
 
         # Generate the call to the BandwidthAdjust run method.
@@ -108,11 +108,11 @@ class BandwidthAdjust(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -123,7 +123,7 @@ class BandwidthAdjust(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to run the BandwidthAdjust node in step mode. """
 
         step = cpp_function(
@@ -132,11 +132,11 @@ class BandwidthAdjust(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -168,6 +168,7 @@ class BandwidthAdjust(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
+        codegen = HLSCodegen.from_model(model)
         output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
@@ -184,7 +185,7 @@ class BandwidthAdjust(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(output_quant, self.get_nodeattr("out_word_array")),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -197,9 +198,9 @@ class BandwidthAdjust(NN2FPGAOp):
             hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag=hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model, name),
+            hls_run_call=self.__get_run_call(hls_tag=hls_tag, codegen=codegen),
+            hls_step_call=self.__get_step_call(codegen) if codegen.supports_step_calls else "",
+            hls_object_declaration=self.__get_object_declaration(model, name, codegen),
         )
         hls_tag += 1
 

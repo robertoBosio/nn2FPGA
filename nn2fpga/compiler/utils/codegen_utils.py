@@ -1,14 +1,60 @@
 import re
+from dataclasses import dataclass
 from csnake import CodeWriter, Function, Variable
 from nn2fpga.compiler.core.tensor_type import TensorType
 
-def get_stream_type(tensor_quant: TensorType, dim2_unroll: int) -> str:
-    """ Get the HLS stream type for a given tensor type and parallelization factor. """
-    return f"hls::stream<{get_word_type(tensor_quant, dim2_unroll)}>"
 
-def get_word_type(tensor_quant: TensorType, dim2_unroll: int) -> str:
+@dataclass(frozen=True)
+class HLSCodegen:
+    """Backend-specific C++ type spelling used by HLS lowering."""
+
+    backend: str = "vitis"
+
+    def __post_init__(self):
+        if self.backend not in {"vitis", "catapult"}:
+            raise ValueError(f"Unsupported HLS backend: {self.backend}")
+
+    @classmethod
+    def from_model(cls, model) -> "HLSCodegen":
+        return cls(model.get_metadata_prop("hls_backend") or "vitis")
+
+    def scalar_type(self, tensor_quant: TensorType) -> str:
+        if self.backend == "vitis":
+            return tensor_quant.get_hls_data_type()
+        if tensor_quant.get_canonical_name() == "float32":
+            raise ValueError("Catapult lowering does not yet support float tensor types.")
+        return f"ac_int<{tensor_quant.bitwidth}, {'true' if tensor_quant.signed else 'false'}>"
+
+    def word_type(self, tensor_quant: TensorType, lanes: int) -> str:
+        return f"std::array<{self.scalar_type(tensor_quant)}, {lanes}>"
+
+    def channel_type(self, word_type: str) -> str:
+        channel = "hls::stream" if self.backend == "vitis" else "ac_channel"
+        return f"{channel}<{word_type}>"
+
+    def axis_word_type(self, width: int) -> str:
+        if self.backend == "vitis":
+            return f"ap_axiu<{width}, 0, 0, 0>"
+        return f"AxisWord<{width}>"
+
+    @property
+    def supports_step_calls(self) -> bool:
+        return self.backend == "vitis"
+
+
+def get_stream_type(
+    tensor_quant: TensorType, dim2_unroll: int, backend: str = "vitis"
+) -> str:
+    """ Get the HLS stream type for a given tensor type and parallelization factor. """
+    codegen = HLSCodegen(backend)
+    return codegen.channel_type(codegen.word_type(tensor_quant, dim2_unroll))
+
+
+def get_word_type(
+    tensor_quant: TensorType, dim2_unroll: int, backend: str = "vitis"
+) -> str:
     """ Get the HLS struct type for a given tensor type. """
-    return f"std::array<{tensor_quant.get_hls_data_type()}, {dim2_unroll}>"
+    return HLSCodegen(backend).word_type(tensor_quant, dim2_unroll)
 
 def NewCodeWriter():
     """

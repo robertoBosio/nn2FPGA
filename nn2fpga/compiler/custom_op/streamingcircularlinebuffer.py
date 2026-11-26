@@ -8,7 +8,7 @@ from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
-from nn2fpga.compiler.utils.codegen_utils import cpp_function, cpp_object, get_word_type
+from nn2fpga.compiler.utils.codegen_utils import HLSCodegen, cpp_function, cpp_object
 
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,7 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int):
         hls_kernels = []
         fifos = {}
+        codegen = HLSCodegen.from_model(model)
 
         output_type = require_tensor_type(model, self.onnx_node.output[0])
         output_layout = require_tensor_layout(model, self.onnx_node.output[0])
@@ -153,7 +154,7 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
         for i in range(fh * fw_extended):
             fifos[f"{output_name}_{i}_"] = TensorFifo(
                 depth=output_fifo_depth,
-                hls_type=get_word_type(output_type, self.get_nodeattr("out_word_array")),
+                hls_type=codegen.word_type(output_type, self.get_nodeattr("out_word_array")),
                 n_array=fh * fw_extended,
             )
 
@@ -164,8 +165,8 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
         output_names = [f"{output_name}_{i}_" for i in range(fh * fw_extended)]
 
         function_args = (
-            ("i_data", "hls::stream<TWord>"),
-            ("o_data", "hls::stream<TWord>"),
+            ("i_data", codegen.channel_type("TWord")),
+            ("o_data", codegen.channel_type("TWord")),
         )
 
         run = cpp_function(
@@ -195,8 +196,8 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
             "StreamingCircularLineBuffer",
             self.onnx_node.name,
             template_args=[
-                (get_word_type(output_type, self.get_nodeattr("in_word_array")), "TWord"),
-                (output_type.get_hls_data_type(), "TData"),
+                (codegen.word_type(output_type, self.get_nodeattr("in_word_array")), "TWord"),
+                (codegen.scalar_type(output_type), "TData"),
                 (output_shape[-3], "IN_HEIGHT"),
                 (output_shape[-2], "IN_WIDTH"),
                 (output_shape[-1], "IN_CH"),
@@ -230,7 +231,7 @@ class StreamingCircularLineBuffer(NN2FPGAOp):
                 hls_tag=hls_tag,
                 hls_variable_declarations="",
                 hls_run_call=run_call,
-                hls_step_call=step_call,
+                hls_step_call=step_call if codegen.supports_step_calls else "",
                 hls_object_declaration=circular_linebuffer.generate_declaration(),
             )
         )

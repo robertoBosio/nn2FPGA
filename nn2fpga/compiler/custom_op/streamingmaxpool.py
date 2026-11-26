@@ -17,9 +17,9 @@ from nn2fpga.compiler.utils.linebuffer_utils import (
     validate_circular_linebuffer_attrs,
 )
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
@@ -146,12 +146,12 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         frac = Fraction(float(ratio)).limit_denominator(1 << 20)
         return int(frac.numerator), int(frac.denominator)
     
-    def __get_quantizer(self, input_type, output_type) -> str:
+    def __get_quantizer(self, input_type, output_type, codegen: HLSCodegen) -> str:
         """Returns the requantizer type for the StreamingMaxPool operation."""
 
         ratio = float(input_type.scale) / float(output_type.scale)
-        input_hls_type = input_type.get_hls_data_type()
-        output_hls_type = output_type.get_hls_data_type()
+        input_hls_type = codegen.scalar_type(input_type)
+        output_hls_type = codegen.scalar_type(output_type)
         input_zeropt = int(input_type.zeropt)
         output_zeropt = int(output_type.zeropt)
 
@@ -193,9 +193,10 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             f"{input_hls_type}, {output_hls_type}>"
         )
 
-    def __get_object_declaration(self, model) -> cpp_object:
+    def __get_object_declaration(self, model, codegen: HLSCodegen | None = None) -> cpp_object:
         """ Generate the cpp_object for the StreamingMaxPool operation. """
 
+        codegen = codegen or HLSCodegen.from_model(model)
         input_type = require_tensor_type(model, self.onnx_node.input[0])
         output_type = require_tensor_type(model, self.onnx_node.output[0])
 
@@ -212,16 +213,16 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}",
+                    f"{codegen.word_type(input_type, self.get_nodeattr('in_word_array'))}",
                     "TInputWord",
                 ),
-                (f"{input_type.get_hls_data_type()}", "TInput"),
+                (f"{codegen.scalar_type(input_type)}", "TInput"),
                 (
-                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
+                    f"{codegen.word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     "TOutputWord",
                 ),
-                (f"{output_type.get_hls_data_type()}", "TOutput"),
-                (f"{self.__get_quantizer(input_type, output_type)}", "Quantizer"),
+                (f"{codegen.scalar_type(output_type)}", "TOutput"),
+                (f"{self.__get_quantizer(input_type, output_type, codegen)}", "Quantizer"),
                 (output_shape[-1], "OUT_CH"),
                 (output_shape[-3], "IN_HEIGHT"),
                 (output_shape[-2], "IN_WIDTH"),
@@ -245,7 +246,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         """
         return ""
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to run the StreamingMaxPool node. """
 
         # Generate the call to the StreamingMaxPool run method.
@@ -255,11 +256,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -270,8 +271,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to step the StreamingMaxPool node. """
+
+        if not codegen.supports_step_calls:
+            return ""
 
         # Generate the call to the StreamingMaxPool step method.
         step = cpp_function(
@@ -280,11 +284,11 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -320,6 +324,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
           fifo: Dict[str, TensorFifo]
         """
 
+        codegen = HLSCodegen.from_model(model)
         point = self.__current_dse_point()
         FH = self.get_nodeattr("kernel_shape")[0]
         FW = self.get_nodeattr("kernel_shape")[1]
@@ -341,7 +346,7 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(output_quant, self.get_nodeattr('out_word_array')),
                 n_array=self.get_nodeattr('out_stream_array'),
             )
 
@@ -354,9 +359,9 @@ class StreamingMaxPool(NN2FPGAOp, DSECapable):
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

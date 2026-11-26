@@ -5,9 +5,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 from nn2fpga.compiler.core.tensor_type import require_tensor_type
 from nn2fpga.compiler.core.tensor_layout import require_tensor_layout
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 import math
 import numpy as np
@@ -103,7 +103,23 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         """
         return ""
 
-    def __get_object_declaration(self, model) -> str:
+    def __validate_interface_type(self, codegen: HLSCodegen) -> str:
+        interface_type = self.get_nodeattr("interface_type")
+        if interface_type not in ["m_axi", "s_axis"]:
+            raise ValueError(
+                f"Invalid interface_type '{interface_type}' for StreamToAXI node '{self.onnx_node.name}'. "
+                "Supported values are 'm_axi' and 's_axis'."
+            )
+        if codegen.backend == "catapult" and interface_type == "m_axi":
+            raise ValueError(
+                "Catapult lowering for StreamToAXI only supports "
+                "interface_type='s_axis'; m_axi is not supported."
+            )
+        return interface_type
+
+    def __get_object_declaration(
+        self, model, codegen: HLSCodegen | None = None
+    ) -> str:
         """Generates the cpp StreamToAXI object.
         Args:
             model (ModelWrapper): The model with quantization information.
@@ -114,18 +130,14 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
         output_bitwidth = self.get_nodeattr("axi_bitwidth")
 
         # Both master AXI and AXI Stream interfaces are supported.
-        interface_type = self.get_nodeattr("interface_type")
-        if interface_type not in ["m_axi", "s_axis"]:
-            raise ValueError(
-                f"Invalid interface_type '{interface_type}' for StreamToAXI node '{self.onnx_node.name}'. "
-                "Supported values are 'm_axi' and 's_axis'."
-            )
+        codegen = codegen or HLSCodegen.from_model(model)
+        interface_type = self.__validate_interface_type(codegen)
         if interface_type == "m_axi":
             function_name = "StreamToMAXI"
             output_word_type = f"ap_uint<{output_bitwidth}>"
         else:
             function_name = "StreamToAXIS"
-            output_word_type = f"ap_axiu<{output_bitwidth}, 0, 0, 0>"
+            output_word_type = codegen.axis_word_type(output_bitwidth)
 
         # The output quant is the same as the input quant, since the StreamToAXI node
         # does not change the data type of the input tensor.
@@ -150,13 +162,13 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             f"{self.onnx_node.name}",
             [
                 (
-                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    codegen.word_type(input_quant, self.get_nodeattr("in_word_array")),
                     "TInputWord",
                 ),
-                (f"{input_quant.get_hls_data_type()}", "TInput"),
+                (codegen.scalar_type(input_quant), "TInput"),
                 (output_word_type, "TOutputWord"),
                 (
-                    f"DequantQuantEqual<{input_quant.get_hls_data_type()}>",
+                    f"DequantQuantEqual<{codegen.scalar_type(input_quant)}>",
                     "Quantizer",
                 ),
                 (int(iter), "ITER"),
@@ -171,13 +183,13 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
 
         return adapter.generate_declaration()
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
         """Generates the C++ code necessary to run the StreamToAXI node."""
 
         output_type = (
             "TOutputWord*"
             if self.get_nodeattr("interface_type") == "m_axi"
-            else "hls::stream<TOutputWord>"
+            else codegen.channel_type("TOutputWord")
         )
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
@@ -185,7 +197,7 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"input_data_stream",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"output_data_stream",
@@ -200,10 +212,10 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             self.onnx_node.output[0],
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
         """Generates the C++ code necessary to step the StreamToAXI node."""
 
-        if self.get_nodeattr("interface_type") == "m_axi":
+        if not codegen.supports_step_calls or self.get_nodeattr("interface_type") == "m_axi":
             return ""
 
         # Generate the call to the StreamToAXI step method.
@@ -213,11 +225,11 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             arguments=(
                 (
                     f"input_data_stream",
-                    f"hls::stream<TInputWord>",
+                    codegen.channel_type("TInputWord"),
                 ),
                 (
                     f"output_data_stream",
-                    f"hls::stream<TOutputWord>",
+                    codegen.channel_type("TOutputWord"),
                 ),
             ),
         )
@@ -245,6 +257,8 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
           hls_tag: int
         """
 
+        codegen = HLSCodegen.from_model(model)
+        self.__validate_interface_type(codegen)
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
             for i in range(self.get_nodeattr("in_stream_array"))
@@ -259,9 +273,9 @@ class StreamToAXI(NN2FPGAOp, DSECapable):
             hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

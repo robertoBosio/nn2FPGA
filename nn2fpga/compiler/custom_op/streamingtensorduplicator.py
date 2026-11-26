@@ -7,9 +7,9 @@ from nn2fpga.compiler.core.tensor_fifo import TensorFifo
 from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 import numpy as np
 
@@ -76,7 +76,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
         """
         return ""
 
-    def __get_object_declaration(self, model) -> str:
+    def __get_object_declaration(self, model, codegen: HLSCodegen) -> str:
         input_quant = require_tensor_type(model, self.onnx_node.input[0])
         input_layout = require_tensor_layout(model, self.onnx_node.input[0])
         input_shape = self.require_4d_input_shape(model, 0, input_layout)
@@ -87,7 +87,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_quant, self.get_nodeattr('in_word_array'))}",
+                    codegen.word_type(input_quant, self.get_nodeattr("in_word_array")),
                     "TWord",
                 ),
                 (input_shape[-3], "DIM0"),
@@ -99,7 +99,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
         )
         return StreamingTensorDuplicator.generate_declaration()
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
         """Generates the C++ code necessary to run the StreamingTensorDuplicator node."""
 
         # Generate the call to the StreamingTensorDuplicator run method.
@@ -109,15 +109,15 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
                 (
                     f"o_data0",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
                 (
                     f"o_data1",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
             ),
         )
@@ -129,7 +129,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[1]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
         """Generates the C++ code necessary to run the StreamingTensorDuplicator node in step mode."""
 
         step = cpp_function(
@@ -138,15 +138,15 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
                 (
                     f"o_data0",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
                 (
                     f"o_data1",
-                    f"hls::stream<TWord>",
+                    codegen.channel_type("TWord"),
                 ),
             ),
         )
@@ -176,6 +176,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
+        codegen = HLSCodegen.from_model(model)
         output_quant = require_tensor_type(model, self.onnx_node.output[0])
         input_names = [
             f"{self.__get_stream_name(self.onnx_node.input[0])}_{i}_"
@@ -197,7 +198,7 @@ class StreamingTensorDuplicator(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(output_quant, self.get_nodeattr("out_word_array")),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -210,9 +211,9 @@ class StreamingTensorDuplicator(NN2FPGAOp):
             hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag=hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag=hls_tag, codegen=codegen),
+            hls_step_call=self.__get_step_call(codegen) if codegen.supports_step_calls else "",
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

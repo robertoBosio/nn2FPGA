@@ -12,9 +12,9 @@ from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp, NodeInterface
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 from nn2fpga.compiler.utils.scale_ratio import ratio_to_shift_form
 
@@ -172,14 +172,14 @@ class StreamingAdd(NN2FPGAOp):
             zeropt=0,
         )
 
-    def __get_accumulator(self, input_quantA, input_quantB):
+    def __get_accumulator(self, input_quantA, input_quantB, codegen: HLSCodegen):
         """ Returns the accumulator type for the Add operation. """
-        return self.__get_accumulator_quant(input_quantA, input_quantB).get_hls_data_type()
+        return codegen.scalar_type(self.__get_accumulator_quant(input_quantA, input_quantB))
 
-    def __get_input_aligner(self, input_quant, acc_quant) -> str:
+    def __get_input_aligner(self, input_quant, acc_quant, codegen: HLSCodegen) -> str:
         ratio = float(input_quant.scale) / float(acc_quant.scale)
-        input_type = input_quant.get_hls_data_type()
-        acc_type = acc_quant.get_hls_data_type()
+        input_type = codegen.scalar_type(input_quant)
+        acc_type = codegen.scalar_type(acc_quant)
         zeropt = int(input_quant.zeropt)
 
         if np.isclose(ratio, 1.0, atol=1e-12):
@@ -202,19 +202,19 @@ class StreamingAdd(NN2FPGAOp):
             return f"DequantQuantFloat<{num}, {den}, {input_type}, {acc_type}>"
         return f"DequantAlignFloat<{num}, {den}, {zeropt}, {input_type}, {acc_type}>"
 
-    def __get_aligners(self, input_quantA, input_quantB) -> tuple[str, str]:
+    def __get_aligners(self, input_quantA, input_quantB, codegen: HLSCodegen) -> tuple[str, str]:
         acc_quant = self.__get_accumulator_quant(input_quantA, input_quantB)
         return (
-            self.__get_input_aligner(input_quantA, acc_quant),
-            self.__get_input_aligner(input_quantB, acc_quant),
+            self.__get_input_aligner(input_quantA, acc_quant, codegen),
+            self.__get_input_aligner(input_quantB, acc_quant, codegen),
         )
 
-    def __get_quantizer(self, input_quantA, input_quantB, output_type) -> str:
+    def __get_quantizer(self, input_quantA, input_quantB, output_type, codegen: HLSCodegen) -> str:
         """ Returns the quantizer type for the Add operation. """
         acc_quant = self.__get_accumulator_quant(input_quantA, input_quantB)
         ratio = float(acc_quant.scale) / float(output_type.scale)
-        accumulator = acc_quant.get_hls_data_type()
-        hls_output_type = output_type.get_hls_data_type()
+        accumulator = codegen.scalar_type(acc_quant)
+        hls_output_type = codegen.scalar_type(output_type)
         output_zeropt = int(np.asarray(output_type.zeropt).reshape(()).item())
         activation = self.get_nodeattr("activation")
 
@@ -254,7 +254,9 @@ class StreamingAdd(NN2FPGAOp):
             f"Unsupported activation function '{activation}' for StreamingAdd."
         )
 
-    def __get_object_declaration(self, model) -> cpp_object:
+    def __get_object_declaration(self, model, codegen: HLSCodegen | None = None) -> cpp_object:
+
+        codegen = codegen or HLSCodegen.from_model(model)
 
         input_typeA = require_tensor_type(model, self.onnx_node.input[0])
         input_typeB = require_tensor_type(model, self.onnx_node.input[1])
@@ -273,39 +275,39 @@ class StreamingAdd(NN2FPGAOp):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_typeA, self.get_nodeattr('in_word_array'))}",
+                    f"{codegen.word_type(input_typeA, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordA",
                 ),
                 (
-                    f"{input_typeA.get_hls_data_type()}",
+                    f"{codegen.scalar_type(input_typeA)}",
                     f"TInputA",
                 ),
                 (
-                    f"{get_word_type(input_typeB, self.get_nodeattr('in_word_array'))}",
+                    f"{codegen.word_type(input_typeB, self.get_nodeattr('in_word_array'))}",
                     f"TInputWordB",
                 ),
                 (
-                    f"{input_typeB.get_hls_data_type()}",
+                    f"{codegen.scalar_type(input_typeB)}",
                     f"TInputB",
                 ),
                 (
-                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
+                    f"{codegen.word_type(output_type, self.get_nodeattr('out_word_array'))}",
                     f"TOutputWord",
                 ),
                 (
-                    f"{output_type.get_hls_data_type()}",
+                    f"{codegen.scalar_type(output_type)}",
                     f"TOutput",
                 ),
                 (
-                    f"{self.__get_accumulator(input_typeA, input_typeB)}",
+                    f"{self.__get_accumulator(input_typeA, input_typeB, codegen)}",
                     f"TAcc",
                 ),
                 (
-                    f"{self.__get_quantizer(input_typeA, input_typeB, output_type)}",
+                    f"{self.__get_quantizer(input_typeA, input_typeB, output_type, codegen)}",
                     f"OutputTransform",
                 ),
-                (f"{self.__get_aligners(input_typeA, input_typeB)[0]}", "AlignA"),
-                (f"{self.__get_aligners(input_typeA, input_typeB)[1]}", "AlignB"),
+                (f"{self.__get_aligners(input_typeA, input_typeB, codegen)[0]}", "AlignA"),
+                (f"{self.__get_aligners(input_typeA, input_typeB, codegen)[1]}", "AlignB"),
                 (f"{input_shapeA[1]}", "DIM0"),
                 (f"{input_shapeA[2]}", "DIM1"),
                 (f"{input_shapeA[3]}", "DIM2"),
@@ -316,7 +318,7 @@ class StreamingAdd(NN2FPGAOp):
 
         return StreamingAdd.generate_declaration()
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
 
         run = cpp_function(
             name=f"{self.onnx_node.name}.run",
@@ -324,15 +326,15 @@ class StreamingAdd(NN2FPGAOp):
             arguments=(
                 (
                     f"i_dataA",
-                    f"hls::stream<TInputWordA>", 
+                    codegen.channel_type("TInputWordA"),
                 ),
                 (
                     f"i_dataB",
-                    f"hls::stream<TInputWordB>", 
+                    codegen.channel_type("TInputWordB"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>", 
+                    codegen.channel_type("TOutputWord"),
                 ),
             )
         )
@@ -344,7 +346,10 @@ class StreamingAdd(NN2FPGAOp):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
+
+        if not codegen.supports_step_calls:
+            return ""
 
         run = cpp_function(
             name=f"{self.onnx_node.name}.step",
@@ -352,15 +357,15 @@ class StreamingAdd(NN2FPGAOp):
             arguments=(
                 (
                     f"i_dataA",
-                    f"hls::stream<TInputWordA>", 
+                    codegen.channel_type("TInputWordA"),
                 ),
                 (
                     f"i_dataB",
-                    f"hls::stream<TInputWordB>", 
+                    codegen.channel_type("TInputWordB"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputWord>", 
+                    codegen.channel_type("TOutputWord"),
                 ),
             )
         )
@@ -383,6 +388,7 @@ class StreamingAdd(NN2FPGAOp):
     def lower_to_hls(self, model: ModelWrapper, hls_tag: int) -> None:
         """Lower the node to HLS code."""
 
+        codegen = HLSCodegen.from_model(model)
         output_type = require_tensor_type(model, self.onnx_node.output[0])
 
         input_names = [
@@ -405,7 +411,7 @@ class StreamingAdd(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(output_type, self.get_nodeattr('out_word_array')),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -418,9 +424,9 @@ class StreamingAdd(NN2FPGAOp):
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

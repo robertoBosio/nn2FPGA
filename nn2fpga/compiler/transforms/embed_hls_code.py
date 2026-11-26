@@ -17,7 +17,7 @@ import numpy as np
 import logging
 logger = logging.getLogger(__name__)
 
-def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
+def generate_vitis_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
     """Generate HLS code for the given model.
     Args:
@@ -224,6 +224,107 @@ def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
 
     cwr.add_function_definition(function)
     return cwr.code
+
+
+def generate_catapult_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
+    """Generate a streaming-only Catapult HLS top-level source file."""
+    if str(model.get_metadata_prop("use_dma")).lower() != "true":
+        raise ValueError("Catapult requires use_dma=true for streaming boundary ports.")
+    if ap.buffer_map:
+        raise ValueError("Catapult does not yet support external memory buffers.")
+
+    cwr = NewCodeWriter()
+    cwr.add_autogen_comment()
+    cwr.include("ac_int.h")
+    cwr.include("ac_channel.h")
+
+    base_include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include/catapult"
+    if os.path.isdir(base_include_dir):
+        for root, _, files in os.walk(base_include_dir):
+            for fname in files:
+                if fname.endswith(".hpp"):
+                    rel_path = os.path.relpath(
+                        os.path.join(root, fname), base_include_dir
+                    ).replace(os.sep, "/")
+                    if "testbench" not in rel_path:
+                        cwr.include(f"catapult/{rel_path}")
+
+    cwr.add_line("#pragma hls_design top")
+    function = cpp_function(model.get_metadata_prop("top_name"), "void")
+
+    ports = list(ap.input_map.values()) + list(ap.output_map.values())
+    for port in ports:
+        port_name = port["new_name"]
+        if port["mode"] != "axis":
+            raise ValueError(
+                f"Catapult supports only axis ports; {port_name} uses {port['mode']}."
+            )
+        tensor_fifo = get_custom_tensor_fifo_metadata(model, port_name)
+        if "ap_" in tensor_fifo.hls_type or "hls::" in tensor_fifo.hls_type:
+            raise ValueError(
+                f"Catapult requires a Catapult FIFO type for {port_name}, got "
+                f"{tensor_fifo.hls_type}."
+            )
+        function.add_argument(
+            cpp_variable(port_name, f"ac_channel<{tensor_fifo.hls_type}>&")
+        )
+
+    stream_vars = {}
+    for fifo in model.graph.value_info:
+        if fifo.name.endswith("_0_"):
+            trimmed_name = fifo.name[:-3]
+            tensor_fifo = get_custom_tensor_fifo_metadata(model, fifo.name)
+            if "ap_" in tensor_fifo.hls_type or "hls::" in tensor_fifo.hls_type:
+                raise ValueError(
+                    f"Catapult requires a Catapult FIFO type for {fifo.name}, got "
+                    f"{tensor_fifo.hls_type}."
+                )
+            stream_vars[trimmed_name] = cpp_variable(
+                trimmed_name,
+                f"ac_channel<{tensor_fifo.hls_type}>",
+                array=tensor_fifo.n_array,
+            )
+
+    for fifo in model.graph.value_info:
+        match = re.match(r"^(.*)_(\d+)_$", fifo.name)
+        if not match:
+            raise ValueError(f"Invalid fifo name: {fifo.name}")
+        base_name = match.group(1)
+        if base_name not in stream_vars:
+            raise ValueError(f"Stream {base_name} not found in stream_vars.")
+        if re.match(r"^\d", base_name):
+            raise ValueError(f"Stream name {base_name} cannot start with a digit.")
+
+    for var in stream_vars.values():
+        function.add_code(f"{var.generate_declaration()};")
+
+    for node in model.graph.node:
+        custom_op = getCustomOp(node)
+        for attribute in (
+            "hls_variable_declarations",
+            "hls_object_declaration",
+            "hls_run_call",
+        ):
+            source = custom_op.get_nodeattr(attribute)
+            if "hls::" in source or "#pragma HLS" in source:
+                raise ValueError(
+                    f"Catapult source for {node.name or node.op_type} has not been lowered."
+                )
+            suffix = ";" if attribute == "hls_run_call" else ""
+            function.add_code(f"{source}{suffix}")
+
+    cwr.add_function_definition(function)
+    return cwr.code
+
+
+def generate_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> str:
+    """Generate HLS source for the backend selected in model metadata."""
+    backend = model.get_metadata_prop("hls_backend") or "vitis"
+    if backend == "vitis":
+        return generate_vitis_hls_code(model, ap)
+    if backend == "catapult":
+        return generate_catapult_hls_code(model, ap)
+    raise ValueError(f"Unsupported HLS backend: {backend}")
 
 class EmbedHLSCode(Transformation):
     """

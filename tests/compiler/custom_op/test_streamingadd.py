@@ -120,6 +120,24 @@ def test_object_declaration_supports_float_relu_add():
     assert "ReLUQuantFloat<2, 3, ap_int<10>, ap_uint<8>, 109>" in declaration
 
 
+def test_catapult_lowering_uses_ac_types_and_no_step_call():
+    model = _make_streamingadd_model(
+        QuantizedTensorType(bitwidth=8, signed=0, scale=2**-4, zeropt=23),
+        QuantizedTensorType(bitwidth=8, signed=0, scale=2**-6, zeropt=101),
+        QuantizedTensorType(bitwidth=8, signed=0, scale=2**-5, zeropt=77),
+    )
+    model.set_metadata_prop("hls_backend", "catapult")
+
+    op = _get_add_op(model)
+    nodes, _, fifo_metadata, _ = op.lower_to_hls(model, 0)
+    hls_kernel = getCustomOp(nodes[0])
+
+    assert "ac_int<8, false>" in hls_kernel.get_nodeattr("hls_object_declaration")
+    assert "ac_int<12, true>" in hls_kernel.get_nodeattr("hls_object_declaration")
+    assert hls_kernel.get_nodeattr("hls_step_call") == ""
+    assert fifo_metadata["output_stream_0_"].hls_type == "std::array<ac_int<8, false>, 1>"
+
+
 def test_check_input_same_quant_allows_add_with_different_quant_params():
     model = _build_quantized_add_model(0.1, 0, 0.2, 3)
     assert check_input_same_quant(model) is True

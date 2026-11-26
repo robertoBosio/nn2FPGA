@@ -66,6 +66,7 @@ def _load_and_prepare_model(config_dict: dict) -> tuple[ModelWrapper, ModelWrapp
     model.set_metadata_prop("top_name", config_dict["top_name"])
     model.set_metadata_prop("frequency", config_dict["frequency"])
     model.set_metadata_prop("hls_version", config_dict["hls_version"])
+    model.set_metadata_prop("hls_backend", config_dict.get("hls_backend", "vitis"))
     model.set_metadata_prop("axilite_address", str(0xA0000000))
     model.set_metadata_prop("axilite_size", str(0x10000))
     model.set_metadata_prop("design_id", str(np.random.randint(1, 2**31 - 1)))
