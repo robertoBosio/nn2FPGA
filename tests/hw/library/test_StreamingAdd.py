@@ -488,7 +488,7 @@ class StreamingAddTestData:
         self.run(config_dict, hls_steps, clean = False)
 
 
-class TestStreamingAdd(StreamingAddTestData, BaseVitisTest):
+class TestVitisStreamingAdd(StreamingAddTestData, BaseVitisTest):
     backend = "vitis"
 
     @property

@@ -1,7 +1,8 @@
 import csnake
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 
-class TestAXIToStream(BaseVitisTest):
+class AXIToStreamTestData:
 
     @property
     def operator_filename(self) -> str:
@@ -17,8 +18,10 @@ class TestAXIToStream(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
-        cwr.include("DequantQuant.hpp")
+        catapult = self.backend == "catapult"
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
+        if not catapult:
+            cwr.include("vitis/DequantQuant.hpp")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -26,14 +29,21 @@ class TestAXIToStream(BaseVitisTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:   
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_int<{config_dict['AXI_DATAWIDTH']}> TInput;")
-        cwr.add_line(f"typedef ap_int<{config_dict['OUT_DATAWIDTH']}> TOutput;")
+        if catapult:
+            cwr.add_line(f"using TInput = ac_int<{config_dict['AXI_DATAWIDTH']}, true>;")
+            cwr.add_line(f"using TOutput = ac_int<{config_dict['OUT_DATAWIDTH']}, true>;")
+        else:
+            cwr.add_line(f"typedef ap_int<{config_dict['AXI_DATAWIDTH']}> TInput;")
+            cwr.add_line(f"typedef ap_int<{config_dict['OUT_DATAWIDTH']}> TOutput;")
         cwr.add_line(
             f"typedef DequantQuantPo2<0, TOutput, TOutput> Quantizer;"
         )
-        cwr.add_line(
-            f"typedef ap_axiu<{config_dict['AXI_DATAWIDTH']}, 0, 0, 0> TInputWord;"
-        )
+        if catapult:
+            cwr.add_line(f"using TInputWord = AxisWord<{config_dict['AXI_DATAWIDTH']}>;")
+        else:
+            cwr.add_line(
+                f"typedef ap_axiu<{config_dict['AXI_DATAWIDTH']}, 0, 0, 0> TInputWord;"
+            )
         cwr.dedent()
         cwr.add_line("}")
         return cwr.code
@@ -52,6 +62,7 @@ class TestAXIToStream(BaseVitisTest):
         }
         self.run(config_dict, hls_steps)
 
+
     def test_axi64_par6(self, hls_steps):
         config_dict = {
             "AXI_DATAWIDTH": 64,
@@ -65,6 +76,7 @@ class TestAXIToStream(BaseVitisTest):
             "PIPELINE_DEPTH": 1,
         }
         self.run(config_dict, hls_steps)
+
 
     def test_axi64_par3(self, hls_steps):
         config_dict = {
@@ -93,3 +105,15 @@ class TestAXIToStream(BaseVitisTest):
             "PIPELINE_DEPTH": 8,
         }
         self.run(config_dict, hls_steps)
+
+
+class TestVitisAXIToStream(AXIToStreamTestData, BaseVitisTest):
+    backend = "vitis"
+
+
+class TestCatapultAXIToStream(AXIToStreamTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self) -> str:
+        return "AXIToStream"

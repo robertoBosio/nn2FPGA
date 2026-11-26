@@ -1,10 +1,25 @@
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/StreamingCircularLineBuffer.hpp"
+#include <ac_channel.h>
+#include <mc_scverify.h>
+template <typename T> using TestStream = ac_channel<T>;
+#else
 #include "vitis/StreamingCircularLineBuffer.hpp"
+#include "vitis/utils/CSDFG_utils.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
+template <typename T> using TestStream = hls::stream<T>;
+#endif
 #include "test_config.hpp"
 #include <array>
+#include <cassert>
 #include <iostream>
+#include <string>
+#ifndef NN2FPGA_CATAPULT
+#include <unordered_map>
+#include <vector>
+#endif
 
 static constexpr size_t OUT_HEIGHT =
     1 + (test_config::IN_HEIGHT + test_config::PAD_T + test_config::PAD_B -
@@ -20,12 +35,16 @@ static constexpr size_t PADDED_HEIGHT =
     test_config::IN_HEIGHT + test_config::PAD_T + test_config::PAD_B;
 static constexpr size_t PADDED_WIDTH =
     test_config::IN_WIDTH + test_config::PAD_L + test_config::PAD_R;
-static constexpr size_t PADDED_WORDS_PER_ROW = PADDED_WIDTH / test_config::W_PAR;
+static constexpr size_t PADDED_WORDS_PER_ROW =
+    PADDED_WIDTH / test_config::W_PAR;
 static constexpr size_t CH_GROUPS = test_config::IN_CH / test_config::CH_PAR;
 
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
 void wrap_run(
-    hls::stream<test_config::TWord> i_data[test_config::W_PAR],
-    hls::stream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
+    TestStream<test_config::TWord> i_data[test_config::W_PAR],
+    TestStream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
   StreamingCircularLineBuffer<
       test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
       test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
@@ -38,27 +57,8 @@ void wrap_run(
   linebuffer.run<0>(i_data, o_data);
 }
 
-void wrap_step(
-    hls::stream<test_config::TWord> i_data[test_config::W_PAR],
-    hls::stream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
-  StreamingCircularLineBuffer<
-      test_config::TWord, test_config::TData, test_config::IN_HEIGHT,
-      test_config::IN_WIDTH, test_config::IN_CH, test_config::FH,
-      test_config::FW, test_config::STRIDE_H, test_config::STRIDE_W,
-      test_config::DIL_H, test_config::DIL_W, test_config::PAD_T,
-      test_config::PAD_L, test_config::PAD_B, test_config::PAD_R,
-      test_config::W_PAR, test_config::CH_PAR, test_config::PAD_VALUE>
-      linebuffer;
-
-  linebuffer.step_init(1);
-  for (size_t i = 0; i < PADDED_HEIGHT * PADDED_WORDS_PER_ROW * CH_GROUPS;
-       i++) {
-    linebuffer.step(i_data, o_data);
-  }
-}
-
 static void fill_input_streams(
-    hls::stream<test_config::TWord> i_data[test_config::W_PAR]) {
+    TestStream<test_config::TWord> i_data[test_config::W_PAR]) {
   for (size_t h = 0; h < test_config::IN_HEIGHT; h++) {
     for (size_t w = 0; w < test_config::IN_WIDTH; w += test_config::W_PAR) {
       for (size_t ch = 0; ch < test_config::IN_CH;
@@ -77,7 +77,7 @@ static void fill_input_streams(
 }
 
 static bool check_output_streams(
-    hls::stream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
+    TestStream<test_config::TWord> o_data[test_config::FH * FW_EXPAND]) {
   bool passed = true;
 
   for (size_t out_h = 0; out_h < OUT_HEIGHT; out_h++) {
@@ -129,14 +129,23 @@ static bool check_output_streams(
 }
 
 bool test_run() {
-  hls::stream<test_config::TWord> i_data[test_config::W_PAR];
-  hls::stream<test_config::TWord> o_data[test_config::FH * FW_EXPAND];
+  TestStream<test_config::TWord> i_data[test_config::W_PAR];
+  TestStream<test_config::TWord> o_data[test_config::FH * FW_EXPAND];
 
   fill_input_streams(i_data);
+#ifdef NN2FPGA_CATAPULT
+  CCS_DESIGN(wrap_run)(i_data, o_data);
+#else
   wrap_run(i_data, o_data);
-  return check_output_streams(o_data);
+#endif
+  bool passed = check_output_streams(o_data);
+  for (size_t i_w_par = 0; i_w_par < test_config::W_PAR; i_w_par++) {
+    passed &= i_data[i_w_par].empty();
+  }
+  return passed;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_step() {
   static constexpr size_t expectedII =
       PADDED_HEIGHT * PADDED_WORDS_PER_ROW * CH_GROUPS;
@@ -194,20 +203,26 @@ bool test_step() {
             << std::endl;
   return flag;
 }
+#endif
 
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
-  bool passed = true;
-  passed &= test_run();
+#endif
+  bool passed = test_run();
 
+#ifndef NN2FPGA_CATAPULT
   if (argc > 1 && std::string(argv[1]) == "csim") {
     passed &= test_step();
   }
+#endif
 
-  if (passed) {
-    std::cout << "Passed." << std::endl;
-  } else {
-    std::cout << "Failed." << std::endl;
-  }
+  std::cout << (passed ? "Passed." : "Failed.") << std::endl;
 
+#ifdef NN2FPGA_CATAPULT
+  CCS_RETURN(passed ? 0 : 1);
+#else
   return passed ? 0 : 1;
+#endif
 }

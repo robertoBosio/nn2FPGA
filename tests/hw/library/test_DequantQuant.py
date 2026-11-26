@@ -440,7 +440,7 @@ class DequantQuantTestData:
         )
 
 
-class TestDequantQuant(DequantQuantTestData, BaseVitisTest):
+class TestVitisDequantQuant(DequantQuantTestData, BaseVitisTest):
     backend = "vitis"
 
     @property

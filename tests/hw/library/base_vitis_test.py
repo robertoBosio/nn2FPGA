@@ -1,8 +1,10 @@
 import os
+import shutil
 import subprocess
 from abc import ABC, abstractmethod
 import numpy as np
 from onnx import TensorProto
+import pytest
 
 PROJECT_NAME = "proj_unit_test"
 FILE_DIR = "/workspace/nn2FPGA/nn2fpga/hw/library"
@@ -51,7 +53,7 @@ class BaseVitisTest(ABC):
         else:
             raise ValueError(f"Unsupported datawidth: {datawidth}")
 
-    def generate_hls_script(self, steps: str) -> str:
+    def generate_hls_script(self, steps: str, workdir: str) -> str:
         op_filenames = self.operator_filename
         un_filename = self.unit_filename
 
@@ -71,10 +73,10 @@ class BaseVitisTest(ABC):
             f'open_project -reset "{PROJECT_NAME}"',
             'open_solution -reset solution0',
             *(
-                f'add_files {FILE_DIR}/include/vitis/{op_name}.hpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include"' for op_name in op_filenames
+                f'add_files {FILE_DIR}/include/vitis/{op_name}.hpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I{workdir}"' for op_name in op_filenames
             ),
-            f'add_files {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I/workspace/nn2FPGA/"',
-            f'add_files -tb {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I/workspace/nn2FPGA/"',
+            f'add_files {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I{workdir}"',
+            f'add_files -tb {FILE_DIR}/testbench/Unit{un_filename}.cpp -cflags "-I/workspace/nn2FPGA/nn2fpga/hw/library/include -I{workdir}"',
             "set_top wrap_run",
             "set_part xck26-sfvc784-2LV-c",
             "create_clock -period 3.33ns",
@@ -93,7 +95,7 @@ class BaseVitisTest(ABC):
         return "\n".join(lines)
 
     @staticmethod
-    def runhls(tcl_file: str):
+    def runhls(tcl_file: str, workdir: str):
         xilinx_version = os.environ.get("XILINX_VERSION", "0")
         if float(xilinx_version) < 2025.1:
             cmd = ["vitis_hls", "-f", tcl_file]
@@ -104,9 +106,16 @@ class BaseVitisTest(ABC):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            cwd=workdir,
         )
 
-    def run(self, config_dict: dict, steps: str, workdir: str = ".", clean: bool = True, **kwargs):
+    @pytest.fixture(autouse=True)
+    def workdir(self, tmp_path):
+        self._workdir = str(tmp_path)
+
+    def run(self, config_dict: dict, steps: str, workdir: str | None = None, clean: bool = True, **kwargs):
+        workdir = workdir or self._workdir
+        os.makedirs(workdir, exist_ok=True)
         # write config header
         testconfig_path = os.path.join(workdir, "test_config.hpp")
         with open(testconfig_path, "w") as f:
@@ -115,33 +124,29 @@ class BaseVitisTest(ABC):
         # write script
         tcl_path = os.path.join(workdir, "script.tcl")
         with open(tcl_path, "w") as f:
-            f.write(self.generate_hls_script(steps))
+            f.write(self.generate_hls_script(steps, workdir))
 
-        # run
-        result = self.runhls(tcl_path)
-        assert result.returncode == 0, f"HLS failed: {result.stderr}"
+        try:
+            result = self.runhls(tcl_path, workdir)
+            assert result.returncode == 0, f"HLS failed: {result.stderr}"
 
-        steps_l = [s.strip() for s in steps.split(",")]
-        if "csim" in steps_l or "cosim" in steps_l:
-            assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
-        if "csynth" in steps_l or "cosim" in steps_l:
-            assert "All loop constraints were satisfied" in result.stdout, \
-                f"Loop constraints not satisfied: {result.stdout}"
-
-        # cleanup
-        if clean:
-            try:
-                os.remove(tcl_path)
-                os.remove(testconfig_path)
-            except FileNotFoundError:
-                pass
-
-            if os.path.exists(PROJECT_NAME):
-                os.system(f"rm -rf {PROJECT_NAME}")
-
-            for f in list(os.listdir(workdir)):
-                if f.startswith("vitis_hls") and f.endswith(".log"):
+            steps_l = [s.strip() for s in steps.split(",")]
+            if "csim" in steps_l or "cosim" in steps_l:
+                assert "passed" in result.stdout.lower(), f"Test did not pass: {result.stdout}"
+            if "csynth" in steps_l or "cosim" in steps_l:
+                assert "All loop constraints were satisfied" in result.stdout, \
+                    f"Loop constraints not satisfied: {result.stdout}"
+        finally:
+            if clean:
+                for path in (tcl_path, testconfig_path):
                     try:
-                        os.remove(os.path.join(workdir, f))
-                    except OSError:
+                        os.remove(path)
+                    except FileNotFoundError:
                         pass
+                shutil.rmtree(os.path.join(workdir, PROJECT_NAME), ignore_errors=True)
+                for filename in os.listdir(workdir):
+                    if filename.startswith("vitis_hls") and filename.endswith(".log"):
+                        try:
+                            os.remove(os.path.join(workdir, filename))
+                        except OSError:
+                            pass

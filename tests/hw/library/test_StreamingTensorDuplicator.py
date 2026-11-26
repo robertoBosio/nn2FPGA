@@ -1,7 +1,8 @@
 import csnake
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 
-class TestStreamingTensorDuplicator(BaseVitisTest):
+class StreamingTensorDuplicatorTestData:
 
     @property
     def operator_filename(self) -> str:
@@ -16,8 +17,8 @@ class TestStreamingTensorDuplicator(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
-        cwr.include("DequantQuant.hpp")
+        catapult = self.backend == "catapult"
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -25,7 +26,10 @@ class TestStreamingTensorDuplicator(BaseVitisTest):
                 cwr.add_line(f"const float {key} = {value}f;")
             else:
                 cwr.add_line(f"const int {key} = {value};")
-        cwr.add_line(f"typedef ap_int<{config_dict['DATAWIDTH']}> TInput;")
+        if catapult:
+            cwr.add_line(f"using TInput = ac_int<{config_dict['DATAWIDTH']}, true>;")
+        else:
+            cwr.add_line(f"typedef ap_int<{config_dict['DATAWIDTH']}> TInput;")
         cwr.add_line(f"using TWord = std::array<TInput, {config_dict['DIM2_UNROLL']}>;")
         cwr.dedent()
         cwr.add_line("}")
@@ -45,3 +49,13 @@ class TestStreamingTensorDuplicator(BaseVitisTest):
             config_dict,
             hls_steps,
         )
+
+
+class TestVitisStreamingTensorDuplicator(StreamingTensorDuplicatorTestData, BaseVitisTest):
+    backend = "vitis"
+
+
+class TestCatapultStreamingTensorDuplicator(
+    StreamingTensorDuplicatorTestData, BaseCatapultTest
+):
+    backend = "catapult"

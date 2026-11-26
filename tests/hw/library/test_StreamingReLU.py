@@ -124,7 +124,7 @@ class StreamingReLUTestData:
         self.run(self.simple_po2_config(), hls_steps)
 
 
-class TestStreamingReLU(StreamingReLUTestData, BaseVitisTest):
+class TestVitisStreamingReLU(StreamingReLUTestData, BaseVitisTest):
     backend = "vitis"
 
     @property

@@ -1,17 +1,30 @@
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/BandwidthAdjust.hpp"
+#include <ac_channel.h>
+#include <mc_scverify.h>
+template <typename T> using TestStream = ac_channel<T>;
+#else
 #include "vitis/BandwidthAdjust.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
+template <typename T> using TestStream = hls::stream<T>;
+#endif
 #include "test_config.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
+#ifndef NN2FPGA_CATAPULT
 #include "vitis/utils/CSDFG_utils.hpp"
+#endif
 
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
 void wrap_run(
-    hls::stream<test_config::TInputWord> input_data_stream[test_config::IN_DIM1_UNROLL],
-    hls::stream<test_config::TOutputWord> output_data_stream[test_config::OUT_DIM1_UNROLL]) {
+    TestStream<test_config::TInputWord> input_data_stream[test_config::IN_DIM1_UNROLL],
+    TestStream<test_config::TOutputWord> output_data_stream[test_config::OUT_DIM1_UNROLL]) {
   test_config::BandwidthAdjust bandwidth_adjust;
   bandwidth_adjust.run<0>(input_data_stream, output_data_stream);
 }
@@ -19,8 +32,8 @@ void wrap_run(
 bool test_run(){
 
   // Prepare input and output streams
-  hls::stream<test_config::TInputWord> in_stream[test_config::IN_DIM1_UNROLL];
-  hls::stream<test_config::TOutputWord> out_stream[test_config::OUT_DIM1_UNROLL];
+  TestStream<test_config::TInputWord> in_stream[test_config::IN_DIM1_UNROLL];
+  TestStream<test_config::TOutputWord> out_stream[test_config::OUT_DIM1_UNROLL];
 
   // Fill input streams with test data
   for (size_t i_dim01 = 0; i_dim01 < test_config::IN_DIM0 * test_config::IN_DIM1;
@@ -65,6 +78,7 @@ bool test_run(){
   return flag;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_step() {
 
   static constexpr size_t expectedII =
@@ -119,8 +133,13 @@ bool test_step() {
             << std::endl;
   return flag;
 }
+#endif
 
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
 
   bool all_passed = true;
 
@@ -128,9 +147,11 @@ int main(int argc, char **argv) {
 
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
   // estimations
+  #ifndef NN2FPGA_CATAPULT
   if (argc > 1 && std::string(argv[1]) == "csim") {
     all_passed &= test_step();
   }
+  #endif
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;
@@ -138,5 +159,9 @@ int main(int argc, char **argv) {
     std::cout << "Passed." << std::endl;
   }
 
+  #ifdef NN2FPGA_CATAPULT
+  CCS_RETURN(all_passed ? 0 : 1);
+  #else
   return all_passed ? 0 : 1;
+  #endif
 }

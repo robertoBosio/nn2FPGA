@@ -2,9 +2,10 @@ import csnake
 import numpy as np
 
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 
 
-class TestStreamingCircularLineBuffer(BaseVitisTest):
+class StreamingCircularLineBufferTestData:
     @property
     def operator_filename(self):
         return "StreamingCircularLineBuffer"
@@ -17,7 +18,7 @@ class TestStreamingCircularLineBuffer(BaseVitisTest):
         config_dict = {"PAD_VALUE": 0, "PIPELINE_DEPTH": 1, **config_dict}
         data_unsigned = bool(config_dict.get("DATA_IS_UNSIGNED", False))
         data_bits = int(config_dict["DATA_DATAWIDTH"])
-        np_data_type = self.get_numpy_dtype(data_bits, data_unsigned)
+        np_data_type = BaseVitisTest.get_numpy_dtype(data_bits, data_unsigned)
 
         in_info = np.iinfo(np_data_type)
         input_tensor = np.random.randint(
@@ -35,7 +36,7 @@ class TestStreamingCircularLineBuffer(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
+        cwr.include("<ac_int.h>" if self.backend == "catapult" else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -44,8 +45,11 @@ class TestStreamingCircularLineBuffer(BaseVitisTest):
                 cwr.add_line(f"const bool {key} = {value_str};")
             else:
                 cwr.add_line(f"const int {key} = {int(value)};")
-        typedef_suffix = "u" if data_unsigned else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{data_bits}> TData;")
+        if self.backend == "catapult":
+            cwr.add_line(f"using TData = ac_int<{data_bits}, {'false' if data_unsigned else 'true'}>;")
+        else:
+            typedef_suffix = "u" if data_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{data_bits}> TData;")
         cwr.add_line("typedef std::array<TData, CH_PAR> TWord;")
         cwr.add_lines(
             csnake.Variable(
@@ -267,3 +271,19 @@ class TestStreamingCircularLineBuffer(BaseVitisTest):
             "W_PAR": 1,
         }
         self.run(config_dict, hls_steps)
+
+
+class TestVitisStreamingCircularLineBuffer(
+    StreamingCircularLineBufferTestData, BaseVitisTest
+):
+    backend = "vitis"
+
+
+class TestCatapultStreamingCircularLineBuffer(
+    StreamingCircularLineBufferTestData, BaseCatapultTest
+):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self):
+        return "StreamingCircularLineBuffer"

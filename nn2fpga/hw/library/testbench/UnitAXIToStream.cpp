@@ -1,19 +1,39 @@
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/AXIToStream.hpp"
+#include "catapult/Axis.hpp"
+#include "catapult/DequantQuant.hpp"
+#include <ac_channel.h>
+#include <mc_scverify.h>
+template <typename T> using TestStream = ac_channel<T>;
+#else
 #include "vitis/AXIToStream.hpp"
 #include "ap_axi_sdata.h"
 #include "ap_int.h"
 #include "hls_stream.h"
-#include "test_config.hpp"
 #include "vitis/utils/CSDFG_utils.hpp"
+template <typename T> using TestStream = hls::stream<T>;
+#endif
+
+#include "test_config.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
+#include <string>
+#ifndef NN2FPGA_CATAPULT
 #include <unordered_map>
+#include <vector>
+#endif
 
 using TOutputWord = std::array<test_config::TOutput, test_config::DIM2_UNROLL>;
 
-void wrap_run(hls::stream<test_config::TInputWord> &in_stream,
-              hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL]) {
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
+void wrap_run(TestStream<test_config::TInputWord> &in_stream,
+              TestStream<TOutputWord> out_stream[test_config::DIM1_UNROLL]) {
+#ifndef NN2FPGA_CATAPULT
 #pragma HLS INTERFACE axis port = in_stream
+#endif
 
   AXISToStream<test_config::TInputWord, TOutputWord,
               test_config::TOutput, test_config::Quantizer,
@@ -27,20 +47,27 @@ void wrap_run(hls::stream<test_config::TInputWord> &in_stream,
 bool test_run() {
 
   // Prepare input and output streams
-  hls::stream<test_config::TInputWord> in_stream;
-  hls::stream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
+  TestStream<test_config::TInputWord> in_stream;
+  TestStream<TOutputWord> out_stream[test_config::DIM1_UNROLL];
 
   // Prepare input data: fill every pixel with a counter following HWC format
   size_t data_in_word = 0;
-  test_config::TInputWord input_axi_struct;
+  test_config::TInputWord input_axi_struct{};
   for (size_t i_dim01 = 0; i_dim01 < test_config::DIM0 * test_config::DIM1;
        i_dim01++) {
     for (size_t i_dim2 = 0; i_dim2 < test_config::DIM2; i_dim2++) {
       // Fill the input structure with the value 1 for each channel
+#ifdef NN2FPGA_CATAPULT
+      input_axi_struct.data.set_slc(
+          static_cast<unsigned>(test_config::TOutput::width * data_in_word),
+          ac_int<test_config::TOutput::width, false>(
+              i_dim01 * test_config::DIM2 + i_dim2));
+#else
       input_axi_struct.data.range(
           test_config::TOutput::width * (data_in_word + 1) - 1,
           test_config::TOutput::width * data_in_word) =
           i_dim01 * test_config::DIM2 + i_dim2;
+#endif
       data_in_word++;
 
       if (data_in_word >= test_config::DATA_PER_WORD) {
@@ -55,7 +82,11 @@ bool test_run() {
         in_stream.write(input_axi_struct);
 
         data_in_word = 0;
-        input_axi_struct.data = 0; // Reset for next word
+#ifdef NN2FPGA_CATAPULT
+        input_axi_struct = test_config::TInputWord();
+#else
+        input_axi_struct.data = 0;
+#endif
       }
     }
   }
@@ -67,7 +98,11 @@ bool test_run() {
   }
 
   // Run producer
+#ifdef NN2FPGA_CATAPULT
+  CCS_DESIGN(wrap_run)(in_stream, out_stream);
+#else
   wrap_run(in_stream, out_stream);
+#endif
 
   // Read and check output
   bool flag = true;
@@ -79,22 +114,29 @@ bool test_run() {
         TOutputWord out_word = out_stream[i_dim1_par].read();
         for (size_t i_dim2_par = 0; i_dim2_par < test_config::DIM2_UNROLL; i_dim2_par++) {
           test_config::TOutput expected_value = (i_dim01 + i_dim1_par) * test_config::DIM2 + i_dim2 + i_dim2_par;
-          flag &= (out_word[i_dim2_par] == expected_value);
-                   if (!flag) {
-                       std::cout << "Mismatch at DIM01: " << (i_dim01 + i_dim1_par)
-                                 << ", DIM2: " << (i_dim2 + i_dim2_par)
-                                 << ". Expected: "
-                                 << expected_value
-                                 << ", Got: " << out_word[i_dim2_par] << std::endl;
-                   }
+          const bool match = out_word[i_dim2_par] == expected_value;
+          flag &= match;
+          if (!match) {
+            std::cout << "Mismatch at DIM01: " << i_dim01 + i_dim1_par
+                      << ", DIM2: " << i_dim2 + i_dim2_par
+                      << ". Expected: " << expected_value
+                      << ", Got: " << out_word[i_dim2_par] << std::endl;
+          }
         }
       }
     }
   }
 
+  flag &= in_stream.empty();
+  for (size_t i_dim1_par = 0; i_dim1_par < test_config::DIM1_UNROLL;
+       i_dim1_par++) {
+    flag &= out_stream[i_dim1_par].empty();
+  }
+
   return flag;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_maxi_run() {
   static constexpr size_t TOTAL_ELEMS =
       test_config::DIM0 * test_config::DIM1 * test_config::DIM2;
@@ -196,7 +238,7 @@ bool test_maxi_run() {
     return flag;
   }
 
-  int main(int argc, char **argv) {
+int main(int argc, char **argv) {
 
     bool all_passed = true;
 
@@ -216,4 +258,13 @@ bool test_maxi_run() {
     }
 
     return all_passed ? 0 : 1;
-  }
+}
+#endif
+
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int, char **) {
+  const bool passed = test_run();
+  std::cout << (passed ? "Passed." : "Failed.") << std::endl;
+  CCS_RETURN(passed ? 0 : 1);
+}
+#endif

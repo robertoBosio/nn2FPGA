@@ -284,7 +284,7 @@ class StreamingMaxPoolTestData:
         self.run(config_dict, hls_steps)
 
 
-class TestStreamingMaxPool(StreamingMaxPoolTestData, BaseVitisTest):
+class TestVitisStreamingMaxPool(StreamingMaxPoolTestData, BaseVitisTest):
     backend = "vitis"
 
 

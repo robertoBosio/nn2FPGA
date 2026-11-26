@@ -1,7 +1,9 @@
 import csnake
+import pytest
+from .base_catapult_test import BaseCatapultTest
 from .base_vitis_test import BaseVitisTest
 
-class TestStreamToNHWC(BaseVitisTest):
+class StreamToAXITestData:
 
     @property
     def operator_filename(self) -> str:
@@ -16,8 +18,10 @@ class TestStreamToNHWC(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
-        cwr.include("DequantQuant.hpp")
+        catapult = self.backend == "catapult"
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
+        if not catapult:
+            cwr.include("vitis/DequantQuant.hpp")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -28,14 +32,21 @@ class TestStreamToNHWC(BaseVitisTest):
             else:   
                 cwr.add_line(f"const int {key} = {value};")
         in_datatype = config_dict.get("IN_TYPE", "int")
-        cwr.add_line(f"typedef {in_datatype} TInput;")
-        cwr.add_line(f"typedef ap_int<{config_dict['AXI_DATAWIDTH']}> TOutput;")
+        if catapult:
+            cwr.add_line("using TInput = ac_int<8, true>;")
+            cwr.add_line(f"using TOutput = ac_int<{config_dict['AXI_DATAWIDTH']}, true>;")
+        else:
+            cwr.add_line(f"typedef {in_datatype} TInput;")
+            cwr.add_line(f"typedef ap_int<{config_dict['AXI_DATAWIDTH']}> TOutput;")
         cwr.add_line(
             f"typedef DequantQuantEqual<TInput> Quantizer;"
         )
-        cwr.add_line(
-            f"typedef ap_axiu<{config_dict['AXI_DATAWIDTH']}, 0, 0, 0> TOutputWord;"
-        )
+        if catapult:
+            cwr.add_line(f"using TOutputWord = AxisWord<{config_dict['AXI_DATAWIDTH']}>;")
+        else:
+            cwr.add_line(
+                f"typedef ap_axiu<{config_dict['AXI_DATAWIDTH']}, 0, 0, 0> TOutputWord;"
+            )
         cwr.dedent()
         cwr.add_line("}")
         return cwr.code
@@ -55,6 +66,7 @@ class TestStreamToNHWC(BaseVitisTest):
         }
         self.run(config_dict, hls_steps)
 
+
     def test_axi64_par6(self, hls_steps):
         config_dict = {
             "AXI_DATAWIDTH": 64,
@@ -69,6 +81,7 @@ class TestStreamToNHWC(BaseVitisTest):
             "PIPELINE_DEPTH": 1,
         }
         self.run(config_dict, hls_steps)
+
 
     def test_axi64_par3(self, hls_steps):
         config_dict = {
@@ -114,3 +127,18 @@ class TestStreamToNHWC(BaseVitisTest):
             "PIPELINE_DEPTH": 4,
         }
         self.run(config_dict, hls_steps)
+
+
+class TestVitisStreamToAXI(StreamToAXITestData, BaseVitisTest):
+    backend = "vitis"
+
+
+class TestCatapultStreamToAXI(StreamToAXITestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self) -> str:
+        return "StreamToAXI"
+
+    def test_axi128_par1_float(self, hls_steps):
+        pytest.skip("Catapult float transport is not supported")

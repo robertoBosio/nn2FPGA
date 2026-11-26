@@ -556,7 +556,7 @@ class StreamingConvTestData:
         self.run(config_dict, hls_steps, clean=False)
 
 
-class TestStreamingConv(StreamingConvTestData, BaseVitisTest):
+class TestVitisStreamingConv(StreamingConvTestData, BaseVitisTest):
     backend = "vitis"
 
     @property
