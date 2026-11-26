@@ -1,13 +1,24 @@
+#ifdef NN2FPGA_CATAPULT
+#include "catapult/DequantQuant.hpp"
+#include "catapult/StreamingConv.hpp"
+#include <ac_channel.h>
+#include <mc_scverify.h>
+template <typename T> using TestStream = ac_channel<T>;
+#else
 #include "vitis/DequantQuant.hpp"
 #include "vitis/StreamingConv.hpp"
 #include "ap_int.h"
 #include "hls_stream.h"
+#include "vitis/utils/CSDFG_utils.hpp"
+template <typename T> using TestStream = hls::stream<T>;
+#endif
 #include "test_config.hpp"
 #include <array>
 #include <cassert>
 #include <iostream>
+#ifndef NN2FPGA_CATAPULT
 #include <unordered_map>
-#include "vitis/utils/CSDFG_utils.hpp"
+#endif
 
 using TInputWord = std::array<test_config::TInput, test_config::IN_CH_PAR>;
 using TWeightWord =
@@ -24,11 +35,13 @@ static constexpr size_t IN_WIDTH = ((test_config::OUT_WIDTH - 1) * test_config::
                    test_config::DIL_W * (test_config::FW - 1) + 1 -
                    test_config::PAD_L - test_config::PAD_R);
 
-void wrap_run(
-    hls::stream<TInputWord> i_data[test_config::FH * FW_EXPAND],
-    hls::stream<TWeightWord> i_weights[test_config::FH * test_config::FW],
-    hls::stream<TBiasWord> i_biases[1],
-    hls::stream<TOutputWord> o_data[test_config::W_PAR]) {
+#ifdef NN2FPGA_CATAPULT
+#pragma hls_design top
+#endif
+void wrap_run(TestStream<TInputWord> i_data[test_config::FH * FW_EXPAND],
+              TestStream<TWeightWord> i_weights[test_config::FH * test_config::FW],
+              TestStream<TBiasWord> i_biases[1],
+              TestStream<TOutputWord> o_data[test_config::W_PAR]) {
   // Wrapper for synthesis.
   StreamingConv<
       TInputWord, test_config::TInput, TWeightWord, test_config::TWeight,
@@ -45,10 +58,10 @@ void wrap_run(
 bool test_run() {
 
   // Create input and output streams
-  hls::stream<TInputWord> i_data[test_config::FH * FW_EXPAND];
-  hls::stream<TWeightWord> i_weights[test_config::FH * test_config::FW];
-  hls::stream<TBiasWord> i_biases[1];
-  hls::stream<TOutputWord> o_data[test_config::W_PAR];
+  TestStream<TInputWord> i_data[test_config::FH * FW_EXPAND];
+  TestStream<TWeightWord> i_weights[test_config::FH * test_config::FW];
+  TestStream<TBiasWord> i_biases[1];
+  TestStream<TOutputWord> o_data[test_config::W_PAR];
 
   // Fill input streams with test data
   for (size_t h = 0; h < test_config::OUT_HEIGHT; h++) {
@@ -124,7 +137,11 @@ bool test_run() {
   }
 
   // Run the convolution
+#ifdef NN2FPGA_CATAPULT
+  CCS_DESIGN(wrap_run)(i_data, i_weights, i_biases, o_data);
+#else
   wrap_run(i_data, i_weights, i_biases, o_data);
+#endif
 
   // Check output streams for expected results
   for (size_t h = 0; h < test_config::OUT_HEIGHT; h++) {
@@ -185,6 +202,7 @@ bool test_run() {
   return true;
 }
 
+#ifndef NN2FPGA_CATAPULT
 bool test_step() {
 
   static constexpr size_t expectedII =
@@ -261,18 +279,25 @@ bool test_step() {
             << std::endl;
   return flag;
 }
+#endif
 
+#ifdef NN2FPGA_CATAPULT
+CCS_MAIN(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
 
   bool all_passed = true;
 
   all_passed &= test_run();
 
+#ifndef NN2FPGA_CATAPULT
   // Testing the pipeline with csim only, as it is only relevant for fifo depth
   // estimations
   if (argc > 1 && std::string(argv[1]) == "csim") {
     all_passed &= test_step();
   }
+#endif
 
   if (!all_passed) {
     std::cout << "Failed." << std::endl;
@@ -280,5 +305,9 @@ int main(int argc, char **argv) {
     std::cout << "Passed." << std::endl;
   }
 
+#ifdef NN2FPGA_CATAPULT
+  CCS_RETURN(all_passed ? 0 : 1);
+#else
   return all_passed ? 0 : 1;
+#endif
 }

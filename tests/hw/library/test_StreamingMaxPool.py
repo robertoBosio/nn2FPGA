@@ -4,6 +4,7 @@ import csnake
 from onnx import TensorProto, helper
 
 from .base_vitis_test import BaseVitisTest
+from .base_catapult_test import BaseCatapultTest
 from .utils.quantizer_codegen import emit_requantizer_typedef
 
 
@@ -13,7 +14,7 @@ def _is_power_of_two_ratio(num: float, den: float, atol=1e-12) -> bool:
     return np.isclose(log2_ratio, np.round(log2_ratio), atol=atol)
 
 
-class TestStreamingMaxPool(BaseVitisTest):
+class StreamingMaxPoolTestData:
 
     @property
     def operator_filename(self):
@@ -34,10 +35,10 @@ class TestStreamingMaxPool(BaseVitisTest):
         input_bits = int(config_dict["INPUT_DATAWIDTH"])
         output_bits = int(config_dict["OUTPUT_DATAWIDTH"])
 
-        onnx_input_type = self.get_tensorproto_dtype(input_bits, input_unsigned)
-        onnx_output_type = self.get_tensorproto_dtype(output_bits, output_unsigned)
-        np_input_type = self.get_numpy_dtype(input_bits, input_unsigned)
-        np_output_type = self.get_numpy_dtype(output_bits, output_unsigned)
+        onnx_input_type = BaseVitisTest.get_tensorproto_dtype(input_bits, input_unsigned)
+        onnx_output_type = BaseVitisTest.get_tensorproto_dtype(output_bits, output_unsigned)
+        np_input_type = BaseVitisTest.get_numpy_dtype(input_bits, input_unsigned)
+        np_output_type = BaseVitisTest.get_numpy_dtype(output_bits, output_unsigned)
 
         input_info = np.iinfo(np_input_type)
         input_tensor = np.random.randint(
@@ -146,7 +147,7 @@ class TestStreamingMaxPool(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
+        cwr.include("<ac_int.h>" if self.backend == "catapult" else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -159,8 +160,12 @@ class TestStreamingMaxPool(BaseVitisTest):
 
         input_typedef_suffix = "u" if input_unsigned else ""
         output_typedef_suffix = "u" if output_unsigned else ""
-        cwr.add_line(f"typedef ap_{input_typedef_suffix}int<{input_bits}> TInput;")
-        cwr.add_line(f"typedef ap_{output_typedef_suffix}int<{output_bits}> TOutput;")
+        if self.backend == "catapult":
+            cwr.add_line(f"using TInput = ac_int<{input_bits}, {'false' if input_unsigned else 'true'}>;")
+            cwr.add_line(f"using TOutput = ac_int<{output_bits}, {'false' if output_unsigned else 'true'}>;")
+        else:
+            cwr.add_line(f"typedef ap_{input_typedef_suffix}int<{input_bits}> TInput;")
+            cwr.add_line(f"typedef ap_{output_typedef_suffix}int<{output_bits}> TOutput;")
         emit_requantizer_typedef(
             cwr,
             "Quantizer",
@@ -174,14 +179,14 @@ class TestStreamingMaxPool(BaseVitisTest):
         cwr.add_lines(
             csnake.Variable(
                 "input_tensor",
-                primitive=f"ap_{input_typedef_suffix}int<{input_bits}>",
+                primitive="TInput",
                 value=input_tensor,
             ).generate_initialization()
         )
         cwr.add_lines(
             csnake.Variable(
                 "output_tensor",
-                primitive=f"ap_{output_typedef_suffix}int<{output_bits}>",
+                primitive="TOutput",
                 value=y,
             ).generate_initialization()
         )
@@ -218,6 +223,7 @@ class TestStreamingMaxPool(BaseVitisTest):
         }
         self.run(config_dict, hls_steps)
 
+
     def test_asymmetric_po2(self, hls_steps):
         np.random.seed(43)
         config_dict = {
@@ -247,6 +253,7 @@ class TestStreamingMaxPool(BaseVitisTest):
         }
         self.run(config_dict, hls_steps)
 
+
     def test_asymmetric_float(self, hls_steps):
         np.random.seed(44)
         config_dict = {
@@ -275,3 +282,16 @@ class TestStreamingMaxPool(BaseVitisTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps)
+
+
+class TestStreamingMaxPool(StreamingMaxPoolTestData, BaseVitisTest):
+    backend = "vitis"
+
+
+class TestCatapultStreamingMaxPool(StreamingMaxPoolTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    def generate_hls_script(self, workdir, verify=False, simulator="ncsim"):
+        script = super().generate_hls_script(workdir, verify, simulator)
+        script = script.replace("-PIPELINE_INIT_INTERVAL 1", "-PIPELINE_INIT_INTERVAL 40")
+        return script.replace("go extract", "directive set -CLOCK_OVERHEAD 0\ngo extract")

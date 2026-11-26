@@ -2,20 +2,14 @@ import numpy as np
 import onnxruntime as ort
 import csnake
 from onnx import TensorProto, helper
+from .base_catapult_test import BaseCatapultTest
 from .base_vitis_test import BaseVitisTest
 from .utils.quantizer_codegen import emit_linear_quantizer_typedef
 
-class TestStreamingConv(BaseVitisTest):
-
-    @property
-    def operator_filename(self) -> str:
-        return "StreamingConv"
-
-    @property
-    def unit_filename(self) -> str:
-        return "StreamingConv"
+class StreamingConvTestData:
 
     def generate_config_file(self, config_dict):
+        catapult = self.backend == "catapult"
         IN_HEIGHT = (
             (config_dict["OUT_HEIGHT"] - 1) * config_dict["STRIDE_H"]
             + config_dict["DIL_H"] * (config_dict["FH"] - 1)
@@ -36,7 +30,7 @@ class TestStreamingConv(BaseVitisTest):
             0 if config_dict.get("INPUT_IS_UNSIGNED", False) else -128,
             255 if config_dict.get("INPUT_IS_UNSIGNED", False) else 127,
             size=(1, config_dict["IN_CH"], IN_HEIGHT, IN_WIDTH),
-            dtype=self.get_numpy_dtype(
+            dtype=BaseVitisTest.get_numpy_dtype(
                 config_dict["INPUT_DATAWIDTH"],
                 config_dict.get("INPUT_IS_UNSIGNED", False),
             ),
@@ -50,7 +44,7 @@ class TestStreamingConv(BaseVitisTest):
                 config_dict["FH"],
                 config_dict["FW"],
             ),
-            dtype=self.get_numpy_dtype(
+            dtype=BaseVitisTest.get_numpy_dtype(
                 config_dict["WEIGHT_DATAWIDTH"],
                 config_dict.get("WEIGHT_IS_UNSIGNED", False),
             ),
@@ -59,7 +53,7 @@ class TestStreamingConv(BaseVitisTest):
             0 if config_dict.get("BIAS_IS_UNSIGNED", False) else -10000,
             20000 if not config_dict.get("BIAS_IS_UNSIGNED", False) else 10000,
             size=(config_dict["OUT_CH"],),
-            dtype=self.get_numpy_dtype(
+            dtype=BaseVitisTest.get_numpy_dtype(
                 config_dict["BIAS_DATAWIDTH"],
                 config_dict.get("BIAS_IS_UNSIGNED", False),
             ),
@@ -68,7 +62,7 @@ class TestStreamingConv(BaseVitisTest):
         # IO
         X = helper.make_tensor_value_info(
             "X",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("INPUT_DATAWIDTH", 8),
                 config_dict.get("INPUT_IS_UNSIGNED", False),
             ),
@@ -76,7 +70,7 @@ class TestStreamingConv(BaseVitisTest):
         )
         Y = helper.make_tensor_value_info(
             "Y",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("OUTPUT_DATAWIDTH", 8),
                 config_dict.get("OUTPUT_IS_UNSIGNED", False),
             ),
@@ -91,7 +85,7 @@ class TestStreamingConv(BaseVitisTest):
         # Inits
         W = helper.make_tensor(
             "W",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("WEIGHT_DATAWIDTH", 8),
                 config_dict.get("WEIGHT_IS_UNSIGNED", False),
             ),
@@ -106,7 +100,7 @@ class TestStreamingConv(BaseVitisTest):
 
         B = helper.make_tensor(
             "B",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("BIAS_DATAWIDTH", 32),
                 config_dict.get("BIAS_IS_UNSIGNED", False),
             ),
@@ -118,7 +112,7 @@ class TestStreamingConv(BaseVitisTest):
         )
         X_zp = helper.make_tensor(
             "X_zp",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("INPUT_DATAWIDTH", 8),
                 config_dict.get("INPUT_IS_UNSIGNED", False),
             ),
@@ -130,7 +124,7 @@ class TestStreamingConv(BaseVitisTest):
         )
         W_zp = helper.make_tensor(
             "W_zp",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("WEIGHT_DATAWIDTH", 8),
                 config_dict.get("WEIGHT_IS_UNSIGNED", False),
             ),
@@ -142,7 +136,7 @@ class TestStreamingConv(BaseVitisTest):
         )
         Y_zp = helper.make_tensor(
             "Y_zp",
-            self.get_tensorproto_dtype(
+            BaseVitisTest.get_tensorproto_dtype(
                 config_dict.get("OUTPUT_DATAWIDTH", 8),
                 config_dict.get("OUTPUT_IS_UNSIGNED", False),
             ),
@@ -192,7 +186,7 @@ class TestStreamingConv(BaseVitisTest):
         cwr = csnake.CodeWriter()
         cwr.include("<cstdint>")
         cwr.include("<array>")
-        cwr.include("<ap_int.h>")
+        cwr.include("<ac_int.h>" if catapult else "<ap_int.h>")
         cwr.add_line("namespace test_config {")
         cwr.indent()
         for key, value in config_dict.items():
@@ -204,25 +198,30 @@ class TestStreamingConv(BaseVitisTest):
                     cwr.add_line(f"const bool {key} = {value_str};")
                 else:
                     cwr.add_line(f"const int {key} = {value};")
-        typedef_suffix = "u" if config_dict.get("INPUT_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
-        typedef_suffix = "u" if config_dict.get("WEIGHT_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['WEIGHT_DATAWIDTH']}> TWeight;")
-        typedef_suffix = "u" if config_dict.get("BIAS_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['BIAS_DATAWIDTH']}> TBias;")
-        typedef_suffix = "u" if config_dict.get("OUTPUT_IS_UNSIGNED", False) else ""
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
-        typedef_suffix = (
-            "u"
-            if (
-                config_dict.get("INPUT_IS_UNSIGNED", False)
-                and config_dict.get("WEIGHT_IS_UNSIGNED", False)
-                and config_dict.get("BIAS_IS_UNSIGNED", False)
-            )
-            else ""
-        )
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
-        cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH'] - 1}> TPartialAcc;")
+        input_unsigned = bool(config_dict.get("INPUT_IS_UNSIGNED", False))
+        weight_unsigned = bool(config_dict.get("WEIGHT_IS_UNSIGNED", False))
+        bias_unsigned = bool(config_dict.get("BIAS_IS_UNSIGNED", False))
+        output_unsigned = bool(config_dict.get("OUTPUT_IS_UNSIGNED", False))
+        acc_unsigned = input_unsigned and weight_unsigned and bias_unsigned
+        if catapult:
+            cwr.add_line(f"using TInput = ac_int<{config_dict['INPUT_DATAWIDTH']}, {'false' if input_unsigned else 'true'}>;")
+            cwr.add_line(f"using TWeight = ac_int<{config_dict['WEIGHT_DATAWIDTH']}, {'false' if weight_unsigned else 'true'}>;")
+            cwr.add_line(f"using TBias = ac_int<{config_dict['BIAS_DATAWIDTH']}, {'false' if bias_unsigned else 'true'}>;")
+            cwr.add_line(f"using TOutput = ac_int<{config_dict['OUTPUT_DATAWIDTH']}, {'false' if output_unsigned else 'true'}>;")
+            cwr.add_line(f"using TAcc = ac_int<{config_dict['ACC_DATAWIDTH']}, {'false' if acc_unsigned else 'true'}>;")
+            cwr.add_line(f"using TPartialAcc = ac_int<{config_dict['ACC_DATAWIDTH'] - 1}, {'false' if acc_unsigned else 'true'}>;")
+        else:
+            typedef_suffix = "u" if input_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['INPUT_DATAWIDTH']}> TInput;")
+            typedef_suffix = "u" if weight_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['WEIGHT_DATAWIDTH']}> TWeight;")
+            typedef_suffix = "u" if bias_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['BIAS_DATAWIDTH']}> TBias;")
+            typedef_suffix = "u" if output_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['OUTPUT_DATAWIDTH']}> TOutput;")
+            typedef_suffix = "u" if acc_unsigned else ""
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH']}> TAcc;")
+            cwr.add_line(f"typedef ap_{typedef_suffix}int<{config_dict['ACC_DATAWIDTH'] - 1}> TPartialAcc;")
         emit_linear_quantizer_typedef(
             cwr,
             "OutputTransform",
@@ -555,3 +554,28 @@ class TestStreamingConv(BaseVitisTest):
             "PIPELINE_DEPTH": 5,
         }
         self.run(config_dict, hls_steps, clean=False)
+
+
+class TestStreamingConv(StreamingConvTestData, BaseVitisTest):
+    backend = "vitis"
+
+    @property
+    def operator_filename(self) -> str:
+        return "StreamingConv"
+
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingConv"
+
+
+class TestCatapultStreamingConv(StreamingConvTestData, BaseCatapultTest):
+    backend = "catapult"
+
+    @property
+    def unit_filename(self) -> str:
+        return "StreamingConv"
+
+    def generate_hls_script(self, workdir, verify=False, simulator="ncsim"):
+        script = super().generate_hls_script(workdir, verify, simulator)
+        script = script.replace("-PIPELINE_INIT_INTERVAL 1", "-PIPELINE_INIT_INTERVAL 7")
+        return script.replace("go extract", "directive set -CLOCK_OVERHEAD 0\ngo extract")

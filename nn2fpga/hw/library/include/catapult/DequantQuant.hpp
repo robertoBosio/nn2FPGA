@@ -148,6 +148,26 @@ private:
   static TProduct round(TProduct product, std::false_type) { return product; }
 };
 
+template <int Shift, int InputZeroPoint, int OutputZeroPoint, typename TIn,
+          typename TOut>
+struct RequantizePo2 {
+  TOut operator()(TIn input) const {
+    using TAcc = ac_int<TIn::width + 1, true>;
+    return DequantQuantPo2<Shift, TAcc, TOut, OutputZeroPoint>()(
+        TAcc(input) - InputZeroPoint);
+  }
+};
+
+template <int Num, int Den, int InputZeroPoint, int OutputZeroPoint,
+          typename TIn, typename TOut>
+struct RequantizeFloat {
+  TOut operator()(TIn input) const {
+    using TAcc = ac_int<TIn::width + 1, true>;
+    return DequantQuantFloat<Num, Den, TAcc, TOut, OutputZeroPoint>()(
+        TAcc(input) - InputZeroPoint);
+  }
+};
+
 template <int ZeroPoint, typename TIn, typename TAcc> struct DequantAlignEqual {
   TAcc operator()(TIn input) const {
     enum { WideBits = (TIn::width > TAcc::width ? TIn::width : TAcc::width) + 1 };
