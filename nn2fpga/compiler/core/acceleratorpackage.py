@@ -47,6 +47,9 @@ class AcceleratorPackage:
     # Version of HLS used for compilation.
     hls_version: str = ""
 
+    # HLS backend that generated the accelerator source.
+    hls_backend: str = "vitis"
+
     # Simulation type.
     simulation: str = ""
 

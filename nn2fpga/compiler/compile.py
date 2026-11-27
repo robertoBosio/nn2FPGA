@@ -174,7 +174,8 @@ def _finalize_nn2fpga_model(
                 nn2fpga_root=prj_root
             )
         )
-    model = model.transform(transformation.AllocateStreamingMemoryURAM())
+    if model.get_metadata_prop("hls_backend") != "catapult":
+        model = model.transform(transformation.AllocateStreamingMemoryURAM())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(transformation.InferLayouts())
@@ -182,11 +183,13 @@ def _finalize_nn2fpga_model(
 
 
 def _lower_to_hls(model: ModelWrapper, prj_root: str, steps: dict) -> ModelWrapper:
+    is_catapult = model.get_metadata_prop("hls_backend") == "catapult"
     return model.transform(
         transformation.LowerToHLS(
-            infer_fifo_depth=steps.get("ComputeFifoDepth", True),
+            # FIFO-depth inference and storage optimization use Vitis scheduling.
+            infer_fifo_depth=False if is_catapult else steps.get("ComputeFifoDepth", True),
             ste_already_done=False,
-            optimize_fifo_storage=steps.get("OptimizeFifo", True),
+            optimize_fifo_storage=False if is_catapult else steps.get("OptimizeFifo", True),
             prj_root=prj_root,
         )
     )

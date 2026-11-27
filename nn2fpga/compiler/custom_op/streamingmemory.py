@@ -8,9 +8,9 @@ from nn2fpga.compiler.custom_op.hlskernel import HLSKernel
 from nn2fpga.compiler.custom_op.op_base import NN2FPGAOp
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_object,
-    get_word_type,
 )
 
 
@@ -79,17 +79,21 @@ class StreamingMemory(NN2FPGAOp):
         """
         return ""
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(
+        self, hls_tag: int, codegen: HLSCodegen | None = None
+    ) -> str:
         """Generates the C++ code necessary to run the StreamingMemory node."""
+
+        codegen = codegen or HLSCodegen()
 
         if self.get_nodeattr("data_to_shift") > 0:
             run = cpp_function(
                 name=f"{self.onnx_node.name}.run",
                 return_type="void",
                 arguments=(
-                    ("i_shift_data", f"hls::stream<TInput>"),
-                    ("o_shift_data", f"hls::stream<TInput>"),
-                    ("o_data", f"hls::stream<TOutputWord>"),
+                    ("i_shift_data", codegen.channel_type("TInput")),
+                    ("o_data", codegen.channel_type("TOutputWord")),
+                    ("o_shift_data", codegen.channel_type("TInput")),
                 ),
             )
 
@@ -105,8 +109,8 @@ class StreamingMemory(NN2FPGAOp):
                 name=f"{self.onnx_node.name}.run",
                 return_type="void",
                 arguments=(
-                    ("i_shift_data", f"hls::stream<TInput>"),
-                    ("o_data", f"hls::stream<TOutputWord>"),
+                    ("i_shift_data", codegen.channel_type("TInput")),
+                    ("o_data", codegen.channel_type("TOutputWord")),
                 ),
             )
 
@@ -116,17 +120,22 @@ class StreamingMemory(NN2FPGAOp):
                 self.__get_stream_name(self.onnx_node.output[0]),
             )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen | None = None) -> str:
         """Generates the C++ code necessary to run the StreamingMemory node."""
+
+        codegen = codegen or HLSCodegen()
+
+        if not codegen.supports_step_calls:
+            return ""
 
         if self.get_nodeattr("data_to_shift") > 0:
             step = cpp_function(
                 name=f"{self.onnx_node.name}.step",
                 return_type="ActorStatus",
                 arguments=(
-                    ("i_shift_data", f"hls::stream<TInput>"),
-                    ("o_shift_data", f"hls::stream<TInput>"),
-                    ("o_data", f"hls::stream<TOutputWord>"),
+                    ("i_shift_data", codegen.channel_type("TInput")),
+                    ("o_data", codegen.channel_type("TOutputWord")),
+                    ("o_shift_data", codegen.channel_type("TInput")),
                 ),
             )
 
@@ -141,8 +150,8 @@ class StreamingMemory(NN2FPGAOp):
                 name=f"{self.onnx_node.name}.step",
                 return_type="ActorStatus",
                 arguments=(
-                    ("i_shift_data", f"hls::stream<TInput>"),
-                    ("o_data", f"hls::stream<TOutputWord>"),
+                    ("i_shift_data", codegen.channel_type("TInput")),
+                    ("o_data", codegen.channel_type("TOutputWord")),
                 ),
             )
 
@@ -152,8 +161,12 @@ class StreamingMemory(NN2FPGAOp):
                 self.__get_stream_name(self.onnx_node.output[0]),
             )
 
-    def __get_object_declaration(self, model) -> cpp_object:
+    def __get_object_declaration(
+        self, model, codegen: HLSCodegen | None = None
+    ) -> cpp_object:
         """Generate the cpp_object for the StreamingMemory operation."""
+
+        codegen = codegen or HLSCodegen.from_model(model)
 
         input_type = require_tensor_type(model, self.onnx_node.input[0])
         output_type = require_tensor_type(model, self.onnx_node.output[0])
@@ -167,10 +180,12 @@ class StreamingMemory(NN2FPGAOp):
             "StreamingMemory",
             f"{self.onnx_node.name}",
             template_args=[
-                (f"{get_word_type(input_type, 1)}", "TInput"),
-                (f"{output_type.get_hls_data_type()}", "TOutput"),
+                (codegen.word_type(input_type, 1), "TInput"),
+                (codegen.scalar_type(output_type), "TOutput"),
                 (
-                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
+                    codegen.word_type(
+                        output_type, self.get_nodeattr("out_word_array")
+                    ),
                     "TOutputStruct",
                 ),
                 (f"{self.get_nodeattr('data_per_word')}", "DATA_PER_WORD"),
@@ -280,11 +295,17 @@ class StreamingMemory(NN2FPGAOp):
           fifo: Dict[str, TensorFifo]
         """
 
+        codegen = HLSCodegen.from_model(model)
         output_quant = require_tensor_type(model, self.onnx_node.output[0])
 
         if model.get_initializer(self.onnx_node.input[0]) is None:
             input_names = [f"{self.__get_stream_name(self.onnx_node.input[0])}_0_"]
         else:
+            if codegen.backend == "catapult":
+                raise ValueError(
+                    "Catapult StreamingMemory requires a streamed parameter input. "
+                    "Enable AddStreamingParams for parameterized models."
+                )
             input_names = [self.onnx_node.input[0]]
 
         output_names = [
@@ -296,7 +317,9 @@ class StreamingMemory(NN2FPGAOp):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=2,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(
+                    output_quant, self.get_nodeattr("out_word_array")
+                ),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -306,7 +329,9 @@ class StreamingMemory(NN2FPGAOp):
             )
             tensors_fifo_metadata[output_names[-1]] = TensorFifo(
                 depth=2,
-                hls_type=f"{get_word_type(require_tensor_type(model, self.onnx_node.output[1]), 1)}",
+                hls_type=codegen.word_type(
+                    require_tensor_type(model, self.onnx_node.output[1]), 1
+                ),
                 n_array=1,
             )
 
@@ -319,9 +344,9 @@ class StreamingMemory(NN2FPGAOp):
             hls_object_name=self.onnx_node.name,
             hls_tag=hls_tag,
             hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

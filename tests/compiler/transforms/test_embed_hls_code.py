@@ -114,6 +114,12 @@ def test_generate_hls_code_uses_catapult_streaming_ports():
     model.set_metadata_prop("use_dma", "true")
     for name in ("global_in", "global_out"):
         set_custom_tensor_fifo_metadata(model, name, TensorFifo(1, "ac_int<128, false>"))
+    model.graph.value_info.append(
+        helper.make_tensor_value_info("internal_0_", TensorProto.FLOAT, [1, 4])
+    )
+    set_custom_tensor_fifo_metadata(
+        model, "internal_0_", TensorFifo(1, "ac_int<128, false>")
+    )
 
     code = generate_hls_code(
         model,
@@ -126,6 +132,7 @@ def test_generate_hls_code_uses_catapult_streaming_ports():
     assert "ac_int.h" in code
     assert "ac_channel.h" in code
     assert "ac_channel<ac_int<128, false>>" in code
+    assert "static ac_channel<ac_int<128, false>> internal[1];" in code
     assert "#pragma hls_design top" in code
     assert "hls::stream" not in code
     assert "#pragma HLS" not in code

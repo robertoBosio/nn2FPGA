@@ -74,6 +74,14 @@ private:
   }
 };
 
+template <int Shift, typename TAcc, typename TOut, int ZeroPoint = 0>
+struct ReLUQuantPo2 {
+  TOut operator()(TAcc acc) const {
+    DequantQuantPo2<Shift, TAcc, TOut, ZeroPoint> quantizer;
+    return acc < 0 ? quantizer(TAcc(0)) : quantizer(acc);
+  }
+};
+
 template <int Num, int Den, typename TAcc, typename TOut, int ZeroPoint = 0>
 struct DequantQuantFloat {
   static_assert(Num > 0, "Num must be positive");

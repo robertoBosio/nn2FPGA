@@ -235,6 +235,7 @@ def generate_catapult_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> s
 
     cwr = NewCodeWriter()
     cwr.add_autogen_comment()
+    cwr.include("array")
     cwr.include("ac_int.h")
     cwr.include("ac_channel.h")
 
@@ -296,7 +297,9 @@ def generate_catapult_hls_code(model: ModelWrapper, ap: AcceleratorPackage) -> s
             raise ValueError(f"Stream name {base_name} cannot start with a digit.")
 
     for var in stream_vars.values():
-        function.add_code(f"{var.generate_declaration()};")
+        # Catapult requires channels internal to the synthesized hierarchy to
+        # have static storage; top-level channel references remain dynamic.
+        function.add_code(f"static {var.generate_declaration()};")
 
     for node in model.graph.node:
         custom_op = getCustomOp(node)

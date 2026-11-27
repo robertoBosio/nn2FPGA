@@ -1,11 +1,13 @@
 import numpy as np
 import base64
 import os
+import shutil
 import subprocess
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
 from nn2fpga.compiler.utils.axi import get_axi_word_count
 from nn2fpga.compiler.utils.board_util import read_board_info
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     NewCodeWriter,
     cpp_function,
     cpp_variable,
@@ -78,6 +80,44 @@ def dump_tcl_script(
     )
 
     return "\n".join(lines)
+
+
+def dump_catapult_cosim_tcl(top_name, frequency, work_dir, simulator) -> str:
+    """Generate the Catapult SCVerify flow used for RTL co-simulation."""
+    include_dir = "/workspace/nn2FPGA/nn2fpga/hw/library/include"
+    clock_period = f"{1e3 / int(frequency):.2f}"
+    return "\n".join(
+        [
+            "project new",
+            "flow package require /SCVerify",
+            f"flow package option set /SCVerify/USE_{simulator.upper()} true",
+            "solution options set Input/CppStandard c++11",
+            (
+                "solution options set Input/CompilerFlags "
+                f"\"-DNN2FPGA_CATAPULT -I{work_dir}/compat -I{include_dir} "
+                "-I/workspace/nn2FPGA/deps/cnpy "
+                f"-I{work_dir} -I/usr/include/x86_64-linux-gnu\""
+            ),
+            f"solution file add {work_dir}/kernel.cpp -type C++",
+            f"solution file add {work_dir}/testbench.cpp -type C++",
+            "solution file add /workspace/nn2FPGA/deps/cnpy/cnpy.cpp -type C++",
+            "solution library add mgc_Xilinx-ZYNQ-uplus-2LV_beh -- "
+            "-rtlsyntool Vivado -manufacturer Xilinx -family ZYNQ-uplus -speed -2LV",
+            "solution library add Xilinx_RAMS",
+            f"directive set -CLOCKS {{clk {{-CLOCK_PERIOD {clock_period}}}}}",
+            "go compile",
+            "go libraries",
+            "go assembly",
+            f"directive set /{top_name}/core/main -PIPELINE_INIT_INTERVAL 1",
+            f"directive set /{top_name}/core/main -PIPELINE_STALL_MODE bubble",
+            "go extract",
+            (
+                "flow run /SCVerify/launch_make "
+                f"./scverify/Verify_rtl_v_{simulator}.mk {{}} SIMTOOL={simulator}"
+            ),
+            "quit",
+        ]
+    )
 
 
 def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidth) -> str:
@@ -288,6 +328,148 @@ def generate_hls_driver(top_name, input_map, output_map, buffer_map, axi_bitwidt
     cwr.add_function_definition(main_function)
     return cwr.code
 
+
+def _tensor_element_count(shape) -> int:
+    return int(np.prod(shape, dtype=np.int64))
+
+
+def _catapult_tensor_types(port: dict) -> tuple[str, str]:
+    tensor_type = TensorType.from_canonical_name(port["quant"])
+    return (
+        HLSCodegen("catapult").scalar_type(tensor_type),
+        tensor_type.get_cpp_quant_type(),
+    )
+
+
+def generate_catapult_hls_driver(
+    top_name,
+    input_map,
+    output_map,
+    buffer_map,
+    axi_bitwidth,
+) -> str:
+    """Generate a native C++ testbench for Catapult AXIS-only simulation."""
+    if buffer_map:
+        raise ValueError("Catapult C simulation does not support external memory buffers.")
+    ports = list(input_map.values()) + list(output_map.values())
+    for port in ports:
+        if port["mode"] != "axis":
+            raise ValueError(
+                "Catapult C simulation supports only axis ports; "
+                f"{port['new_name']} uses {port['mode']}."
+            )
+    cwr = NewCodeWriter()
+    cwr.add_autogen_comment()
+    cwr.include("ac_int.h")
+    cwr.include("ac_channel.h")
+    cwr.include("catapult/Axis.hpp")
+    cwr.include("catapult/utils/testbench_utils.hpp")
+    cwr.include("cstddef")
+    cwr.include("iostream")
+    cwr.include("vector")
+
+    port_args = ", ".join(
+        f"ac_channel<AxisWord<{axi_bitwidth}>>& {port['new_name']}" for port in ports
+    )
+    cwr.add_line(f"extern void {top_name}({port_args});")
+    cwr.add_line("")
+    cwr.add_line("int main(int argc, char** argv) {")
+    cwr.add_line(f"    if (argc != {len(ports) + 1}) {{")
+    cwr.add_line(
+        f'        std::cerr << "Expected {len(ports)} tensor paths, got " << argc - 1 << std::endl;'
+    )
+    cwr.add_line("        return 2;")
+    cwr.add_line("    }")
+
+    for port in ports:
+        cwr.add_line(
+            f"    ac_channel<AxisWord<{axi_bitwidth}>> {port['new_name']};"
+        )
+
+    for index, port in enumerate(input_map.values(), start=1):
+        hls_type, cpp_type = _catapult_tensor_types(port)
+        cwr.add_line(
+            f"    npy_to_catapult_stream<{axi_bitwidth}, {hls_type}, {cpp_type}>"
+            f"(argv[{index}], {port['new_name']}, {_tensor_element_count(port['shape'])});"
+        )
+
+    arguments = ", ".join(port["new_name"] for port in ports)
+    cwr.add_line(f"    {top_name}({arguments});")
+
+    output_offset = len(input_map) + 1
+    for index, port in enumerate(output_map.values(), start=output_offset):
+        hls_type, cpp_type = _catapult_tensor_types(port)
+        shape = "{" + ", ".join(str(dim) for dim in port["shape"]) + "}"
+        cwr.add_line(
+            f"    catapult_stream_to_npy<{axi_bitwidth}, {hls_type}, {cpp_type}>"
+            f"(argv[{index}], {port['new_name']}, {_tensor_element_count(port['shape'])}, {shape});"
+        )
+
+    cwr.add_line("    return 0;")
+    cwr.add_line("}")
+    return cwr.code
+
+
+def generate_catapult_cosim_driver(
+    top_name,
+    input_map,
+    output_map,
+    buffer_map,
+    axi_bitwidth,
+    input_paths,
+    expected_paths,
+    actual_paths,
+) -> str:
+    """Generate an SCVerify harness for a Catapult AXIS-only accelerator."""
+    if buffer_map:
+        raise ValueError("Catapult co-simulation does not support external memory buffers.")
+    ports = list(input_map.values()) + list(output_map.values())
+    if any(port["mode"] != "axis" for port in ports):
+        raise ValueError("Catapult co-simulation supports only axis ports.")
+    if len(input_paths) != len(input_map) or (
+        len(expected_paths) != len(output_map) or len(actual_paths) != len(output_map)
+    ):
+        raise ValueError("Catapult co-simulation path count does not match the port count.")
+
+    cwr = NewCodeWriter()
+    cwr.add_autogen_comment()
+    cwr.include("ac_int.h")
+    cwr.include("ac_channel.h")
+    cwr.include("mc_scverify.h")
+    cwr.include("catapult/Axis.hpp")
+    cwr.include("catapult/utils/testbench_utils.hpp")
+    cwr.include("vector")
+
+    port_args = ", ".join(
+        f"ac_channel<AxisWord<{axi_bitwidth}>>& {port['new_name']}" for port in ports
+    )
+    cwr.add_line(f"extern void {top_name}({port_args});")
+    cwr.add_line("")
+    cwr.add_line("CCS_MAIN(int argc, char** argv) {")
+    for port in ports:
+        cwr.add_line(f"    ac_channel<AxisWord<{axi_bitwidth}>> {port['new_name']};")
+    for path, port in zip(input_paths, input_map.values()):
+        hls_type, cpp_type = _catapult_tensor_types(port)
+        cwr.add_line(
+            f"    npy_to_catapult_stream<{axi_bitwidth}, {hls_type}, {cpp_type}>"
+            f"(\"{path}\", {port['new_name']}, {_tensor_element_count(port['shape'])});"
+        )
+    cwr.add_line(f"    CCS_DESIGN({top_name})({', '.join(port['new_name'] for port in ports)});")
+    cwr.add_line("    bool passed = true;")
+    for expected_path, actual_path, port in zip(
+        expected_paths, actual_paths, output_map.values()
+    ):
+        hls_type, cpp_type = _catapult_tensor_types(port)
+        shape = "{" + ", ".join(str(dim) for dim in port["shape"]) + "}"
+        cwr.add_line(
+            f"    passed &= catapult_stream_to_npy_and_compare<{axi_bitwidth}, {hls_type}, {cpp_type}>"
+            f"(\"{actual_path}\", \"{expected_path}\", {port['new_name']}, "
+            f"{_tensor_element_count(port['shape'])}, {shape});"
+        )
+    cwr.add_line("    CCS_RETURN(passed ? 0 : 1);")
+    cwr.add_line("}")
+    return cwr.code
+
 def make_build_dir(work_dir: str) -> None:
     """Create the working directory for the simulation."""
     os.makedirs(work_dir, exist_ok=True)
@@ -295,6 +477,11 @@ def make_build_dir(work_dir: str) -> None:
 def simulate(accelerator_package_serialized: str, context: dict) -> dict:
 
     ap = AcceleratorPackage.from_json(accelerator_package_serialized)
+    backend = ap.hls_backend
+    if backend not in {"vitis", "catapult"}:
+        raise ValueError(f"Unsupported HLS backend for simulation: {backend}")
+    if backend == "catapult" and ap.simulation not in {"csim", "cosim"}:
+        raise ValueError("Catapult simulation supports only 'csim' and 'cosim'.")
     work_dir = ap.work_dir
     simulation_type = ap.simulation
     work_dir = f"{os.path.abspath(work_dir)}/sim"
@@ -327,54 +514,151 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
     for tensor_name, tensor_data in internal_context:
         np.save(f"{work_dir}/{tensor_name}.npy", tensor_data)
 
-    # Generate the TCL script
+    output_artifact_paths = {
+        value["new_name"]: f"{work_dir}/{value['new_name']}.npy"
+        for value in output_map.values()
+    }
+
     board_info = read_board_info(ap.board_name)
-    tcl_script = dump_tcl_script(
-        top_name=ap.top_name,
-        part_name=board_info["part"],
-        frequency=ap.frequency,
-        hls_version=ap.hls_version,
-        input_files=[f"{work_dir}/{tensor_name}.npy" for tensor_name, _ in internal_context],
-        reset=True,
-        silvia_packing=True,
-        simulation_type=simulation_type,
-    )
-
-    # Write the TCL script to a file
-    with open(f"{work_dir}/setup.tcl", "w") as f:
-        f.write(tcl_script)
-
-    # Write the HLS code to a file
     with open(f"{work_dir}/kernel.cpp", "w") as f:
         f.write(base64.b64decode(ap.hls_code_b64).decode())
 
-    # Generate the HLS driver code
-    with open(f"{work_dir}/testbench.cpp", "w") as f:
-        f.write(generate_hls_driver(
+    if backend == "vitis":
+        tcl_script = dump_tcl_script(
             top_name=ap.top_name,
-            input_map=ap.input_map,
-            output_map=ap.output_map,
-            buffer_map=ap.buffer_map,
-            axi_bitwidth=int(board_info["axi_bitwidth"]),
-        ))
+            part_name=board_info["part"],
+            frequency=ap.frequency,
+            hls_version=ap.hls_version,
+            input_files=[f"{work_dir}/{tensor_name}.npy" for tensor_name, _ in internal_context],
+            reset=True,
+            silvia_packing=True,
+            simulation_type=simulation_type,
+        )
+        with open(f"{work_dir}/setup.tcl", "w") as f:
+            f.write(tcl_script)
+        with open(f"{work_dir}/testbench.cpp", "w") as f:
+            f.write(generate_hls_driver(
+                top_name=ap.top_name,
+                input_map=ap.input_map,
+                output_map=ap.output_map,
+                buffer_map=ap.buffer_map,
+                axi_bitwidth=int(board_info["axi_bitwidth"]),
+            ))
 
-    # run the simulation
-    if float(ap.hls_version) > 2025:
-        subprocess.run(
-            ["vitis-run", "--mode", "hls", "--tcl", f"{work_dir}/setup.tcl"],
-            cwd=work_dir,
-            check=True
-        )
+        if float(ap.hls_version) > 2025:
+            subprocess.run(
+                ["vitis-run", "--mode", "hls", "--tcl", f"{work_dir}/setup.tcl"],
+                cwd=work_dir,
+                check=True
+            )
+        else:
+            subprocess.run(
+                ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
+                cwd=work_dir,
+                check=True
+            )
     else:
-        subprocess.run(
-            ["vitis_hls", "-f", f"{work_dir}/setup.tcl"],
-            cwd=work_dir,
-            check=True
-        )
+        catapult_home = os.environ.get("CATAPULT_HOME", os.environ.get("MGC_HOME"))
+        if not catapult_home:
+            raise EnvironmentError(
+                "CATAPULT_HOME or MGC_HOME must be set for Catapult simulation."
+            )
+        input_paths = [
+            f"{work_dir}/{value['new_name']}.npy" for value in input_map.values()
+        ]
+        if simulation_type == "csim":
+            with open(f"{work_dir}/testbench.cpp", "w") as f:
+                f.write(generate_catapult_hls_driver(
+                    top_name=ap.top_name,
+                    input_map=ap.input_map,
+                    output_map=ap.output_map,
+                    buffer_map=ap.buffer_map,
+                    axi_bitwidth=int(board_info["axi_bitwidth"]),
+                ))
+
+            executable = f"{work_dir}/csim"
+            subprocess.run(
+                [
+                    "g++",
+                    "-std=c++11",
+                    "-DNN2FPGA_CATAPULT",
+                    f"-I{catapult_home}/shared/include",
+                    "-I/workspace/nn2FPGA/nn2fpga/hw/library/include",
+                    "-I/workspace/nn2FPGA/deps/cnpy",
+                    f"{work_dir}/kernel.cpp",
+                    f"{work_dir}/testbench.cpp",
+                    "/workspace/nn2FPGA/deps/cnpy/cnpy.cpp",
+                    "-lz",
+                    "-o",
+                    executable,
+                ],
+                cwd=work_dir,
+                check=True,
+            )
+            output_paths = [
+                f"{work_dir}/{value['new_name']}.npy"
+                for value in output_map.values()
+            ]
+            subprocess.run(
+                [executable, *input_paths, *output_paths], cwd=work_dir, check=True
+            )
+        else:
+            simulator = os.environ.get("SCVERIFY_SIMULATOR", "ncsim")
+            if simulator not in {"msim", "ncsim", "vcs"}:
+                raise ValueError("SCVERIFY_SIMULATOR must be one of: msim, ncsim, vcs")
+            expected_paths = []
+            actual_paths = []
+            for value in output_map.values():
+                output_name = value["new_name"]
+                source_path = output_artifact_paths[output_name]
+                if not os.path.exists(source_path):
+                    raise FileNotFoundError(
+                        f"Expected output {output_name} is required for Catapult co-simulation."
+                    )
+                expected_path = f"{work_dir}/expected_{output_name}.npy"
+                actual_path = f"{work_dir}/actual_{output_name}.npy"
+                shutil.copyfile(source_path, expected_path)
+                expected_paths.append(expected_path)
+                actual_paths.append(actual_path)
+                output_artifact_paths[output_name] = actual_path
+            with open(f"{work_dir}/testbench.cpp", "w") as f:
+                f.write(generate_catapult_cosim_driver(
+                    top_name=ap.top_name,
+                    input_map=ap.input_map,
+                    output_map=ap.output_map,
+                    buffer_map=ap.buffer_map,
+                    axi_bitwidth=int(board_info["axi_bitwidth"]),
+                    input_paths=input_paths,
+                    expected_paths=expected_paths,
+                    actual_paths=actual_paths,
+                ))
+            compat_dir = f"{work_dir}/compat/gnu"
+            os.makedirs(compat_dir, exist_ok=True)
+            with open(f"{compat_dir}/stubs-32.h", "w") as f:
+                f.write("#pragma once\n")
+            with open(f"{work_dir}/catapult.tcl", "w") as f:
+                f.write(dump_catapult_cosim_tcl(
+                    top_name=ap.top_name,
+                    frequency=ap.frequency,
+                    work_dir=work_dir,
+                    simulator=simulator,
+                ))
+            subprocess.run(
+                [
+                    f"{catapult_home}/bin/catapult",
+                    "-product",
+                    "hls",
+                    "-shell",
+                    "-file",
+                    f"{work_dir}/catapult.tcl",
+                ],
+                cwd=work_dir,
+                check=True,
+            )
 
     # Read the output files and update the context
     for old_name, value in output_map.items():
-        output_file = f"{work_dir}/{value['new_name']}.npy"
+        output_file = output_artifact_paths[value["new_name"]]
         if os.path.exists(output_file):
             tensor_data = np.load(output_file)
             context[old_name] = tensor_data

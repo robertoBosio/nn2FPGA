@@ -5,6 +5,8 @@ from qonnx.util.basic import qonnx_make_model
 
 import nn2fpga.compiler.custom_op  # noqa: F401
 from nn2fpga.compiler.core.tensor_layout import TensorLayout, set_custom_tensor_layout
+from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, set_custom_tensor_datatype
+from nn2fpga.compiler.utils.codegen_utils import HLSCodegen
 
 
 def _build_model() -> ModelWrapper:
@@ -65,6 +67,12 @@ def _build_model() -> ModelWrapper:
     )
     set_custom_tensor_layout(model, "input", TensorLayout((0, 2, 3, 1)))
     set_custom_tensor_layout(model, "output", TensorLayout((0, 2, 3, 1)))
+    tensor_type = QuantizedTensorType(
+        scale=1.0, zeropt=0, bitwidth=8, signed=True, narrow=False,
+        rounding_mode="ROUND",
+    )
+    set_custom_tensor_datatype(model, "input", tensor_type)
+    set_custom_tensor_datatype(model, "output", tensor_type)
     return model
 
 
@@ -81,3 +89,37 @@ def test_internal_parameters_are_quantized_and_initialized():
     assert "{3}" in declaration
     assert "ap_int<32> conv0_biases[2][1][1] =" in declaration
     assert "{-3}" in declaration
+
+
+def test_catapult_external_parameters_use_ac_types_and_no_step_calls():
+    model = _build_model()
+    op = getCustomOp(model.graph.node[0])
+    op.set_nodeattr("param_storage", "EXTERNAL")
+    codegen = HLSCodegen("catapult")
+
+    declaration = op._StreamingConv__get_object_declaration(model, codegen)
+    variables = op._StreamingConv__get_variable_declaration(model, codegen)
+
+    assert "ac_int<" in declaration
+    assert "hls::" not in declaration
+    assert variables == ""
+    assert op._StreamingConv__get_step_call(codegen) == ""
+
+    model.set_metadata_prop("hls_backend", "catapult")
+    hls_nodes, _, fifo, _ = op.lower_to_hls(model, 0)
+    hls_op = getCustomOp(hls_nodes[0])
+    assert "hls::" not in hls_op.get_nodeattr("hls_object_declaration")
+    assert all("ac_int<" in metadata.hls_type for metadata in fifo.values())
+
+
+def test_catapult_external_parameters_support_fused_relu():
+    model = _build_model()
+    op = getCustomOp(model.graph.node[0])
+    op.set_nodeattr("param_storage", "EXTERNAL")
+    op.set_nodeattr("activation", "ReLU")
+
+    declaration = op._StreamingConv__get_object_declaration(
+        model, HLSCodegen("catapult")
+    )
+
+    assert "ReLUQuantPo2<" in declaration

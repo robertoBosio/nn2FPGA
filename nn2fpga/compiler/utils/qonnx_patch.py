@@ -185,6 +185,7 @@ def patch_qonnx_ops():
                 top_name=p_model.get_metadata_prop("top_name"),
                 frequency=p_model.get_metadata_prop("frequency"),
                 hls_version=p_model.get_metadata_prop("hls_version"),
+                hls_backend=p_model.get_metadata_prop("hls_backend") or "vitis",
                 simulation=p_model.get_metadata_prop("simulation"),
             )
             p_model.set_metadata_prop("accelerator_package", ap.to_json())

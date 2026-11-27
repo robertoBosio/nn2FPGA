@@ -19,6 +19,7 @@ from nn2fpga.compiler.core.tensor_fifo import (
 from nn2fpga.compiler.core.tensor_type import get_custom_tensor_datatype, set_custom_tensor_datatype, TensorType
 from nn2fpga.compiler.core.tensor_layout import get_custom_tensor_layout, set_custom_tensor_layout
 from nn2fpga.compiler.core.acceleratorpackage import AcceleratorPackage
+from nn2fpga.compiler.utils.codegen_utils import HLSCodegen
 from nn2fpga.compiler.transforms.compute_fifo_depth import ComputeFifoDepth
 from nn2fpga.compiler.transforms.embed_hls_code import EmbedHLSCode
 from nn2fpga.compiler.transforms.generate_bitstream import GenerateBitstream
@@ -353,6 +354,8 @@ def _set_boundary_fifo_metadata(
     Uses the original pre-lowering model to resolve AXIToStream / StreamToAXI
     nodes and read their axi_bitwidth attributes.
     """
+    codegen = HLSCodegen.from_model(model)
+
     for inp in hls_model.graph.input:
         consumer = model.find_consumer(inp.name)
         if consumer is None:
@@ -362,7 +365,7 @@ def _set_boundary_fifo_metadata(
         converter = getCustomOp(consumer)
         axi_word = converter.get_nodeattr("axi_bitwidth")
         hls_type = (
-            f"ap_axiu<{axi_word}, 0, 0, 0>"
+            codegen.axis_word_type(axi_word)
             if converter.get_nodeattr("interface_type") == "s_axis"
             else f"ap_uint<{axi_word}>"
         )
@@ -380,7 +383,7 @@ def _set_boundary_fifo_metadata(
         converter = getCustomOp(producer)
         axi_word = converter.get_nodeattr("axi_bitwidth")
         hls_type = (
-            f"ap_axiu<{axi_word}, 0, 0, 0>"
+            codegen.axis_word_type(axi_word)
             if converter.get_nodeattr("interface_type") == "s_axis"
             else f"ap_uint<{axi_word}>"
         )

@@ -16,10 +16,10 @@ from nn2fpga.compiler.custom_op.op_base import (
     ParamDesc,
 )
 from nn2fpga.compiler.utils.codegen_utils import (
+    HLSCodegen,
     cpp_function,
     cpp_variable,
     cpp_object,
-    get_word_type,
 )
 from nn2fpga.compiler.custom_op.register_rewrite_rule import register_rules
 from nn2fpga.compiler.utils.board_util import bram_usage_evaluator, packing_feature
@@ -346,7 +346,9 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             rounding_mode=input_quant.rounding_mode,
         )
 
-    def __get_partial_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+    def __get_partial_accumulator(
+        self, input_quant, weights_quant, bias_quant, weights_shape, codegen: HLSCodegen
+    ) -> str:
         """ Returns the accumulator type for the StreamingConv operation. """
 
         add_ops = np.prod(weights_shape[1:])
@@ -365,9 +367,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             zeropt=input_quant.zeropt,
         )
 
-        return f"{acc_quant.get_hls_data_type()}"
+        return codegen.scalar_type(acc_quant)
 
-    def __get_accumulator(self, input_quant, weights_quant, bias_quant, weights_shape) -> str:
+    def __get_accumulator(
+        self, input_quant, weights_quant, bias_quant, weights_shape, codegen: HLSCodegen
+    ) -> str:
         """ Returns the accumulator type for the StreamingConv operation. """
 
         add_ops = np.prod(weights_shape[1:])
@@ -387,13 +391,16 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             zeropt=input_quant.zeropt,
         )
 
-        return f"{acc_quant.get_hls_data_type()}"
+        return codegen.scalar_type(acc_quant)
 
     def __is_power_of_two(self, value) -> bool:
         """Check if a value is a power of two."""
         return value > 0 and float(np.log2(value)).is_integer()
 
-    def __get_quantizer(self, input_quant, weights_quant, bias_quant, output_quant, weights_shape) -> str:
+    def __get_quantizer(
+        self, input_quant, weights_quant, bias_quant, output_quant, weights_shape,
+        codegen: HLSCodegen,
+    ) -> str:
         """ Returns the quantizer type for the StreamingConv operation. """
 
         output_zeropt = int(np.asarray(output_quant.zeropt).reshape(()).item())
@@ -418,9 +425,15 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 + int(np.log2(weights_scale))
                 - int(np.log2(output_quant.scale))
             )
-            accumulator = self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)
-            output_type = output_quant.get_hls_data_type()
+            accumulator = self.__get_accumulator(
+                input_quant, weights_quant, bias_quant, weights_shape, codegen
+            )
+            output_type = codegen.scalar_type(output_quant)
             activation = self.get_nodeattr("activation")
+            if codegen.backend == "catapult" and activation == "LeakyReLU":
+                raise ValueError(
+                    "Catapult StreamingConv does not yet support fused LeakyReLU."
+                )
             if activation == "NoOp":
                 return f"DequantQuantPo2<{shift}, {accumulator}, {output_type}, {output_zeropt}>"
             if activation == "ReLU":
@@ -442,9 +455,15 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             frac = Fraction(float(ratio)).limit_denominator(1 << 20)
             num = int(frac.numerator)
             den = int(frac.denominator)
-            accumulator = self.__get_accumulator(input_quant, weights_quant, bias_quant, weights_shape)
-            output_type = output_quant.get_hls_data_type()
+            accumulator = self.__get_accumulator(
+                input_quant, weights_quant, bias_quant, weights_shape, codegen
+            )
+            output_type = codegen.scalar_type(output_quant)
             activation = self.get_nodeattr("activation")
+            if codegen.backend == "catapult" and activation != "NoOp":
+                raise ValueError(
+                    "Catapult StreamingConv does not yet support fused activations."
+                )
             if activation == "NoOp":
                 shift_form = ratio_to_shift_form(ratio)
                 if shift_form is not None:
@@ -459,8 +478,20 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
                 f"Unsupported activation function '{activation}' for StreamingConv."
             )
 
-    def __get_object_declaration(self, model) -> cpp_object:
+    def __get_object_declaration(
+        self, model, codegen: HLSCodegen | None = None
+    ) -> cpp_object:
         """ Generate the cpp_object for the StreamingConv operation. """
+
+        codegen = codegen or HLSCodegen.from_model(model)
+        if codegen.backend == "catapult":
+            if self.get_nodeattr("param_storage") != "EXTERNAL":
+                raise ValueError(
+                    "Catapult StreamingConv requires external streamed parameters. "
+                    "Enable AddStreamingParams."
+                )
+            if len(self.onnx_node.input) <= 5:
+                raise ValueError("Catapult StreamingConv currently requires a bias input.")
 
         input_type = self.__get_effective_input_quant(
             require_tensor_type(model, self.onnx_node.input[0])
@@ -500,29 +531,48 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             f"{self.onnx_node.name}",
             template_args=[
                 (
-                    f"{get_word_type(input_type, self.get_nodeattr('in_word_array'))}",
+                    codegen.word_type(input_type, self.get_nodeattr("in_word_array")),
                     "TInputWord",
                 ),
-                (f"{input_type.get_hls_data_type()}", "TInput"),
+                (codegen.scalar_type(input_type), "TInput"),
                 (
-                    f"{get_word_type(weights_quant, self.get_nodeattr('in_channel_unroll') * self.get_nodeattr('out_channel_unroll'))}",
+                    codegen.word_type(
+                        weights_quant,
+                        self.get_nodeattr("in_channel_unroll")
+                        * self.get_nodeattr("out_channel_unroll"),
+                    ),
                     "TWeightWord",
                 ),
-                (f"{weights_quant.get_hls_data_type()}", "TWeight"),
+                (codegen.scalar_type(weights_quant), "TWeight"),
                 (
-                    f"{get_word_type(bias_quant, self.get_nodeattr('out_channel_unroll'))}",
+                    codegen.word_type(
+                        bias_quant, self.get_nodeattr("out_channel_unroll")
+                    ),
                     "TBiasWord",
                 ),
-                (f"{bias_quant.get_hls_data_type()}", "TBias"),
+                (codegen.scalar_type(bias_quant), "TBias"),
                 (
-                    f"{get_word_type(output_type, self.get_nodeattr('out_word_array'))}",
+                    codegen.word_type(output_type, self.get_nodeattr("out_word_array")),
                     "TOutputWord",
                 ),
-                (f"{output_type.get_hls_data_type()}", "TOutput"),
-                (self.__get_accumulator(input_type, weights_quant, bias_quant, weights_shape), "TSum"),
-                (self.__get_partial_accumulator(input_type, weights_quant, bias_quant, weights_shape), "TPartialSum"),
+                (codegen.scalar_type(output_type), "TOutput"),
                 (
-                    f"{self.__get_quantizer(input_type, weights_quant, bias_quant, output_type, weights_shape)}",
+                    self.__get_accumulator(
+                        input_type, weights_quant, bias_quant, weights_shape, codegen
+                    ),
+                    "TSum",
+                ),
+                (
+                    self.__get_partial_accumulator(
+                        input_type, weights_quant, bias_quant, weights_shape, codegen
+                    ),
+                    "TPartialSum",
+                ),
+                (
+                    self.__get_quantizer(
+                        input_type, weights_quant, bias_quant, output_type,
+                        weights_shape, codegen,
+                    ),
                     "OutputTransform",
                 ),
                 (output_shape[-1], "OUT_CH"),
@@ -542,13 +592,22 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
 
         return StreamingConv.generate_declaration()
 
-    def __get_variable_declaration(self, model) -> str:
+    def __get_variable_declaration(
+        self, model, codegen: HLSCodegen | None = None
+    ) -> str:
         """Get the internal cpp variables of the StreamingConv node.
         Args:
             model (ModelWrapper): The model with quantization information.
         Returns:
             str: A string representing the declaration of internal variables.
         """
+
+        codegen = codegen or HLSCodegen.from_model(model)
+        if codegen.backend == "catapult" and self.get_nodeattr("param_storage") != "EXTERNAL":
+            raise ValueError(
+                "Catapult StreamingConv requires external streamed parameters. "
+                "Enable AddStreamingParams."
+            )
 
         variables_code = ""
 
@@ -656,7 +715,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         else:
             return variables_code
 
-    def __get_run_call(self, hls_tag: int) -> str:
+    def __get_run_call(self, hls_tag: int, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to run the StreamingConv node. """
 
         # name = f"{self.onnx_node.name}.run_allpartitioned" if hls_tag == 51 else f"{self.onnx_node.name}.run"
@@ -667,19 +726,19 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputStruct>",
+                    codegen.channel_type("TInputStruct"),
                 ),
                 (
                     f"i_weights",
-                    f"hls::stream<TWeightStruct>",
+                    codegen.channel_type("TWeightStruct"),
                 ),
                 (
                     f"i_biases",
-                    f"hls::stream<TBiasStruct>",
+                    codegen.channel_type("TBiasStruct"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputStruct>",
+                    codegen.channel_type("TOutputStruct"),
                 ),
             ),
         )
@@ -692,8 +751,11 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             self.__get_stream_name(self.onnx_node.output[0]),
         )
 
-    def __get_step_call(self) -> str:
+    def __get_step_call(self, codegen: HLSCodegen) -> str:
         """ Generates the C++ code necessary to step the StreamingConv node. """
+
+        if not codegen.supports_step_calls:
+            return ""
 
         # Generate the call to the StreamingConv step method.
         step = cpp_function(
@@ -702,19 +764,19 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             arguments=(
                 (
                     f"i_data",
-                    f"hls::stream<TInputStruct>",
+                    codegen.channel_type("TInputStruct"),
                 ),
                 (
                     f"i_weights",
-                    f"hls::stream<TWeightStruct>",
+                    codegen.channel_type("TWeightStruct"),
                 ),
                 (
                     f"i_biases",
-                    f"hls::stream<TBiasStruct>",
+                    codegen.channel_type("TBiasStruct"),
                 ),
                 (
                     f"o_data",
-                    f"hls::stream<TOutputStruct>",
+                    codegen.channel_type("TOutputStruct"),
                 ),
             ),
         )
@@ -753,6 +815,7 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
           fifo: Dict[str, TensorFifo]
         """
 
+        codegen = HLSCodegen.from_model(model)
         point = self.__current_dse_point()
         FH = self.get_nodeattr("kernel_shape")[0]
         FW = self.get_nodeattr("kernel_shape")[1]
@@ -784,7 +847,9 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
         for output in output_names:
             tensors_fifo_metadata[output] = TensorFifo(
                 depth=0,
-                hls_type=f"{get_word_type(output_quant, self.get_nodeattr('out_word_array'))}",
+                hls_type=codegen.word_type(
+                    output_quant, self.get_nodeattr("out_word_array")
+                ),
                 n_array=self.get_nodeattr("out_stream_array"),
             )
 
@@ -796,10 +861,10 @@ class StreamingConv(NN2FPGAOp, DSECapable, HasParameters):
             original_op_type="StreamingConv",
             hls_tag=hls_tag,
             hls_object_name=self.onnx_node.name,
-            hls_variable_declarations=self.__get_variable_declaration(model),
-            hls_run_call=self.__get_run_call(hls_tag),
-            hls_step_call=self.__get_step_call(),
-            hls_object_declaration=self.__get_object_declaration(model),
+            hls_variable_declarations=self.__get_variable_declaration(model, codegen),
+            hls_run_call=self.__get_run_call(hls_tag, codegen),
+            hls_step_call=self.__get_step_call(codegen),
+            hls_object_declaration=self.__get_object_declaration(model, codegen),
         )
         hls_tag += 1
 

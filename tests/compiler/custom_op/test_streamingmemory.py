@@ -6,6 +6,7 @@ from qonnx.util.basic import qonnx_make_model
 import nn2fpga.compiler.custom_op  # noqa: F401
 from nn2fpga.compiler.core.tensor_layout import TensorLayout, set_custom_tensor_layout
 from nn2fpga.compiler.core.tensor_type import QuantizedTensorType, set_custom_tensor_datatype
+from nn2fpga.compiler.utils.codegen_utils import HLSCodegen
 
 
 def _get_streaming_memory(storage_impl: str, data_to_shift: int):
@@ -48,6 +49,24 @@ def test_run_call_uses_the_same_entry_point_when_not_selected():
     run_call = op._StreamingMemory__get_run_call(0)
     assert "streaming_memory.run<" in run_call
     assert "run_uram" not in run_call
+
+
+def test_run_call_preserves_parameter_and_shift_output_order():
+    _, op = _get_streaming_memory("auto", data_to_shift=1)
+
+    run_call = op._StreamingMemory__get_run_call(0)
+
+    assert run_call.endswith("(input_stream, output_stream, shift_output_stream)")
+
+
+def test_catapult_run_call_uses_channels_without_step_calls():
+    model, op = _get_streaming_memory("auto", data_to_shift=1)
+    codegen = HLSCodegen("catapult")
+
+    declaration = op._StreamingMemory__get_object_declaration(model, codegen)
+
+    assert "ac_int<" in declaration
+    assert op._StreamingMemory__get_step_call(codegen) == ""
 
 
 def test_object_declaration_passes_uram_template_argument():
