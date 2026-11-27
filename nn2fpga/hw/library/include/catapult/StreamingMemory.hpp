@@ -55,6 +55,7 @@ class StreamingMemory {
   }
 
  public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_shift_data[1],
            ac_channel<TOutputWord> o_data[ARRAY_PAR],
@@ -72,6 +73,7 @@ class StreamingMemory {
         write_output(o_data, mem[group]);
   }
 
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_shift_data[1],
            ac_channel<TOutputWord> o_data[ARRAY_PAR]) {

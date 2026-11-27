@@ -16,6 +16,7 @@ class StreamingTensorDuplicator {
                 "DIM2 must be divisible by DIM2_UNROLL");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TWord> i_data[DIM1_UNROLL],
            ac_channel<TWord> o_data0[DIM1_UNROLL],

@@ -23,6 +23,7 @@ class StreamingMaxPool {
                 "OUT_WIDTH must divide W_PAR");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_data[FH * FW_EXPAND],
            ac_channel<TOutputWord> o_data[W_PAR]) {

@@ -19,6 +19,7 @@ class StreamingAdd {
                 "unroll factors must be greater than 0");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWordA> i_dataA[DIM1_UNROLL],
            ac_channel<TInputWordB> i_dataB[DIM1_UNROLL],

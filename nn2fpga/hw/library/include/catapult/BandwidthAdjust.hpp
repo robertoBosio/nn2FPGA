@@ -26,6 +26,7 @@ class BandwidthAdjust {
   }
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_data[IN_DIM1_UNROLL],
            ac_channel<TOutputWord> o_data[OUT_DIM1_UNROLL]) {

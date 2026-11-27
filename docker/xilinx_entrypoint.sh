@@ -78,6 +78,9 @@ if [ -n "${CATAPULT_HOME:-}" ]; then
     export MGC_HOME="${CATAPULT_HOME}"
     export PATH="${CATAPULT_HOME}/bin:${PATH}"
 fi
+if [ -n "${SCVERIFY_SIMULATOR_PATH:-}" ]; then
+    export PATH="${SCVERIFY_SIMULATOR_PATH}:${PATH}"
+fi
 
 #cd "$NN2FPGA_ROOT_DIR"
 

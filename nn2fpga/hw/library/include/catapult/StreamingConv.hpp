@@ -25,6 +25,7 @@ class StreamingConv {
   static_assert(OUT_WIDTH % W_PAR == 0, "OUT_WIDTH must divide W_PAR");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_data[FH * FW_EXPAND],
            ac_channel<TWeightWord> i_weights[FH * FW],

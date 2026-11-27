@@ -16,6 +16,7 @@ class StreamingReLU {
   static_assert(DIM0 > 0 && DIM1 > 0, "DIM0 and DIM1 must be greater than 0");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> i_data[DIM1_UNROLL],
            ac_channel<TOutputWord> o_data[DIM1_UNROLL]) {

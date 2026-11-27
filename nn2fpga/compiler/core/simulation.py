@@ -108,8 +108,9 @@ def dump_catapult_cosim_tcl(top_name, frequency, work_dir, simulator) -> str:
             "go compile",
             "go libraries",
             "go assembly",
-            f"directive set /{top_name}/core/main -PIPELINE_INIT_INTERVAL 1",
-            f"directive set /{top_name}/core/main -PIPELINE_STALL_MODE bubble",
+            # Do not leave FIFO sizing to Catapult's global latency analysis.
+            # The generated top is a graph of bottom-up streaming blocks.
+            f"directive set /{top_name} -FIFO_DEPTH 2",
             "go extract",
             (
                 "flow run /SCVerify/launch_make "
@@ -482,6 +483,8 @@ def simulate(accelerator_package_serialized: str, context: dict) -> dict:
         raise ValueError(f"Unsupported HLS backend for simulation: {backend}")
     if backend == "catapult" and ap.simulation not in {"csim", "cosim"}:
         raise ValueError("Catapult simulation supports only 'csim' and 'cosim'.")
+    if backend == "catapult" and ap.simulation == "cosim":
+        raise NotImplementedError("Catapult RTL co-simulation is not supported.")
     work_dir = ap.work_dir
     simulation_type = ap.simulation
     work_dir = f"{os.path.abspath(work_dir)}/sim"

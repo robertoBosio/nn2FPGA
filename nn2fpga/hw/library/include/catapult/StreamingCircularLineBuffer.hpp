@@ -35,6 +35,7 @@ public:
   static_assert(OUT_WIDTH % W_PAR == 0,
                 "output width must divide W_PAR");
 
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TWord> i_data[W_PAR],
            ac_channel<TWord> o_data[FH * FW_EXPAND]) {

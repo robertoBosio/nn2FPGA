@@ -22,6 +22,7 @@ class AXISToStream {
                 "DIM1 must divide DIM1_UNROLL");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> &i_data,
            ac_channel<TOutputWord> o_data[DIM1_UNROLL]) {

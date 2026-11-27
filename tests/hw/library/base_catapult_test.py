@@ -37,7 +37,7 @@ class BaseCatapultTest(ABC):
             "solution options set Input/CppStandard c++11",
             (
                 "solution options set Input/CompilerFlags "
-                f"\"-DNN2FPGA_CATAPULT -I{include_dir} -I{workdir} "
+                f"\"-DNN2FPGA_CATAPULT -I{workdir}/compat -I{include_dir} -I{workdir} "
                 "-I/usr/include/x86_64-linux-gnu\""
             ),
             f"solution file add {testbench} -type C++",
@@ -73,6 +73,10 @@ class BaseCatapultTest(ABC):
     ):
         workdir = workdir or self._workdir
         os.makedirs(workdir, exist_ok=True)
+        compat_dir = os.path.join(workdir, "compat", "gnu")
+        os.makedirs(compat_dir, exist_ok=True)
+        with open(os.path.join(compat_dir, "stubs-32.h"), "w") as f:
+            f.write("#pragma once\n")
         steps = {step.strip() for step in hls_steps.split(",")}
         simulator = os.environ.get("SCVERIFY_SIMULATOR", "ncsim")
         if "cosim" in steps and simulator not in {"msim", "ncsim", "vcs"}:

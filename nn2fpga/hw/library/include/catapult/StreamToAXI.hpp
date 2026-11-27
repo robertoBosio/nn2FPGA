@@ -28,6 +28,7 @@ class StreamToAXIS {
                 "DIM1 must divide DIM1_UNROLL");
 
 public:
+  #pragma hls_design block
   template <size_t HLS_TAG>
   void run(ac_channel<TInputWord> input_data_stream[DIM1_UNROLL],
            ac_channel<TOutputWord> &output_data_stream) {
